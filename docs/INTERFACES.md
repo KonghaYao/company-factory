@@ -1,0 +1,29 @@
+# Interface contracts and normal concurrency
+
+Company is a local, single-owner application. Agent identity is **never** supplied by model parameters. The HTTP edge validates each Agent's private bearer credential and constructs `{type: 'agent', id, companyId}`. UI mutations require a same-origin, HttpOnly, SameSite=Strict local-owner session. Company/team target identifiers are separate from callers. No CORS, no cross-site mutations, no DNS-rebinding hosts.
+
+Three custom protocol endpoints only: `/company_org/mcp`, `/company_tasks/mcp`, `/company_im/mcp`. They use `@peri-code/mcpp`'s current mono gateway and MCP 2026-07-28 transport; no hand-rolled JSON-RPC success responses. Resources are authenticated views (`company://current/<module>`), with native `subscriptions/listen` invalidations. Runtime and default Workspace are internal adapters, not more Company MCPs.
+
+## Services
+
+- **OrganizationService**: company creation scaffolds Company Git repository, HQ, HR and supervisor, then creates actual Peri Sessions via injected runtime provisioning. HR/member creation uses a single group. Public snapshots redact authentication credentials. No transfer/offboarding.
+- **IssueService**: user and roles with `issue.create` may create; new Issue has `triage` and supervisor ownership. Current owner edits business content/status; supervisor classifies and assigns. Versions and stable request IDs protect normal concurrent writes. Comments have server author/time; only the author edits.
+- **DecisionService**: stable explicit Issue/question IDs; owner asks or withdraws, user answers, owner processes answer. `needs_user` derives from remaining pending questions. Late answers are historical only.
+- **PreviewService**: independent Issues share a recorded preview environment. User acceptance and CI/Review each bind to exact code. Ready-to-merge requires both successful validation kinds for currently accepted code, never a runtime completion signal.
+- **CompanyIM**: same-company participants; durable message precedes asynchronous delivery into the original target Session. Saved/delivered/failed/replied are not conflated. Repeated request IDs deduplicate, closed threads retain late replies without reopening.
+- **AgentRuntimePort / SessionStorePort**: only SDK handles and official transport lifecycle. Effective config persists independently of saved config. User restart applies saved config while keeping identity, directory and Session. No custom runtime or recovery coordinator.
+- **WorkspaceViewAdapter**: maps supported UI reads/writes/search/Git operations to the official default Workspace tools. It rejects root escapes and Company business-data writes. File save compares a content version and reports conflicts rather than overwriting external edits.
+- **PeriChatViewAdapter**: scoped real SDK Session/turn/activity history. Send acceptance is an input receipt only; the UI never equates it with Issue acceptance.
+
+## Agent definition, model tiers and trust boundary
+
+- **`updateMember`** is user-only and edits only `name`, `responsibilities` and the Agent-specific `systemPrompt`. Agent ID, department and role are immutable. It does not touch saved runtime configuration and does not require a restart; the next input carries the new role text/system prompt.
+- **`saveAgentConfiguration`** is user-only and versioned. It validates `modelAlias` (one of `fable`/`opus`/`sonnet`/`haiku`), strict `models` tier keys and `workspaceRoots`. Saving never mutates the effective snapshot; `markAgentConfigurationApplied` runs only after an explicit successful restart. HR may set `model`, `modelAlias` and `models` for a new member, but never `provider`, `baseUrl`, `apiKeyEnv`, `workspaceRoots`, MCP or `settings`.
+- **Four-tier settings** resolve each tier as `config.models[tier]` → legacy `config.model` for the active tier only → `PERI_MODEL_ID_<TIER>` → `PERI_MODEL_ID` → unconfigured. `config.model` fills all four tiers only when no four-tier source exists. `active_alias` defaults to `sonnet`. PeriConfig carries `providers[0].models` for all four tiers and `profiles` entries that only bind `{provider: "company-model"}`.
+- **Frozen boundary**: resolved provider settings (provider/baseUrl/apiKey/models) and MCP descriptors are written to host-only `runtime/effective-config/<agent>.json` (0600) only at provision or explicit restart; ordinary cold wake reuses that snapshot. Provider, base URL, API key and tier environment values come only from the trusted host process environment (plus user-owned `agent.yaml` overrides). The Agent-writable `<agent>/.env` is mounted read-only and is never a model-settings input. `config.settings` is reserved and never spread into PeriConfig. Snapshots expose only `modelAlias` and the active model ID, never apiKey/baseUrl.
+
+## Mutation/error/event rules
+
+Normal domain operations are serialized within Company write boundaries. YAML frontmatter is edited through the YAML Document API and changed fields are merged with the current document; stale `expectedVersion` rejects before commit. Request IDs belong to caller+Company+operation, retain the input digest, and replay their prior receipt only for identical input. Errors include `forbidden`, `not_current_owner`, `version_conflict`, `idempotency_conflict`, `not_found`, and validation errors. Git commits capture each successful business mutation; an event is published only after the underlying file mutation. No event replay or cross-process task recovery is promised.
+
+UI query keys, drafts, subscriptions and open file buffers include both Company and Agent. Sending captures its full scope and clears the original draft only if it has not changed while awaiting the receipt. Unsupported SDK queue editing/upload/runtime preferences are not advertised as working features.

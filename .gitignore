@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.data/
+.env
+.env.local
+artifacts/
+*.sqlite*
+.DS_Store
+
+.tools/

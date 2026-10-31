@@ -1,0 +1,529 @@
+import { Hono } from "hono";
+import { serveStatic } from "hono/bun";
+import { join, resolve } from "node:path";
+import { homedir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { CompanyDomain, DomainError, type CallerContext } from "../domain";
+import { PeriRuntime, WorkspaceViewAdapter, FileStoreProvider, ExplicitFirstStoreProvider, sharedSqldProviderFromEnv, redactRuntimeMessage, toChatActionRuntimeError, type StoreProvider } from "../runtime";
+import { AccessControl, AccessError } from "./security";
+import { AgentService } from "./agent-service";
+import { createCompanyMcp } from "./mcp";
+import { MODULE_OPERATIONS, type CompanyModule } from "./operations";
+
+export type ApplicationOptions = {
+  root?: string;
+  baseUrl?: string;
+  periBinary?: string;
+  storeProvider?: StoreProvider;
+  storesFile?: string;
+  webToken?: string;
+  staticRoot?: string;
+};
+export async function createApplication(options: ApplicationOptions = {}) {
+  const root = resolve(
+    options.root ?? process.env.COMPANY_HOME ?? join(homedir(), ".company"),
+  );
+  const baseUrl =
+    options.baseUrl ?? process.env.COMPANY_BASE_URL ?? "http://127.0.0.1:3000";
+  const storesFile = options.storesFile ?? process.env.COMPANY_WASM_STORES_FILE;
+  // 显式 stores 优先；显式 scope 缺配时才回退到宿主自动供给的单一共享 sqld。
+  const sharedStores = options.storeProvider ? undefined : sharedSqldProviderFromEnv();
+  const storeProvider =
+    options.storeProvider ??
+    (sharedStores
+      ? new ExplicitFirstStoreProvider(
+          new FileStoreProvider({ root, file: storesFile }),
+          sharedStores,
+        )
+      : undefined);
+  await mkdir(root, { recursive: true });
+  const ownerTokenFile = join(root, "owner-token");
+  let ownerToken = options.webToken ?? process.env.COMPANY_WEB_TOKEN;
+  if (!ownerToken) {
+    try {
+      ownerToken = (await readFile(ownerTokenFile, "utf8")).trim();
+    } catch (error: any) {
+      if (error.code !== "ENOENT") throw error;
+      ownerToken = randomBytes(32).toString("hex");
+      await writeFile(ownerTokenFile, ownerToken + "\n", {
+        mode: 0o600,
+        flag: "wx",
+      });
+    }
+  }
+  const access = new AccessControl(root, baseUrl, ownerToken);
+  const pendingTokens = new Map<string, CallerContext>();
+  const authenticate = access.agent.bind(access);
+  access.agent = async (request) => {
+    access.allowed(request);
+    const token = request.headers.get("authorization")?.replace(/^Bearer /, "");
+    if (token && pendingTokens.has(token)) return pendingTokens.get(token)!;
+    return authenticate(request);
+  };
+  const backgroundWork = new Set<Promise<unknown>>();
+  const listeners = new Set<(event: Record<string, unknown>) => void>();
+  let mcp: ReturnType<typeof createCompanyMcp> | undefined;
+  const emit = (event: Record<string, unknown>) => {
+    mcp?.changed();
+    for (const fn of listeners) fn(event);
+  };
+  const runtime = new PeriRuntime({
+    root,
+    periBinary: options.periBinary ?? process.env.PERI_BINARY,
+    storeProvider,
+    storesFile,
+    privatePaths: sharedStores?.privatePaths,
+    onChange: (scope) => emit({ ...scope, kind: "runtime" }),
+  });
+  const files = new WorkspaceViewAdapter({
+    periBinary: runtime.binary,
+    home: join(root, "runtime", "home"),
+    companyHome: root,
+    privatePaths: [
+      storesFile,
+      ...(sharedStores?.privatePaths ?? []),
+    ].filter((path): path is string => Boolean(path)),
+  });
+  let agents: AgentService;
+  const domain = new CompanyDomain({
+    root,
+    baseUrl,
+    provisionAgent: async (input) => {
+      const token = (input as any).authToken;
+      if (token)
+        pendingTokens.set(token, {
+          type: "agent",
+          id: input.agentId,
+          companyId: input.companyId,
+        });
+      try {
+        return await runtime.provision(input);
+      } catch (error) {
+        if (token) pendingTokens.delete(token);
+        throw error;
+      }
+    },
+    deliver: async (input) => {
+      try {
+        const receipt = await agents.deliver(input);
+        return receipt.status === "delivered"
+          ? { status: "delivered", receipt }
+          : { status: "failed", error: receipt.error };
+      } catch (error) {
+        return {
+          status: "failed",
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    },
+    onChange: (event) => emit(event),
+  });
+  agents = new AgentService(domain, runtime);
+  const dispatch = async (
+    module: CompanyModule,
+    operation: string,
+    caller: CallerContext,
+    input: Record<string, unknown>,
+  ) => {
+    if (
+      !(MODULE_OPERATIONS[module] as readonly string[] | undefined)?.includes(
+        operation,
+      )
+    )
+      throw new DomainError("not_found", "Unknown Company operation", 404);
+    const normalized = { ...input };
+    if (normalized.expectedVersion !== undefined) {
+      normalized.version = normalized.expectedVersion;
+      delete normalized.expectedVersion;
+    }
+    if (["ask", "reply"].includes(operation) && normalized.text !== undefined) {
+      normalized.body = normalized.text;
+      delete normalized.text;
+    }
+    if (operation === "ask" && normalized.toAgentId !== undefined) {
+      normalized.recipientId = normalized.toAgentId;
+      delete normalized.toAgentId;
+    }
+    const method = operation === "listPipelines" ? "pipelines" : operation;
+    const handler = (domain as any)[method];
+    if (typeof handler !== "function")
+      throw new DomainError(
+        "unsupported_operation",
+        "Operation is not available",
+        404,
+      );
+    const result = await handler.call(domain, caller, normalized);
+    if (
+      operation === "answerDecision" &&
+      result.decisions?.some(
+        (q: any) => q.id === normalized.questionId && q.status === "pending",
+      )
+    ) {
+      const eventId = String(normalized.requestId);
+      const eventPath = join(
+        domain.store.company(caller.companyId),
+        "events",
+        "deliveries",
+        eventId + ".yaml",
+      );
+      await domain.store.locked(
+        "decision-delivery:" + caller.companyId + ":" + eventId,
+        async () => {
+          if (await domain.store.exists(eventPath)) return;
+          await domain.store.putYaml(eventPath, {
+            id: eventId,
+            kind: "decision-answer",
+            issueId: result.id,
+            questionId: normalized.questionId,
+            agentId: result.agent_id,
+            status: "saved",
+            at: new Date().toISOString(),
+          });
+          const work = agents
+            .send(caller, result.agent_id, {
+              text: `用户已答复 Company Issue #${result.id} 的明确问题 ${normalized.questionId}。请通过 company_tasks 读取原始问题和答复，处理后用 resolveDecision 标记 answered；不要把普通消息当成其他问题的裁定。`,
+              requestId: "decision-" + eventId,
+              issueId: result.id,
+            })
+            .then((receipt) => ({ status: "delivered", receipt }))
+            .catch((error) => ({
+              status: "failed",
+              error: error instanceof Error ? error.message : String(error),
+            }))
+            .then(async (receipt) => {
+              await domain.store.locked(
+                "company:" + caller.companyId,
+                async () => {
+                  await domain.store.putYaml(eventPath, {
+                    ...(await domain.store.yaml(eventPath)),
+                    ...receipt,
+                  });
+                  await domain.store.commit(
+                    domain.store.company(caller.companyId),
+                    "Record exact decision-answer work delivery",
+                  );
+                  emit({
+                    companyId: caller.companyId,
+                    agentId: result.agent_id,
+                    kind: "decisionDelivery",
+                  });
+                },
+              );
+            });
+          backgroundWork.add(work);
+          void work.finally(() => backgroundWork.delete(work));
+        },
+      );
+      return { ...result, delivery: await domain.store.yaml(eventPath) };
+    }
+    return result;
+  };
+  mcp = createCompanyMcp(access, dispatch);
+  const app = new Hono();
+  app.onError((error, c) => {
+    // bind/restart 阶段的 SDK chat 动作错误不经 executeControl，也按同一契约映射。
+    const e = toChatActionRuntimeError(error) ?? (error as any);
+    const status = typeof e.status === "number" ? e.status : 500;
+    console.error(
+      `[${e.code ?? "internal_error"}] ${redactRuntimeMessage(String(e.message ?? "Request failed"))}`,
+    );
+    return c.json(
+      {
+        error: {
+          code: e.code ?? "internal_error",
+          message: e.message ?? "Request failed",
+          details: e.details,
+        },
+      },
+      status,
+    );
+  });
+  app.use("*", async (c, next) => {
+    c.header("X-Content-Type-Options", "nosniff");
+    c.header("Referrer-Policy", "no-referrer");
+    c.header("X-Frame-Options", "DENY");
+    if (c.req.path.startsWith("/api/")) c.header("Cache-Control", "no-store");
+    await next();
+  });
+  app.get("/health", (c) =>
+    c.json({
+      ok: true,
+      service: "company-factory",
+      version: "1.0.0",
+      mcpModules: Object.keys(MODULE_OPERATIONS),
+      runtime: "@peri-code/sdk@0.3.0 WASM + local sqld (explicit or host-provisioned shared)",
+      storage: {
+        sharedSqld: sharedStores ? "enabled" : "disabled",
+      },
+      workspace:
+        process.env.COMPANY_WORKSPACE === "disabled"
+          ? "disabled (COMPANY_WORKSPACE=disabled)"
+          : "official Peri 4.4.1 Workspace MCP via isolated ACP bridge",
+    }),
+  );
+  app.post("/api/login", async (c) => {
+    const body = await c.req.json();
+    c.header("Set-Cookie", access.login(c.req.raw, String(body.token ?? "")));
+    return c.json({ ok: true });
+  });
+  app.get("/api/companies", async (c) => {
+    access.user(c.req.raw, "");
+    return c.json({ companies: await domain.listCompanies() });
+  });
+  app.get("/api/companies/:companyId", async (c) => {
+    const ctx = access.user(c.req.raw, c.req.param("companyId"));
+    const org = await domain.organization(ctx);
+    const issues = await domain.listIssues(ctx);
+    return c.json({
+      ...org,
+      agents: await Promise.all(
+        org.agents.map(async (a) => ({
+          ...a,
+          ...(await agents.snapshot(ctx, a.agentId)),
+          needs_user: issues.some(
+            (i) => i.agent_id === a.agentId && i.needs_user,
+          ),
+        })),
+      ),
+    });
+  });
+  app.post("/api/action", async (c) => {
+    const body = await c.req.json();
+    const module = body.module as CompanyModule;
+    const caller = access.user(
+      c.req.raw,
+      String(body.companyId ?? ""),
+    );
+    return c.json(
+      await dispatch(module, String(body.operation), caller, body.input ?? {}),
+    );
+  });
+  app.all("/:module/mcp", async (c) => {
+    if (!Object.keys(MODULE_OPERATIONS).includes(c.req.param("module")))
+      return c.json({ error: { code: "not_found" } }, 404);
+    return mcp!.fetch(c.req.raw);
+  });
+  const scope = (c: any, body?: any) => ({
+    caller: access.user(
+      c.req.raw,
+      String(body?.companyId ?? c.req.query("companyId") ?? ""),
+    ),
+    agentId: c.req.param("agentId") as string,
+  });
+  app.get("/api/agents/:agentId/workspace", async (c) => {
+    const { caller, agentId } = scope(c);
+    const workspace = await domain.workspace(caller, { agentId });
+    return c.json({
+      ...workspace,
+      runtime: await agents.snapshot(caller, agentId),
+    });
+  });
+  app.get("/api/agents/:agentId/runtime", async (c) => {
+    const { caller, agentId } = scope(c);
+    return c.json(await agents.snapshot(caller, agentId));
+  });
+  app.get("/api/agents/:agentId/configuration", async (c) => {
+    const { caller, agentId } = scope(c);
+    return c.json(await agents.configuration(caller, agentId));
+  });
+  app.post("/api/agents/:agentId/configuration", async (c) => {
+    const body = await c.req.json();
+    const { caller, agentId } = scope(c, body);
+    return c.json(await agents.save(caller, agentId, body));
+  });
+  app.post("/api/agents/:agentId/restart", async (c) => {
+    const body = await c.req.json();
+    const { caller, agentId } = scope(c, body);
+    return c.json(await agents.restart(caller, agentId));
+  });
+  app.get("/api/agents/:agentId/chat", async (c) => {
+    const { caller, agentId } = scope(c);
+    return c.json(
+      await agents.conversation(caller, agentId, c.req.query("cursor")),
+    );
+  });
+  app.post("/api/agents/:agentId/chat", async (c) => {
+    const body = await c.req.json();
+    const { caller, agentId } = scope(c, body);
+    return c.json(await agents.send(caller, agentId, body));
+  });
+  app.post("/api/agents/:agentId/stop", async (c) => {
+    const body = await c.req.json();
+    const { caller, agentId } = scope(c, body);
+    return c.json(await agents.stop(caller, agentId));
+  });
+  app.post("/api/agents/:agentId/queue/take-back", async (c) => {
+    const body = await c.req.json();
+    const { caller, agentId } = scope(c, body);
+    return c.json(
+      await agents.queue(
+        caller,
+        agentId,
+        String(body.inputId ?? ""),
+        "takeBack",
+      ),
+    );
+  });
+  app.post("/api/agents/:agentId/queue/force-send", async (c) => {
+    const body = await c.req.json();
+    const { caller, agentId } = scope(c, body);
+    return c.json(
+      await agents.queue(
+        caller,
+        agentId,
+        String(body.inputId ?? ""),
+        "forceSend",
+      ),
+    );
+  });
+  app.post("/api/agents/:agentId/answer", async (c) => {
+    const body = await c.req.json();
+    const { caller, agentId } = scope(c, body);
+    return c.json(
+      await agents.answer(
+        caller,
+        agentId,
+        String(body.interactionId ?? ""),
+        body.answer,
+      ),
+    );
+  });
+  app.get("/api/events", async (c) => {
+    const caller = access.user(
+      c.req.raw,
+      String(c.req.query("companyId") ?? ""),
+    );
+    await domain.organization(caller);
+    const agentId = c.req.query("agentId");
+    if (agentId) await agents.binding(caller, agentId);
+    const encoder = new TextEncoder();
+    let cleanup = () => {};
+    const stream = new ReadableStream({
+      start(controller) {
+        const fn = (event: Record<string, unknown>) => {
+          if (
+            event.companyId === caller.companyId &&
+            (!event.agentId || !agentId || event.agentId === agentId)
+          )
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify(event)}\n\n`),
+            );
+        };
+        listeners.add(fn);
+        const interval = setInterval(
+          () => controller.enqueue(encoder.encode(": heartbeat\n\n")),
+          15000,
+        );
+        cleanup = () => {
+          listeners.delete(fn);
+          clearInterval(interval);
+        };
+        controller.enqueue(encoder.encode(": ready\n\n"));
+        c.req.raw.signal.addEventListener("abort", () => {
+          cleanup();
+          try {
+            controller.close();
+          } catch {}
+        });
+      },
+      cancel() {
+        cleanup();
+      },
+    });
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
+  });
+  const fileInput = async (c: any, body?: any) => {
+    const { caller, agentId } = scope(c, body);
+    const a = await agents.binding(caller, agentId);
+    return agents.input(a);
+  };
+  app.get("/api/agents/:agentId/files", async (c) =>
+    c.json(await files.list(await fileInput(c), c.req.query("path"))),
+  );
+  app.get("/api/agents/:agentId/files/read", async (c) =>
+    c.json(
+      await files.read(await fileInput(c), String(c.req.query("path") ?? "")),
+    ),
+  );
+  app.post("/api/agents/:agentId/files/save", async (c) => {
+    const body = await c.req.json();
+    return c.json(
+      await files.save(
+        await fileInput(c, body),
+        String(body.path ?? ""),
+        String(body.content ?? ""),
+        String(body.expectedVersion ?? ""),
+      ),
+    );
+  });
+  app.get("/api/agents/:agentId/files/search", async (c) =>
+    c.json(
+      await files.search(
+        await fileInput(c),
+        String(c.req.query("q") ?? ""),
+        c.req.query("path"),
+      ),
+    ),
+  );
+  app.get("/api/agents/:agentId/files/diff", async (c) =>
+    c.json(
+      await files.diff(await fileInput(c), String(c.req.query("path") ?? "")),
+    ),
+  );
+  app.get("/api/agents/:agentId/files/changes", async (c) =>
+    c.json(await files.changes(await fileInput(c))),
+  );
+  app.get("/api/agents/:agentId/files/capabilities", async (c) =>
+    c.json(await files.capabilities(await fileInput(c))),
+  );
+  app.post("/api/agents/:agentId/files/commit", async (c) => {
+    const body = await c.req.json();
+    return c.json(
+      await files.commit(await fileInput(c, body), String(body.message ?? "")),
+    );
+  });
+  const staticRoot = options.staticRoot ?? resolve("dist/web");
+  app.use("/assets/*", serveStatic({ root: staticRoot }));
+  app.get("*", async (c) => {
+    if (c.req.path.startsWith("/api/"))
+      return c.json(
+        { error: { code: "not_found", message: "Unknown API route" } },
+        404,
+      );
+    access.allowed(c.req.raw);
+    const index = Bun.file(join(staticRoot, "index.html"));
+    if (!(await index.exists()))
+      return c.text("Build the workbench first: npm run build", 503);
+    return c.html(await index.text());
+  });
+  return {
+    app,
+    domain,
+    runtime,
+    agents,
+    files,
+    access,
+    mcp,
+    root,
+    baseUrl,
+    ownerToken,
+    dispatch,
+    async close() {
+      await Promise.allSettled([...backgroundWork]);
+      const results = await Promise.allSettled([
+        mcp!.close(), files.shutdown(), runtime.shutdown(),
+      ]);
+      if (sharedStores)
+        results.push(...(await Promise.allSettled([sharedStores.close()])));
+      if (results.some((result) => result.status === "rejected"))
+        throw new Error("应用关闭未确认；Workspace/WASM/共享 sqld handle 已保留，请重试关闭。");
+    },
+  };
+}

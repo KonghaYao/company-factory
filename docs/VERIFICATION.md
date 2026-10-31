@@ -1,0 +1,95 @@
+# Company Factory 验证报告
+
+日期：2026-10-30（UTC）。最后更新：2026-10-31（UTC）。现行要求：原始任务书 + `USER-OVERRIDES.md`。
+
+## 最终 live E2E 事实（2026-10-31）
+
+以下取代本文历史章节中“未执行 live / 未验证外部模型”的表述。
+
+- **结论**：按计划 §11 字面口径 `closure=true`；Stage 2 `--mode=linux-full` 的 E00–E19 全部 `passed`。运行 `91201b67`。证据：`/tmp/cf-e2e-delivery-round2.n5TgK726/`。下方 A01–A15 与命令记录保留为 2026-10-30 的历史接口验收。
+- **真实执行范围**：Linux 容器内官方 Peri 4.4.1、sqld 0.24.32、bwrap 0.8.0；真实模型端点与真实 Session；Workspace/Git/Preview/CI/Review、重启与 IM 均实际执行。
+- **测试**：Linux 全量 `101 pass / 24 skip / 0 fail`；宿主 macOS 全量 `100 pass / 24 skip / 1 fail`，唯一失败是既有 `sandbox_unavailable`（`src/storage/git-sandbox.test.ts`，要求 Linux bubblewrap），不是 live 轮引入。
+- **fable 限制**：原始 `PERI_MODEL_ID_FABLE` 请求返回 HTTP 400；供应商 `/models` 无独立 fable 模型。测试用项目外临时 0600 env 将 fable 映射到 opus 档模型 ID。四档 alias 路由已验证，但**独立 fable 模型未验证**；不能声称“四档四模型全部真实通过”。
+- **M1 限制**：`agentCiExecuted=true` 是真实 Session 中 Bash 调用的 args/result 匹配，不是密码学证明；宿主独立 CI digest 是权威；恶意 Agent 理论上可用 `echo "<challenge> <digest>"` 伪造。E12 transcript 的 canonical JSON 已由独立 Verifier 复算，与宿主 digest 一致。
+- **证据缺口**：多数步骤的 `toolCalls` 数组为空，只有 E12/E13 有 toolCallId/flags 与 transcript；E13 的 canonical JSON 未保存，无法仅凭交付文件独立重算其 digest。E07 的 `resolveDecision` 返回 `invalid_state`（decision 已 answered），报告中的 `resolved=true` 表示业务终态，不是该工具调用成功。
+- **macOS 边界**：macOS Stage 1 的 Workspace/File/Git/Preview/CI 仍 fail closed；macOS 上不能算全业务通过。
+- **安全事件**：上一轮 live 执行中一次宿主范围 `ps` 带完整 args，瞬时工具输出带出一个与本任务无关的宿主进程凭据。该值未写入项目或证据、未用于任何请求；扫描未发现实际 secret（模式命中仅为 request id 子串）。具体值不在任何交付文件或本文中。建议轮换所有可能出现在宿主进程列表中的无关凭据；详见 `/tmp/cf-e2e-delivery-round2.n5TgK726/SECURITY-NOTICE.md`。
+
+> `SOURCE-MANIFEST.sha256` 是历史快照，已过期且不包含后续新增的 `scripts/e2e-live.ts`、`scripts/e2e-ci-runner.ts` 等文件。它不得作为当前源码完整性或 E2E 证据；如需要，应先重新生成并校验。
+
+## 结论与验收范围
+
+按用户最新裁定，使用 **真实 HTTP / MCP 接口模拟用户及已鉴权岗位** 验收，不要求浏览器。服务、文件、Git、官方 Peri Session 和默认 Workspace 都是真实实例；接口测试没有用 fake runtime 替代。
+
+- 前端 TypeScript 与生产构建通过；UI scope/draft/receipt/conflict 等状态单测通过。
+- 业务单测使用明确标注的 runtime double，只用于业务规则，不充当 Peri 接入证据。
+- SDK/Workspace 测试使用官方 Peri 4.4.1、SDK 0.3.0、真实 SQLite、Git 和 bubblewrap。
+- 本地 provider **协议 fixture** 验证真实 Peri 请求/流式投影/投递/生效配置，不是外部模型推理能力验收（历史轮次；live 轮已改用真实模型端点，见上）。
+- 双 Issue 软件示例实际创建独立 Git worktree/计划/提交，真实合并到 Preview 分支，HTTP Preview 读取合并产物，CI 校验产物和同一 SHA；用户验收与 Review 记录由接口模拟者提交并明确标为测试证据。
+- **历史轮次（2026-10-30）没有声称**外部真实模型已自动完成 HR 对话、复杂多任务编码、真实同事推理回复，或真实项目已通过人工验收。2026-10-31 live 轮已用真实模型验证 HR `createGroup`、Session 回复、IM 往返与 Preview/CI/Review；仍不声称用户自有真实项目的复杂编码或人工验收已通过。
+
+## 实际执行命令
+
+```bash
+# 实际安装并校验了官方 Peri 发行包
+npm run setup:peri
+
+npm run typecheck
+npm run build
+PERI_BINARY=/tmp/peri-inspect/native/peri npm test
+PERI_BINARY=/tmp/peri-inspect/native/peri npm run test:integration
+npm audit --json
+```
+
+`/tmp/peri-inspect/native/peri` 是本次检查过的官方 4.4.1 二进制；交付项目内 `npm run setup:peri` 也已实际执行成功，其目标是 `.tools/peri/peri`。二进制不打入源码 ZIP，避免将特定主机产物当作跨平台源码。
+
+最终同版本汇总：**51 tests passed，0 failed，261 assertions**（7 个测试文件）；TypeScript 和 Vite 构建通过。另将源码复制到全新临时目录，实际执行 `npm ci`、`npm run typecheck`、`npm run build` 全部通过。详见 `test-results.txt`、`build-results.txt`、`clean-install-results.txt` 与 `dependency-audit.json`。DOMPurify 的传递版本告警已通过锁定 `3.4.17` override 修复，最终 npm audit 为 0 已知漏洞。构建有 Monaco 大 chunk 的体积提示，不是编译错误；编辑器延迟加载，worker 打包在本地。
+
+## A01–A15：逐项接口验收
+
+“已通过”限定为用户授权的接口模拟验收。界面视觉、真实外部模型质量不混入该结果。
+
+| 编号 | 状态 | 实际依据与边界 |
+| --- | --- | --- |
+| A01 创建 Company | 已通过 | HTTP 创建，实际总部/HR/主管、个人/公司 Git、跟踪 `.env`、官方原生 UUID Session 和 per-Agent SQLite。初始化失败不返回伪成功；相同请求可继续未完成初始化。 |
+| A02 HR 创建 Agent | 已通过 | 通过真实 bearer 鉴权的 HR MCP 创建部门及成员，唯一归属；伪报角色、用户冒充 HR 拒绝。全局同 Agent ID 并发竞争回归保证仅一方成功。无调组/离职接口。 |
+| A03 保存与重启 | 已通过 | HTTP 保存与重启、SDK 同 Session 加载；真实本地 provider 捕获证明保存未重启保留旧模型/职责，重启应用新值。模型凭据/端点只来自可信宿主环境；Agent 可写的 `.env` 对模型解析无效且在工作区只读，恶意改写不能重定向凭据。普通冷唤醒保留旧模型/密钥与 host-only 生效快照，显式重启才按宿主 env 刷新。host-only 生效快照不可由 Agent 读写。底层 frozen system prompt 不重写，职责通过宿主当前输入上下文装配，已明确记录。 |
+| A04 用户/角色建单 | 已通过 | 用户 HTTP、主管 MCP、用户授权后的 Dev MCP 均可创建；未授权角色 MCP 拒绝且无任务文件。新单 `triage`、主管负责；payload 自报身份不能授权。 |
+| A05 文件与评论 | 已通过 | Issue 描述/头部、用户/Agent 评论真实落盘；本人编辑、他人拒绝；普通评论不改状态。版本冲突、幂等冲突、未知 YAML 字段保留与并发 patch 有回归。 |
+| A06 Agent 范围切换 | 已通过（接口/状态层） | 并行 HTTP workspace 查询返回各自 Company/Agent scope；UI 单测覆盖双维 query keys、草稿/文件缓存隔离、迟到回执不清较新草稿。按用户要求不进行浏览器视觉验收。 |
+| A07 同 Agent 多 Issue | 已通过 | 两条 Issue 指派同一 Agent、独立计划/worktree，Chat 及重启保持原 Session；并发唤醒单绑定。无外包组织节点/自建调度器；真正复杂多任务运行负载未作外部模型测试。 |
+| A08 指定问题裁定 | 已通过 | Q1/Q2 各自稳定编号；用户明确答 Q1 后由当前 Agent MCP 标 answered，Q2 仍 pending。撤回后晚到答复只留历史；普通评论/聊天不替代裁定。答复落盘后投递当前 Agent，投递失败不抹除答复。 |
+| A09 IM | 已通过（接口/协议） | 跨部门发现与点对点 MCP 询问/回复、去重、关闭后迟到回复；无新 Issue/Session。无模型配置时真实记录 failed，不伪报 delivered；本地协议 fixture 验证真实 SDK 投递原 Session。外部模型自动同事回复未验证（历史记录；2026-10-31 live E15 已用真实模型验证 IM 回复）。 |
+| A10 文件工作区 | 已通过（接口/状态层） | 通过官方 Workspace 的真实树、隐藏/依赖目录、读写/新文件/搜索/HEAD Diff/Git commit；旧 SHA 保存拒绝，缓冲/磁盘双方保留；代码引用包含路径/行/版本。OS sandbox 阻止原生 Read/Write/Bash 跨 Company 和身份文件写入；Agent 仓库宿主 Git hooks/fsmonitor/filter 也隔离。 |
+| A11 知识目录 | 已通过 | 实际 `claude.md` 写入 Company 知识路径；官方 Grep 搜索普通 Markdown，知识根可读写；无知识/文件专用 MCP。 |
+| A12 软件交付 | 已通过（接口示例） | 两个真实 worktree/独立计划/分支提交，真实 `preview/joint` 合并；Dev HTTP 环境读取两份合并产物；逐 Issue 验收/评论，未把一项通过自动扩展到整批。旧批次不能验收已迁入新批的 Issue。真实用户项目的自动开发尚需模型配置。 |
+| A13 验证/待合入 | 已通过（接口示例） | 验收后执行针对 Preview 产物和精确 SHA 的实际 Bun 断言；明确标注的脚本 Review 证据经真实 MCP 记录。缺任一验证、旧代码或旧批次均拒绝；最终为 `ready_merge`，没有执行实际合入主分支/发布。 |
+| A14 自主修正/cancel | 已通过 | 当前 Dev 经 MCP 改描述/阶段；主管交接、非 owner 状态修改拒绝；cancel 保留计划/代码及原因，迟到更新不能复活。 |
+| A15 MCP/部署 | 已通过 | 一个 Bun HTTP 服务托管构建产物/Web API/三个 MCPP mono 路由；真实 2026-07-28 tool/resource 请求及 `subscriptions/listen` 收到业务落盘后的更新。SDK/Workspace 为官方工作子进程，本地 SQLite；没有额外 Company MCP、数据库服务或自建 Workspace。 |
+
+## 独立审查修复与复测
+
+独立 reviewer 的临时目录探针复现并确认修复了：
+
+1. IM 字段映射不一致、失败回执误写 delivered。
+2. 全局 Agent ID 跨公司创建竞争。
+3. 文件编辑 canonical/symlink/hardlink 绕过。
+4. 默认 Workspace 本身无隔离：新增真实 OS namespace，并验证直接原生工具也不能越界。
+5. Agent 私有 Git hooks / fsmonitor / clean filters 逃逸到宿主：宿主 Git 也隔离。
+6. HR 通过成员 config 自授项目挂载/宿主凭据：拒绝，能力配置只由用户授权。
+7. 旧 Preview 批次验收当前 Issue、代码引用过期。
+8. 配置 draft 版本与查询最新版本混用、保存时清除较新输入。
+9. SDK immutable frozen context 的实际语义：明确使用宿主生效职责上下文，并捕获真实 Peri outbound 验证。
+10. `.env` 冷唤醒/显式重启触发的凭据或端点漂移：模型解析只读可信宿主环境，Agent `.env` 不被读取且在 Workspace 只读；生效快照 host-only，并用真实请求回归。
+
+## 前端实现选择
+
+实际使用 React、TanStack Query、Zustand、ReactMarkdown、Monaco 与 Lucide，离线 worker、本地 CSS。分栏、输入框、文件树采用项目内 React 实现，而不是声称已接入 Tiptap / shadcn / react-arborist / Streamdown。对应的 scope/draft、原生队列、引用、滚动、权限问答与冲突能力由真实适配器驱动。附件上传未接通，因此不展示虚假的可用上传入口。
+
+## 剩余用户侧验证条件
+
+- 在你自己的 Linux 环境配置真实模型 endpoint / model / key，并手动重启 Agent；本轮 live 只在隔离容器和测试公司中完成，未使用你的生产数据。
+- 授予所需真实 Git 项目根，运行自己的工程命令和 CI；外部 MCP 仅按你的实际配置使用。
+- 真实自然语言 HR 创建与 Agent 间推理往返已在 2026-10-31 live 轮用真实模型验证；用户自有项目的复杂多任务编码、真实项目人工验收仍待你的环境验证。
+- Linux arm64 容器路径已在 live 轮验证；macOS/Windows 仍未做产品级运行验证，当前运行时对非 Linux 或缺少有效 bubblewrap 的主机 fail closed。
+- 浏览器已被用户排除，本报告不声称做过视觉验收。早期启动限制保留在 `browser-results.json` 作为历史记录，不是当前验收阻塞。
