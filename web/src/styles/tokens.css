@@ -1,0 +1,48 @@
+/* 设计变量：颜色、字体、圆角、阴影与层级。
+   所有组件只消费这里暴露的 token，避免散落硬编码色值。 */
+:root {
+  color-scheme: light;
+
+  --canvas: #f4f3ef;
+  --surface: #ffffff;
+  --surface-muted: #faf9f6;
+  --surface-strong: #f0eee8;
+
+  --ink: #20242a;
+  --ink-soft: #3c424b;
+  --muted: #737a85;
+  --faint: #98a0aa;
+
+  --line: #e7e4dd;
+  --line-strong: #d6d2c9;
+
+  --accent: #3b5bdb;
+  --accent-strong: #2d47b2;
+  --accent-soft: #eef2ff;
+
+  --success: #1c7c54;
+  --success-soft: #e8f5ee;
+  --warning: #a46a12;
+  --warning-soft: #fdf3e2;
+  --danger: #b4372e;
+  --danger-soft: #fdeceb;
+
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+
+  --shadow-sm: 0 1px 2px rgba(32, 36, 42, 0.05);
+  --shadow: 0 8px 24px rgba(32, 36, 42, 0.08);
+  --shadow-lg: 0 24px 64px rgba(15, 23, 42, 0.2);
+
+  --font:
+    ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --mono:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono",
+    monospace;
+
+  --header-h: 56px;
+  --tab-h: 44px;
+}

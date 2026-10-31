@@ -1,0 +1,420 @@
+/* 工作台三栏 + 组织栏。 */
+.workbench {
+  display: grid;
+  flex: 1;
+  min-height: 0;
+  gap: 0;
+  padding: 0 14px 14px;
+  grid-template-columns: 18% 6px 34% 6px 48%;
+}
+
+.workbench-column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+
+.column-gutter {
+  position: relative;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.column-gutter::after {
+  content: "";
+  position: absolute;
+  top: 40%;
+  bottom: 40%;
+  left: 2px;
+  right: 2px;
+  border-radius: 999px;
+  background: transparent;
+  transition: background 0.15s ease;
+}
+
+.column-gutter:hover::after,
+.column-gutter:active::after {
+  top: 20%;
+  bottom: 20%;
+  background: var(--accent);
+  opacity: 0.55;
+}
+
+/* ---------- 组织栏 ---------- */
+.org-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.org-head {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 12px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.org-head .panel-kicker {
+  justify-content: space-between;
+  padding: 0 2px 0 4px;
+}
+
+.company-switch {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+
+.company-switch:hover {
+  border-color: var(--line-strong);
+  background: var(--surface);
+}
+
+.company-mark {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--ink);
+  color: #fff;
+  flex: 0 0 auto;
+}
+
+.company-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  gap: 1px;
+}
+
+.company-copy select {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.company-copy select:focus {
+  box-shadow: none;
+}
+
+.company-copy small {
+  color: var(--faint);
+  font-size: 10.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.company-chevron {
+  color: var(--faint);
+  flex: 0 0 auto;
+}
+
+.org-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 8px 14px;
+}
+
+.org-group {
+  margin-bottom: 12px;
+}
+
+.org-group-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 5px 6px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  border-radius: var(--radius-sm);
+}
+
+.org-group-head:hover {
+  background: var(--surface-muted);
+  color: var(--ink-soft);
+}
+
+.org-group-head span {
+  flex: 1;
+  text-align: left;
+}
+
+.org-group-head em {
+  font-style: normal;
+  color: var(--faint);
+  font-size: 10px;
+}
+
+.agent-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  border-radius: 8px;
+  margin: 1px 0;
+}
+
+.agent-row:hover {
+  background: var(--surface-muted);
+}
+
+.agent-row.is-selected {
+  background: var(--accent-soft);
+}
+
+.agent-row.is-selected::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.agent-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 6px 4px 6px 8px;
+  text-align: left;
+}
+
+.agent-avatar-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.agent-busy {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  display: grid;
+  place-items: center;
+  width: 13px;
+  height: 13px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--accent);
+}
+
+.agent-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  gap: 0;
+}
+
+.agent-name {
+  font-size: 12.5px;
+  font-weight: 550;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-row.is-selected .agent-name {
+  color: var(--accent-strong);
+}
+
+.agent-role {
+  font-size: 10.5px;
+  color: var(--faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-edit {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin-right: 4px;
+  border-radius: 5px;
+  color: var(--faint);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.agent-row:hover .agent-edit,
+.agent-row.is-selected .agent-edit {
+  opacity: 1;
+}
+
+.agent-edit:hover {
+  background: rgba(32, 36, 42, 0.06);
+  color: var(--ink);
+}
+
+.org-empty {
+  padding: 4px 10px 8px;
+  color: var(--faint);
+  font-size: 10.5px;
+}
+
+.org-bottom {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.org-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: 11.5px;
+  text-align: left;
+}
+
+.org-action:hover {
+  background: var(--surface-muted);
+  color: var(--ink);
+}
+
+.org-note {
+  padding: 8px 8px 2px;
+  color: var(--faint);
+  font-size: 10px;
+  letter-spacing: 0.01em;
+}
+
+/* 平板：收紧栏宽，隐藏次要信息 */
+@media (max-width: 1180px) {
+  .workbench {
+    padding: 0 10px 10px;
+  }
+
+  .agent-role {
+    display: none;
+  }
+
+  .company-copy small {
+    display: none;
+  }
+}
+
+/* 窄屏：三栏改为纵向堆叠，拖拽禁用 */
+@media (max-width: 900px) {
+  .app {
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
+  }
+
+  .app-header {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: var(--canvas);
+  }
+
+  .breadcrumb {
+    display: none;
+  }
+
+  .workbench {
+    display: flex !important;
+    flex-direction: column;
+    gap: 10px;
+    overflow: visible;
+    flex: 1;
+    padding: 0 10px 16px;
+  }
+
+  .column-gutter {
+    display: none;
+  }
+
+  .workbench-column {
+    overflow: visible;
+    flex: 0 0 auto;
+  }
+
+  .workbench-sidebar {
+    max-height: 300px;
+  }
+
+  .org-panel {
+    height: auto;
+    max-height: 300px;
+  }
+
+  .workbench-chat {
+    min-height: 72dvh;
+  }
+
+  .chat-panel {
+    height: 72dvh;
+  }
+
+  .workbench-data {
+    min-height: 80dvh;
+  }
+
+  .workspace-body.is-files {
+    min-height: 70dvh;
+  }
+}
+
+@media (max-width: 640px) {
+  .app-header {
+    padding: 0 12px;
+    gap: 10px;
+  }
+
+  .brand-name {
+    font-size: 13px;
+  }
+
+  .header-status .header-user,
+  .header-status .status-sep {
+    display: none;
+  }
+
+  .org-scroll {
+    max-height: 200px;
+  }
+}
