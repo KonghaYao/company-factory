@@ -277,7 +277,21 @@ export class PeriRuntime {
         database: store,
         kv: new ProcessOwnershipStore(),
         chatConfig: {
-          runtime: { kind: "wasm", moduleFactory: modules.factory },
+          runtime: {
+            kind: "transport",
+            // 公共 transport 分支只交回 agentConfig 快照；WASM 启动配置仍由它序列化。
+            factory: (_path, transportOptions) => {
+              const agentConfig = transportOptions?.agentConfig;
+              if (agentConfig === undefined)
+                throw new Error(
+                  "WASM runtime requires a per-chat agentConfig snapshot",
+                );
+              return modules.startTransport({
+                configJson: JSON.stringify(agentConfig),
+                signal: transportOptions?.signal,
+              });
+            },
+          },
         },
       });
       const entry = { manager, store, modules };

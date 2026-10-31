@@ -2,10 +2,15 @@ import {
   createNodeDnsPort,
   createNodeNetworkPort,
   instantiatePeriWasm,
+  startWasmRuntime,
   withDeadline,
   type NativeWasmAcp,
   type PeriWasmModuleFactory,
 } from "@peri-code/sdk/wasm-node";
+import { ModeTransport } from "./mode-transport";
+
+/** 与 SDK WasmRuntimePool 的默认启动预算一致。 */
+const STARTUP_TIMEOUT_MS = 20_000;
 
 /** Manager 拥有端口兜底回收；native 与 scheduler 生命周期仍由 SDK 驱动。 */
 export function createAgentWasmModules() {
@@ -68,6 +73,41 @@ export function createAgentWasmModules() {
   };
   return {
     factory,
+    /**
+     * SDK 托管的每次激活启动：端口生命周期仍由上面的 native.close 回收，
+     * transport 仅追加会话建立后的模式设置。
+     */
+    async startTransport(options: {
+      configJson: string;
+      signal?: AbortSignal;
+    }): Promise<ModeTransport> {
+      const controller = new AbortController();
+      const forwardAbort = () => controller.abort(options.signal?.reason);
+      if (options.signal?.aborted) forwardAbort();
+      options.signal?.addEventListener("abort", forwardAbort, { once: true });
+      try {
+        const starting = startWasmRuntime({
+          configJson: options.configJson,
+          moduleFactory: factory,
+          signal: controller.signal,
+        });
+        try {
+          return new ModeTransport(
+            await withDeadline(
+              starting,
+              STARTUP_TIMEOUT_MS,
+              "Peri WASM runtime startup",
+            ),
+          );
+        } catch (error) {
+          // 超时/取消后中止启动，让 SDK 自行结算 native 与端口清理。
+          controller.abort(error);
+          throw error;
+        }
+      } finally {
+        options.signal?.removeEventListener("abort", forwardAbort);
+      }
+    },
     async close() {
       const results = await Promise.allSettled([...pending].map((close) => close()));
       if (results.some((result) => result.status === "rejected"))
