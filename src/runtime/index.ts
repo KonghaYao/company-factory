@@ -891,6 +891,7 @@ export class PeriRuntime {
           ChatUserAction.send({ text, requestId }),
         );
         await receipt.accepted;
+        await this.recoverStrandedInput(bound, receipt.inputId);
         return {
           accepted: true,
           inputId: receipt.inputId,
@@ -906,6 +907,36 @@ export class PeriRuntime {
     );
     this.deliveries.set(key, { fingerprint, result });
     return result;
+  }
+  /**
+   * peri 的输入邮箱在“排队输入于 idle 边界被交接”后可能残留已取消的 active
+   * attempt：之后的空闲输入会被提升为待投递却不再交接，用户看到的就是 prompt
+   * 永远停在队列里。这里只在运行侧反复确认完全空闲、队列里只有这一条输入、
+   * 且没有待回答交互时，补一次官方 force_send；正常排队（有轮次在跑）直接跳过。
+   */
+  private async recoverStrandedInput(bound: BoundAgent, inputId: string) {
+    for (let attempt = 0; attempt < 8; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      if (!this.inputIsStranded(bound, inputId)) return;
+    }
+    try {
+      await bound.chat.execute(ChatUserAction.forceSend(inputId));
+    } catch {
+      // 投递仍留在队列；前端可继续用“立即投递”重试，不能因此回滚已受理的输入。
+    }
+  }
+
+  private inputIsStranded(bound: BoundAgent, inputId: string) {
+    const view = bound.replica.read();
+    const queue = view.inputQueue;
+    if (!queue || queue.activeRequestId) return false;
+    if (view.running || view.executionBlocked || view.closed) return false;
+    if (view.pendingInteractions.length > 0) return false;
+    if (view.activeTurnStatus && !["completed", "idle"].includes(view.activeTurnStatus))
+      return false;
+    if (queue.items.length !== 1) return false;
+    const item = queue.items[0];
+    return item.inputId === inputId && item.state === "queued";
   }
   async deliver(
     input: RuntimeAgent,
