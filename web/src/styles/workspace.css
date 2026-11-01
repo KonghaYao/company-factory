@@ -861,6 +861,52 @@
   color: var(--faint);
 }
 
+.file-location {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 4px 4px;
+  padding: 4px 5px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--faint);
+}
+
+.file-location input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 10.5px;
+  color: var(--ink-soft);
+}
+
+.file-location input:focus {
+  box-shadow: none;
+}
+
+.file-location button {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 2px;
+  border-radius: 4px;
+  color: var(--faint);
+}
+
+.file-location button:hover:not(:disabled) {
+  background: var(--surface-strong);
+  color: var(--ink);
+}
+
+.file-location button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
 .file-workspace {
   display: grid;
   grid-template-columns: 210px minmax(0, 1fr);

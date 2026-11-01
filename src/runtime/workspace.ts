@@ -1,8 +1,8 @@
-import { resolve, relative, join, dirname, basename } from "node:path";
+import { resolve, join, dirname, basename, parse } from "node:path";
+import { homedir } from "node:os";
 import { realpath, stat } from "node:fs/promises";
 import { StdioTransport } from "./stdio-transport";
 import type { RuntimeAgent } from "./index";
-import { sandboxCommand } from "./sandbox";
 export {
   createWorkspaceMcpServerFactory,
   type WorkspaceMcpServerOptions,
@@ -23,13 +23,14 @@ export class WorkspaceError extends Error {
 /** A view adapter over the official Workspace MCP, not a filesystem server.
  * Exact-byte editor payloads use its existing Bash tool because Read is line-numbered,
  * truncated model presentation. All actual user file I/O executes inside Workspace.
+ * 所有者文件视图是宿主可信路径：不套 OS 沙箱，也不限制根目录。
  */
 export class WorkspaceViewAdapter {
   private clients = new Map<string, Promise<StdioTransport>>();
   private fingerprints = new Map<string, string>();
   private clientLocks = new Map<string, Promise<unknown>>();
   private writes = new Map<string, Promise<unknown>>();
-  constructor(private options: { periBinary: string; home?: string; companyHome?: string; privatePaths?: string[] }) {}
+  constructor(private options: { periBinary: string; home?: string; companyHome?: string }) {}
   private async client(input: RuntimeAgent): Promise<StdioTransport> {
     const key = `${input.companyId}/${input.agentId}`;
     const previous = this.clientLocks.get(key) ?? Promise.resolve();
@@ -58,7 +59,7 @@ export class WorkspaceViewAdapter {
           this.clients.delete(key);
         }
         const pending = (async () => {
-          const command = sandboxCommand(
+          const transport = new StdioTransport(
             this.options.periBinary,
             [
               "mcp-start",
@@ -68,22 +69,14 @@ export class WorkspaceViewAdapter {
               input.directory,
             ],
             {
-              directory: input.directory,
-              companyHome: this.options.companyHome,
-              privatePaths: this.options.privatePaths,
-              knowledgeDirectory: input.knowledgeDirectory,
-              projectRoots: (input.configuration ?? input.config ?? {})
-                .workspaceRoots,
+              cwd: input.directory,
+              env: {
+                PATH: process.env.PATH,
+                LANG: process.env.LANG ?? "C.UTF-8",
+                HOME: "/tmp",
+              },
             },
           );
-          const transport = new StdioTransport(command.command, command.args, {
-            cwd: input.directory,
-            env: {
-              PATH: process.env.PATH,
-              LANG: process.env.LANG ?? "C.UTF-8",
-              HOME: "/tmp",
-            },
-          });
           try {
             await transport.request("initialize", {
               protocolVersion: "2025-06-18",
@@ -135,7 +128,7 @@ export class WorkspaceViewAdapter {
     return { ...result, text };
   }
   roots(input: RuntimeAgent) {
-    return [
+    const entries = [
       { name: input.agentId, path: input.directory, kind: "agent" },
       ...(input.knowledgeDirectory
         ? [
@@ -153,11 +146,33 @@ export class WorkspaceViewAdapter {
           kind: "project",
         }),
       ),
+      ...(this.options.companyHome
+        ? [
+            {
+              name: "公司数据",
+              path: join(
+                this.options.companyHome,
+                "companys",
+                input.companyId,
+              ),
+              kind: "company",
+            },
+          ]
+        : []),
+      { name: "用户主目录", path: homedir(), kind: "home" },
+      { name: "文件系统", path: parse(homedir()).root, kind: "filesystem" },
     ];
+    // 同一路径只展示一次（例如知识根恰好等于公司数据目录）。
+    return entries.filter(
+      (entry, index) =>
+        entries.findIndex((candidate) => candidate.path === entry.path) ===
+        index,
+    );
   }
-  private async path(input: RuntimeAgent, path?: string, writable = false) {
+  private async path(input: RuntimeAgent, path?: string) {
     const absolute = resolve(input.directory, path || ".");
-    // Canonical checks reject symlink escape; new files use their canonical parent.
+    // Canonicalize symlinks and not-yet-existing nested paths so reads and writes
+    // address the real target. 文件区域不做根目录白名单限制：所有者可通过视图浏览本机任意路径。
     let canonical: string;
     try {
       canonical = await realpath(absolute);
@@ -177,70 +192,6 @@ export class WorkspaceViewAdapter {
           parent = up;
         }
       }
-    }
-    const roots = await Promise.all(
-      this.roots(input).map(async (root) => realpath(root.path)),
-    );
-    if (
-      !roots.some(
-        (root) =>
-          canonical === root ||
-          (!relative(root, canonical).startsWith("..") &&
-            !relative(root, canonical).startsWith("/")),
-      )
-    )
-      throw new WorkspaceError(
-        "forbidden",
-        "File is outside this Agent and company knowledge roots.",
-      );
-    if (
-      writable &&
-      canonical ===
-        (await realpath(join(input.directory, "agent.yaml")).catch(() =>
-          join(input.directory, "agent.yaml"),
-        ))
-    )
-      throw new WorkspaceError(
-        "forbidden",
-        "Agent identity/configuration is managed through the Company configuration interface.",
-      );
-    if (
-      writable &&
-      canonical ===
-        (await realpath(join(input.directory, ".mcp.json")).catch(() =>
-          join(input.directory, ".mcp.json"),
-        ))
-    )
-      throw new WorkspaceError(
-        "forbidden",
-        "Trusted MCP identity configuration is managed through the Company configuration interface.",
-      );
-    if (
-      writable &&
-      canonical ===
-        (await realpath(join(input.directory, ".env")).catch(() =>
-          join(input.directory, ".env"),
-        ))
-    )
-      throw new WorkspaceError(
-        "forbidden",
-        "The Agent environment file is read-only; model credentials and endpoints are host-trusted configuration.",
-      );
-    if (
-      writable &&
-      relative(input.directory, canonical).split(/[\\/]/).includes(".git")
-    )
-      throw new WorkspaceError(
-        "forbidden",
-        "Git internals are read-only in the file editor.",
-      );
-    if (writable) {
-      const info = await stat(canonical).catch(() => null);
-      if (info && info.nlink > 1)
-        throw new WorkspaceError(
-          "forbidden",
-          "Hard-linked files cannot be edited through the workspace view.",
-        );
     }
     return canonical;
   }
@@ -315,7 +266,7 @@ export class WorkspaceViewAdapter {
     content: string,
     expectedVersion: string,
   ) {
-    const target = await this.path(input, path, true);
+    const target = await this.path(input, path);
     const key = `${input.companyId}/${input.agentId}/${target}`;
     const previous = this.writes.get(key) ?? Promise.resolve();
     const next = previous
@@ -350,7 +301,7 @@ export class WorkspaceViewAdapter {
         await this.tool(input, "Write", { file_path: staged, content });
         await this.script(
           input,
-          `try{if(args[2]===''){if(fs.existsSync(args[0])){const e=Error('A file appeared before create.');e.code='version_conflict';throw e;}fs.linkSync(args[1],args[0]);}else{const old=fs.readFileSync(args[0]);if(hash(old)!==args[2]){const e=Error('Disk changed during save.');e.code='version_conflict';throw e;}const info=fs.statSync(args[0]);if(info.nlink>1)throw Error('Hard-linked file is not editable.');fs.chmodSync(args[1],info.mode);const current=fs.statSync(args[0]);if(current.ino!==info.ino||hash(fs.readFileSync(args[0]))!==args[2]){const e=Error('Disk changed during save.');e.code='version_conflict';throw e;}fs.renameSync(args[1],args[0]);}console.log('COMPANY_JSON:'+JSON.stringify({saved:true}));}finally{if(fs.existsSync(args[1]))fs.unlinkSync(args[1]);}`,
+          `try{if(args[2]===''){if(fs.existsSync(args[0])){const e=Error('A file appeared before create.');e.code='version_conflict';throw e;}fs.linkSync(args[1],args[0]);}else{const old=fs.readFileSync(args[0]);if(hash(old)!==args[2]){const e=Error('Disk changed during save.');e.code='version_conflict';throw e;}const info=fs.statSync(args[0]);fs.chmodSync(args[1],info.mode);const current=fs.statSync(args[0]);if(current.ino!==info.ino||hash(fs.readFileSync(args[0]))!==args[2]){const e=Error('Disk changed during save.');e.code='version_conflict';throw e;}fs.renameSync(args[1],args[0]);}console.log('COMPANY_JSON:'+JSON.stringify({saved:true}));}finally{if(fs.existsSync(args[1]))fs.unlinkSync(args[1]);}`,
           [target, staged, expectedVersion],
         );
         return this.read(input, target);

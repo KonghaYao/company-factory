@@ -80,10 +80,6 @@ export async function createApplication(options: ApplicationOptions = {}) {
     periBinary: runtime.binary,
     home: join(root, "runtime", "home"),
     companyHome: root,
-    privatePaths: [
-      storesFile,
-      ...(sharedStores?.privatePaths ?? []),
-    ].filter((path): path is string => Boolean(path)),
   });
   let agents: AgentService;
   const domain = new CompanyDomain({

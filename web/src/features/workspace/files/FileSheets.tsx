@@ -32,10 +32,10 @@ export function CreateFileSheet({
         }}
       >
         <p className="sheet-intro">
-          文件会直接写入当前 Agent 的活动目录，并立即出现在 Git
+          文件会直接写入当前浏览目录，并立即出现在 Git
           变更中；提交时再决定如何记录历史。
         </p>
-        <Field label="相对活动目录的路径" hint="例如 browser-note.md">
+        <Field label="相对当前浏览目录的路径" hint="例如 browser-note.md">
           <input
             value={path}
             onChange={(event) => onPath(event.target.value)}

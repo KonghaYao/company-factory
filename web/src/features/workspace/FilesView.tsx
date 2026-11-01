@@ -3,8 +3,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { OnMount } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
 import {
+  ArrowUp,
   FilePlus2,
   GitCommitHorizontal,
+  Home,
   RefreshCw,
   Search,
   X,
@@ -39,6 +41,7 @@ export function FilesView({
   const patch = useLocal((state) => state.patch);
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState("");
+  const [browse, setBrowse] = useState("");
   const [mode, setMode] = useState<"all" | "changes">("all");
   const [diff, setDiff] = useState(false);
   const [commitOpen, setCommitOpen] = useState(false);
@@ -50,10 +53,14 @@ export function FilesView({
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const scopeRef = useRef(scope);
   scopeRef.current = scope;
+  // 切换 Agent 时回到该 Agent 的活动目录，避免停留在上一个 Agent 的路径。
+  useEffect(() => {
+    setBrowse("");
+  }, [scope.companyId, scope.agentId]);
 
   const root = useQuery({
-    queryKey: ["files", scope.companyId, scope.agentId, ""],
-    queryFn: () => api(scoped(scope, "files", { path: "" })),
+    queryKey: ["files", scope.companyId, scope.agentId, browse],
+    queryFn: () => api(scoped(scope, "files", { path: browse })),
     refetchInterval: 7000,
   });
   const searches = useQuery({
@@ -324,6 +331,13 @@ export function FilesView({
     });
   };
   const roots = Array.isArray(root.data?.roots) ? root.data.roots : [];
+  const location = String(root.data?.path ?? browse);
+  const parentOf = (value: string) => {
+    const index = Math.max(value.lastIndexOf("/"), value.lastIndexOf("\\"));
+    if (index < 0) return "";
+    if (index === 0) return "/";
+    return value.slice(0, index);
+  };
 
   return (
     <div className="files-view">
@@ -452,7 +466,41 @@ export function FilesView({
             </>
           ) : (
             <>
-              <p className="tree-label">Agent 活动目录</p>
+              <div className="file-location">
+                <button
+                  type="button"
+                  title="上一级"
+                  aria-label="上一级目录"
+                  disabled={!browse}
+                  onClick={() => setBrowse(parentOf(location || browse))}
+                >
+                  <ArrowUp size={13} />
+                </button>
+                <input
+                  key={location}
+                  aria-label="当前目录路径"
+                  defaultValue={location}
+                  placeholder="输入绝对路径后回车"
+                  title={location}
+                  spellCheck={false}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter") return;
+                    event.preventDefault();
+                    setBrowse(event.currentTarget.value.trim());
+                  }}
+                />
+                <button
+                  type="button"
+                  title="回到 Agent 活动目录"
+                  aria-label="回到 Agent 活动目录"
+                  onClick={() => setBrowse("")}
+                >
+                  <Home size={13} />
+                </button>
+              </div>
+              <p className="tree-label" title={location}>
+                {browse ? "浏览目录" : "Agent 活动目录"}
+              </p>
               {root.isLoading ? (
                 <Loading />
               ) : (
@@ -468,31 +516,23 @@ export function FilesView({
                 ))
               )}
               <ErrorBox error={root.error} />
+              {roots.filter((item: any) => item.kind !== "agent").length >
+                0 && <p className="tree-label">常用位置</p>}
               {roots
-                .filter(
-                  (item: any) =>
-                    item.kind === "knowledge" ||
-                    item.kind === "project" ||
-                    item.name?.includes("knowledge") ||
-                    item.name?.includes("知识"),
-                )
+                .filter((item: any) => item.kind !== "agent")
                 .map((item: any) => (
-                  <div key={item.path}>
-                    <p className="tree-label">
-                      {item.kind === "project" ? "项目仓库" : "共享知识"}
-                    </p>
-                    <TreeNode
-                      entry={{
-                        path: item.path,
-                        name: item.name || "knowledgebase",
-                        type: "directory",
-                      }}
-                      scope={scope}
-                      depth={0}
-                      active={local.activeFile}
-                      onOpen={open}
-                    />
-                  </div>
+                  <TreeNode
+                    key={item.path}
+                    entry={{
+                      path: item.path,
+                      name: item.name || "目录",
+                      type: "directory",
+                    }}
+                    scope={scope}
+                    depth={0}
+                    active={local.activeFile}
+                    onOpen={open}
+                  />
                 ))}
             </>
           )}
@@ -585,13 +625,16 @@ export function FilesView({
         onPath={setNewPath}
         onContent={setNewContent}
         onClose={() => setCreateOpen(false)}
-        onSubmit={() =>
+        onSubmit={() => {
+          const target = newPath.trim();
+          const base = location.replace(/[\\/]+$/, "");
+          const absolute = /^([\\/]|[A-Za-z]:[\\/])/.test(target);
           create.mutate({
             scope: { ...scope },
-            path: newPath,
+            path: absolute || !base ? target : `${base}/${target}`,
             content: newContent,
-          })
-        }
+          });
+        }}
       />
     </div>
   );

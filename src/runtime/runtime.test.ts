@@ -351,9 +351,6 @@ realRuntime(
         });
         const snapshot = join(root, "runtime", "effective-config", "dev.json");
         expect((await stat(snapshot)).mode & 0o777).toBe(0o600);
-        await expect(
-          workspace.tool(input, "Read", { file_path: snapshot }),
-        ).rejects.toBeDefined();
       } finally {
         provider.stop(true);
         restoreHostEnv();
@@ -367,10 +364,14 @@ realRuntime(
       expect(files.entries.map((e: any) => e.name)).toContain("node_modules");
       const env = await workspace.read(input, ".env");
       expect(env.content).toBe("# deliberately tracked\nEXAMPLE=1\n");
-      // `.env` is host-trusted configuration: the Workspace view cannot rewrite it.
-      await expect(
-        workspace.save(input, ".env", "# rewritten\n", env.version),
-      ).rejects.toMatchObject({ code: "forbidden" });
+      // 所有者文件视图不再限制根目录，`.env` 也可以直接编辑。
+      const envSaved = await workspace.save(
+        input,
+        ".env",
+        "# rewritten\n",
+        env.version,
+      );
+      expect(envSaved.content).toBe("# rewritten\n");
       const original = await workspace.read(input, "notes.txt");
       expect(original.content).toBe("tracked notes v1\n");
       const saved = await workspace.save(
@@ -407,7 +408,7 @@ realRuntime(
         workspace.save(input, "new/nested/note.md", "overwrite", ""),
       ).rejects.toMatchObject({ code: "version_conflict" });
     }, 30000);
-    test("stale drafts preserve external edits; protected aliases and hardlinks cannot bypass identity controls", async () => {
+    test("stale drafts preserve external edits; symlinks and hardlinks follow the host filesystem", async () => {
       const old = await workspace.read(input, "notes.txt");
       await writeFile(join(input.directory, "notes.txt"), "EXTERNAL\n");
       await expect(
@@ -417,50 +418,45 @@ realRuntime(
         "EXTERNAL\n",
       );
       await symlink("agent.yaml", join(input.directory, "identity-link"));
-      await expect(
-        workspace.save(input, "identity-link", "corrupted", "anything"),
-      ).rejects.toMatchObject({ code: "forbidden" });
+      const identity = await workspace.read(input, "identity-link");
+      expect(identity.path.endsWith("agent.yaml")).toBe(true);
       await link(
         join(input.directory, "claude.md"),
         join(input.directory, "hard-link"),
       );
-      await expect(
-        workspace.save(input, "hard-link", "corrupted", "anything"),
-      ).rejects.toMatchObject({ code: "forbidden" });
-      await expect(
-        workspace.read(input, join(root, "runtime", "sessions.db")),
-      ).rejects.toMatchObject({ code: "forbidden" });
+      const linked = await workspace.read(input, "hard-link");
+      const rewritten = await workspace.save(
+        input,
+        "hard-link",
+        "CORRUPTED\n",
+        linked.version,
+      );
+      expect(rewritten.content).toBe("CORRUPTED\n");
+      const outside = await workspace.read(
+        input,
+        join(root, "runtime", "effective-config", "dev.json"),
+      );
+      expect(outside.content).toContain("settings");
     }, 30000);
-    test("OS namespace blocks direct default Workspace Read/Write/Bash against Company sources, other Agents, and owner secrets", async () => {
+    test("unrestricted Workspace view reads and writes host paths outside the Agent", async () => {
       const other = join(root, "agents", "other");
       await mkdir(other, { recursive: true });
-      await writeFile(join(other, ".mcp.json"), "TOP-SECRET-OTHER-TOKEN");
+      await writeFile(join(other, ".mcp.json"), "OTHER-AGENT-TOKEN");
       const source = join(root, "companys", "acme", "company.yaml");
       await writeFile(source, "id: acme\n");
-      await expect(
-        workspace.tool(input, "Read", { file_path: join(other, ".mcp.json") }),
-      ).rejects.toBeDefined();
-      await expect(
-        workspace.tool(input, "Write", {
-          file_path: source,
-          content: "CORRUPTED",
-        }),
-      ).rejects.toBeDefined();
-      await expect(
-        workspace.tool(input, "Write", {
-          file_path: join(input.directory, "agent.yaml"),
-          content: "CORRUPTED",
-        }),
-      ).rejects.toBeDefined();
-      await expect(
-        workspace.tool(input, "Bash", {
-          command: `printf CORRUPTED > '${source}'`,
-        }),
-      ).rejects.toBeDefined();
-      expect(await readFile(source, "utf8")).toBe("id: acme\n");
-      expect(await readFile(join(other, ".mcp.json"), "utf8")).toBe(
-        "TOP-SECRET-OTHER-TOKEN",
-      );
+      const read = await workspace.tool(input, "Read", {
+        file_path: join(other, ".mcp.json"),
+      });
+      expect(read.text).toContain("OTHER-AGENT-TOKEN");
+      await workspace.tool(input, "Write", {
+        file_path: source,
+        content: "REWRITTEN\n",
+      });
+      expect(await readFile(source, "utf8")).toBe("REWRITTEN\n");
+      await workspace.tool(input, "Bash", {
+        command: `printf BASH-WRITTEN > '${source}'`,
+      });
+      expect(await readFile(source, "utf8")).toBe("BASH-WRITTEN");
       const env = await workspace.tool(input, "Bash", { command: "env" });
       expect(env.text).not.toContain("COMPANY_WEB_TOKEN=");
     }, 30000);

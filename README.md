@@ -16,7 +16,7 @@
 
 ## 1. 启动
 
-主 Agent 使用 WASM，但工具与 Git 的 OS 隔离仍要求 **Linux 用户命名空间与 bubblewrap**。macOS/Windows 的 Workspace/Git 保持 fail closed，可在 Linux VM 内运行；WASM 并不自动提供宿主文件权限隔离。Linux 容器内已完成 live 运行验证（见上）；macOS 上只能以 `COMPANY_WORKSPACE=disabled` 使用公司/会话/聊天，Workspace/File/Git/Preview/CI 仍 fail closed，不算全业务通过。
+主 Agent 使用 WASM，但工具与 Git 的 OS 隔离仍要求 **Linux 用户命名空间与 bubblewrap**。macOS/Windows 的 Workspace/Git 保持 fail closed，可在 Linux VM 内运行；WASM 并不自动提供宿主文件权限隔离。Linux 容器内已完成 live 运行验证（见上）；macOS 上只能以 `COMPANY_WORKSPACE=disabled` 使用公司/会话/聊天，Workspace/File/Git/Preview/CI 仍 fail closed，不算全业务通过。所有者自己的**「文件」视图例外**：它不经过 `sandboxCommand`，可直接浏览宿主路径（见 [USER-OVERRIDES.md](USER-OVERRIDES.md)）。
 
 需要：Node.js 22+ / npm、系统 Git、`tar`、`bubblewrap`。Bun 1.4.4 已锁定在开发依赖中，`npm run` 会调用项目内 Bun。
 
@@ -48,7 +48,7 @@ npm start
 | `COMPANY_HOST` | `127.0.0.1`；建议保留本机监听 |
 | `COMPANY_BASE_URL` | 对应本机地址；写入 Agent 的三个 Company MCP 配置 |
 | `COMPANY_WEB_TOKEN` | 可选：覆盖本地自动生成的所有者口令 |
-| `COMPANY_WORKSPACE` | 可选：仅 `disabled` 时关闭宿主 Workspace MCP（公司/会话/聊天可用，File/Git 仍 fail closed）；缺省保持官方 Workspace |
+| `COMPANY_WORKSPACE` | 可选：仅 `disabled` 时关闭宿主 Workspace MCP（公司/会话/聊天可用，Agent 的 Workspace/Git 工具仍 fail closed；所有者「文件」视图不受影响）；缺省保持官方 Workspace |
 | `PERI_BINARY` | `.tools/peri/peri`；官方 4.4.1，仅用于 Workspace/MCP，不承载 Agent ACP |
 | `PERI_MODEL_PROVIDER` | `openai`；采用 Peri 支持的 provider 类型 |
 | `PERI_MODEL_BASE_URL` | 模型供应商兼容端点，例如你的 OpenAI-compatible `/v1` 地址 |
@@ -157,7 +157,7 @@ WASM Session/消息由本地 sqld 落盘：显式模式由所有者准备端点�
 
 恰好三个自定义 MCP：`/company_org/mcp`、`/company_tasks/mcp`、`/company_im/mcp`，使用 `@peri-code/mcpp` 的 MCP **2026-07-28** mono 路由、资源与订阅。Workspace 沿用官方实际 stdio 传输，不虚构 Company Workspace URL。AgentSystem 只在服务内部。
 
-各 Agent 的官方 Workspace MCP 子进程在 bubblewrap 中，只见自己的活动目录、知识根、独立工具运行目录、用户授权项目根及最小系统工具。主推理进程内使用 WASM，不启动 native ACP；数据库凭据只留在宿主/SDK，既不传给 Workspace，也不写入模型/MCP 快照。身份 YAML/MCP 配置与 `.env` 只读；其他 Agent、Company 业务源文件、所有者口令不可见。宿主针对可被 Agent 修改的个人仓库执行 Git 时仍使用相同隔离。外部 HTTP MCP 保持，任意 stdio/SSE/ACP 外部描述符在 WASM 模式明确拒绝；只有官方 Workspace 接入宿主桥，不提供通用 MCP 进程桥。网络仍用于已配置的模型/MCP 与项目工作；建议仅监听本机。
+各 Agent 的官方 Workspace MCP 子进程在 bubblewrap 中，只见自己的活动目录、知识根、独立工具运行目录、用户授权项目根及最小系统工具。主推理进程内使用 WASM，不启动 native ACP；数据库凭据只留在宿主/SDK，既不传给 Workspace，也不写入模型/MCP 快照。身份 YAML/MCP 配置与 `.env` 只读；其他 Agent、Company 业务源文件、所有者口令对 **Agent 工具** 不可见。宿主针对可被 Agent 修改的个人仓库执行 Git 时仍使用相同隔离。**所有者自己的「文件」视图不在此隔离范围内**：按所有者裁定，它直接以宿主身份运行，可浏览、搜索和编辑本机任意路径（见 [USER-OVERRIDES.md](USER-OVERRIDES.md)）。外部 HTTP MCP 保持，任意 stdio/SSE/ACP 外部描述符在 WASM 模式明确拒绝；只有官方 Workspace 接入宿主桥，不提供通用 MCP 进程桥。网络仍用于已配置的模型/MCP 与项目工作；建议仅监听本机。
 
 按任务书，**生成的 Agent 个人仓库会跟踪 `.env`**。该文件对 Agent 只读，且不承载模型配置；不要在其中写入任何秘密，也不要公开推送或打包个人数据目录。此交付 ZIP 不包含任何运行数据、生成的口令或模型凭据。
 
