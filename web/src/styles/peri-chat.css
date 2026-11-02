@@ -167,6 +167,11 @@
 /*
  * 作用域内 preflight 子集：不引 Tailwind preflight，避免影响公司其余页面。
  * 放在 base 层，utilities 仍可覆盖边框与背景。
+ *
+ * border-color 必须显式恢复：上游 shadcn 在 base 层用 `@apply border-border`
+ * 设置默认边框色，而 Tailwind v4 的 `border`/`border-b` 等 utilities 只设
+ * 宽度和样式。缺省时会回落到 `.peri-chat` 的 color（近黑），导致弹层、
+ * 分隔线呈现黑边。
  */
 @layer base {
   .peri-chat,
@@ -175,6 +180,7 @@
   .peri-chat *::after {
     border-width: 0;
     border-style: solid;
+    border-color: var(--border);
     box-sizing: border-box;
   }
   .peri-chat {
