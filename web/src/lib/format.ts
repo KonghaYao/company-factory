@@ -19,11 +19,22 @@ export const statusLabels: Record<string, string> = {
   saved: "已保存",
   delivered: "已送入会话",
   replied: "已回复",
-  failed: "投递失败",
+  failed: "未送达",
+  unknown: "投递结果待核验",
 };
 
 export const statusLabel = (value?: string) =>
   statusLabels[value || ""] || value || "—";
+
+/** Historical `failed` rows predate disposition and are not proof of non-delivery. */
+export const deliveryView = (
+  status: string,
+  disposition?: string,
+): { label: string; verify: boolean } => {
+  if (status === "failed" && !disposition)
+    return { label: "历史记录 · 投递结果待核验", verify: true };
+  return { label: statusLabel(status), verify: status === "unknown" };
+};
 
 export type StatusTone =
   | "neutral"

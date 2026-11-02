@@ -139,6 +139,14 @@ const DEFINITIONS: Record<string, Definition> = {
     message: "消息执行失败；结果不确定，请刷新会话核对。",
     uncertain: true,
   },
+  // Peri 在进入 ReAct 循环前构建 stage 失败：用户 prompt 尚未写入，确定未发送。
+  session_initialization_failed: {
+    code: "session_initialization_failed",
+    status: 503,
+    disposition: "not_sent",
+    recovery: "none",
+    message: "会话初始化失败，消息未发送；请稍后重试。",
+  },
   not_ready: {
     code: "not_ready",
     status: 409,
@@ -553,6 +561,10 @@ export function classifyPromptError(error: unknown): ClassifiedPromptError {
   if (text.includes("session context is owned by an in-flight prompt"))
     return materialize(DEFINITIONS.session_busy);
 
+  // stage 初始化在执行前失败；即使文案里混入 persistence 字样，也确定未发送。
+  if (code === -32000 && text.includes("agent stage initialization failed"))
+    return materialize(DEFINITIONS.session_initialization_failed);
+
   if (text.includes("session persistence is not settled"))
     return materialize(DEFINITIONS.persistence_pending);
 
@@ -603,6 +615,9 @@ export function classifyAgentExecutionFailure(
   message: string,
 ): ClassifiedPromptError {
   const text = compact(message ?? "");
+  // stage 初始化没有进入执行；后到的 notice 不得把它改写成“结果不确定”。
+  if (text.includes("agent stage initialization failed"))
+    return materialize(DEFINITIONS.session_initialization_failed);
   if (text.includes("session persistence is not settled"))
     return materialize(DEFINITIONS.persistence_pending);
   if (hasPersistenceWord(text))
@@ -629,5 +644,6 @@ export function isAdmissionPromptError(code: string): boolean {
     "prompt_not_admitted",
     "input_receipt_capacity",
     "not_ready",
+    "session_initialization_failed",
   ].includes(code);
 }

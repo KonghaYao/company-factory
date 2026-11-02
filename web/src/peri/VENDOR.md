@@ -44,6 +44,7 @@
 | P9 | 多个 `@/lib`、`@/hooks` 导入 | 改为相对路径；项目不配置 `@/*` 别名 |
 | P10 | `server/api/sync.ts` → `src/server/peri/sync.ts` | `logError` 导入改为同目录 `./logging` |
 | P11 | `chat/composer/ChatComposer.tsx` | Composer 改版：删除 Enter/Shift+Enter 快捷键提示与占位符长文案；新增 `peri-composer-input`/`textarea`/`send` 三个 `data-slot`，供公司作用域样式绑定 |
+| P12 | `chat/timeline/rows/UserMessageRow.tsx` | 新增可选 `UserMessagePresentationContext`：宿主可把 `role === "user"` 的条目替换为公司 IM 卡片；无 Provider 时保持 Peri 原气泡，Provider 返回 `null` 时交回默认渲染 |
 
 P3/P7 是 Company 单会话外壳的宿主适配；P2/P5 是 SDK 0.3.0 与 Peri HEAD 的版本漂移守卫。
 除以上补丁外，`remote/` 与 `chat/` 的行为代码保持 Peri 原件。
@@ -51,6 +52,10 @@ P3/P7 是 Company 单会话外壳的宿主适配；P2/P5 是 SDK 0.3.0 与 Peri 
 P11 只改文案与 `data-slot` 标记，不改发送/停止/IME/斜杠命令等行为。
 Composer 的视觉皮肤放在公司自有 `web/src/styles/peri-chat.css`（`.peri-chat [data-slot="composer-shell"]` 等作用域），
 不 vendor 进 Peri 源码；重新 vendor 后按 P11 重放标记即可继续生效。
+
+P12 只增加可选展示上下文与分支，不改变默认用户气泡、复制按钮或时间线数据结构。
+Company IM 的解析与卡片位于公司自有 `web/src/features/chat/companyIm.ts` 与
+`CompanyImMessageRow.tsx`；重新 vendor 后按 P12 重放上下文导出即可继续生效。
 
 ## Tailwind 接入
 

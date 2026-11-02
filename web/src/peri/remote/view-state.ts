@@ -188,6 +188,10 @@ const FAILURE_COPIES: Record<string, FailureCopy> = {
     recovery: "reload",
     uncertain: true,
   },
+  session_initialization_failed: {
+    message: "会话初始化失败，消息未发送；请稍后重试。",
+    recovery: "none",
+  },
   session_closed: {
     message: "会话已关闭，请重启会话。",
     recovery: "rebuild",

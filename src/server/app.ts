@@ -16,7 +16,7 @@ import {
 } from "../runtime";
 import { AccessControl, AccessError } from "./security";
 import { publicErrorDetails } from "./peri/errors";
-import { redactPublicMessage } from "../runtime/redaction";
+import { redactPublicMessage, redactRuntimeMessage } from "../runtime/redaction";
 import { createPeriChatApi } from "./peri/chat-api";
 import { createDiagnosticsApi } from "./diagnostics-api";
 import {
@@ -134,15 +134,58 @@ export async function createApplication(options: ApplicationOptions = {}) {
       }
     },
     deliver: async (input) => {
+      const recordFailure = (failure: {
+        error?: string;
+        code?: string;
+        disposition?: "rejected" | "not_sent" | "unknown";
+        uncertain?: boolean;
+      }) => {
+        diagnostics.record({
+          event: "im_delivery_failed",
+          companyId: input.companyId,
+          agentId: input.agentId,
+          messageId: input.messageId,
+          threadId: input.threadId,
+          attempt: input.attempt,
+          code: failure.code,
+          disposition: failure.disposition,
+          uncertain: failure.uncertain,
+          message: failure.error
+            ? redactRuntimeMessage(failure.error, 500)
+            : undefined,
+        });
+      };
       try {
         const receipt = await agents.deliver(input);
-        return receipt.status === "delivered"
-          ? { status: "delivered", receipt }
-          : { status: "failed", error: receipt.error };
-      } catch (error) {
+        if (receipt.status === "delivered")
+          return { status: "delivered" as const, receipt };
+        recordFailure({
+          error: receipt.error,
+          code: receipt.code,
+          disposition: receipt.disposition,
+          uncertain: receipt.uncertain,
+        });
         return {
-          status: "failed",
-          error: error instanceof Error ? error.message : String(error),
+          status: receipt.status,
+          error: receipt.error,
+          code: receipt.code,
+          disposition: receipt.disposition,
+          uncertain: receipt.uncertain,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const code = (error as { code?: unknown } | null)?.code;
+        recordFailure({
+          error: message,
+          code: typeof code === "string" ? code : undefined,
+          disposition: "unknown",
+          uncertain: true,
+        });
+        return {
+          status: "unknown" as const,
+          error: message,
+          disposition: "unknown" as const,
+          uncertain: true,
         };
       }
     },

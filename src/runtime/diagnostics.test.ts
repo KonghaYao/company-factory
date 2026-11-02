@@ -100,6 +100,61 @@ describe("runtime diagnostics sink", () => {
     expect(read.entries.filter((entry) => entry.event === "process_start")).toHaveLength(1);
   });
 
+  test("records, redacts and deduplicates IM delivery failures per attempt", async () => {
+    const dir = await tempDir();
+    const sink = await open(dir);
+    for (let index = 0; index < 2; index += 1)
+      sink.record({
+        event: "im_delivery_failed",
+        companyId: "company-1",
+        agentId: "agent-1",
+        messageId: "M1",
+        threadId: "T1",
+        attempt: 1,
+        code: "prompt_failed",
+        disposition: "unknown",
+        uncertain: true,
+        message:
+          "delivery failed at https://host.example/x?token=secret with 0123456789abcdef0123456789abcdef",
+      });
+    sink.record({
+      event: "im_delivery_failed",
+      companyId: "company-1",
+      agentId: "agent-1",
+      messageId: "M1",
+      threadId: "T1",
+      attempt: 2,
+      code: "session_initialization_failed",
+      disposition: "not_sent",
+      uncertain: false,
+      message: "second attempt",
+    });
+    const read = await sink.read(50);
+    const failures = read.entries.filter(
+      (entry) => entry.event === "im_delivery_failed",
+    );
+    expect(failures).toHaveLength(2);
+    const first = failures.find((entry) => entry.attempt === 1)!;
+    expect(first).toMatchObject({
+      companyId: "company-1",
+      agentId: "agent-1",
+      messageId: "M1",
+      threadId: "T1",
+      code: "prompt_failed",
+      disposition: "unknown",
+      uncertain: true,
+    });
+    expect(first.message).toContain("[url]");
+    expect(first.message).toContain("[redacted]");
+    expect(JSON.stringify(failures)).not.toContain("host.example");
+    expect(JSON.stringify(failures)).not.toContain("0123456789abcdef");
+    const raw = await readFile(sink.status().file!, "utf8");
+    expect(raw).not.toContain("host.example");
+    expect(
+      raw.split("\n").filter((line) => line.includes("im_delivery_failed")),
+    ).toHaveLength(2);
+  });
+
   test("rotates by size, keeps at most maxFiles+1 transient files and bounded bytes", async () => {
     const dir = await tempDir();
     const sink = await open(dir, {

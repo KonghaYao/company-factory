@@ -8,7 +8,7 @@
 
 **2026-11-02 架构变更：Workspace 本地运行。** 按所有者裁定，Agent 的官方 Workspace MCP 与宿主 Git 直接以宿主用户身份运行，不再依赖 Linux / bubblewrap，也不再提供 OS 级隔离；Agent 工具可访问该用户可访问的本机文件。`COMPANY_SANDBOX` 已移除；`COMPANY_WORKSPACE=disabled` 仅作为显式关闭 Agent Workspace 的调试开关。
 
-**测试基线（2026-11-02，macOS）：** 全量 `349 pass / 24 skip / 0 fail`（373 项、1,959 断言、42 个文件）；`bun run typecheck` 与 `bun run build` 通过。历史 Linux live 验收（2026-10-31，沙箱版，`closure=true`）是过去实现的证据，**不代表当前本地架构**，需要重新做 live 验收；详见 [验证记录](docs/VERIFICATION.md)。
+**测试基线（2026-11-02，macOS）：** 全量 `404 pass / 24 skip / 0 fail`（428 项、2,216 断言、49 个文件）；`bun run typecheck` 与 `bun run build` 通过。历史 Linux live 验收（2026-10-31，沙箱版，`closure=true`）是过去实现的证据，**不代表当前本地架构**，需要重新做 live 验收；详见 [验证记录](docs/VERIFICATION.md)。
 
 **未验证项，不能声称：** 独立 fable 模型仍未验证（供应商无独立 fable 模型）；四档 alias 路由可用，但不能声称四档四模型全部真实通过。历史 live 证据中的 `agentCiExecuted` 与 digest 口径仅对那轮沙箱版运行有效。
 
@@ -135,7 +135,7 @@ profiles:
 ## 2. 使用流程
 
 1. 创建 Company，自动生成总部、HR、任务主管和两个真实 Session。
-2. “组织设置”可创建部门；成员定义送入 HR 的固定 Chat 草稿，由 HR 的可信 MCP 身份创建成员。不会借用户界面伪装 HR。
+2. “组织设置”可创建/编辑组织节点（父子、排序、归档、删除空节点或显式迁移后删除）；成员定义送入 HR 的固定 Chat 草稿，由 HR 的可信 MCP 身份创建成员。不会借用户界面伪装 HR。组织树支持把成员移动到任意 active 节点、归档与恢复；移动只改 `organization.yaml`，不改身份、目录、固定 Session、token、权限或 Issue/IM 归属。
 3. 侧栏员工行右侧的编辑按钮可修改姓名、职责和该员工专属的系统提示词；变更会更新 `CLAUDE.md` 的 Company 托管块，作为长期职责权威。系统提示词只在 Session 创建时组装一次，已有固定 Session 不会被字面重建；Agent 开工前读取 `CLAUDE.md`，因此职责/记忆更新不需要新开 Session。
 4. 用户创建 Issue 后进入 `triage`，负责人是任务主管。主管分类、选择 `software-delivery`、指派；Dev 独立维护计划/代码/worktree。
 5. 为需要代码仓库的成员，在配置中设置 `workspaceRoots` 为**公司数据目录之外、由用户授权的真实 Git 仓库**绝对路径，保存后手动重启。同一配置面可设置 `modelProfile`（模型库 profile）与 `modelAlias`（活动档位覆盖）。HR 可定义成员的 profile 档位与职责/指导，但不能自行授予 provider、baseUrl、apiKeyEnv、MCP 或文件系统挂载。
@@ -158,7 +158,8 @@ profiles:
   owner-token                   # 本地用户访问口令，不挂给 Agent
   model-library.yaml            # 宿主私有模型库，必须 0600；只存环境变量名，不存密钥
   companys/<company-id>/         # 此拼写按任务书保留
-    company.yaml  groups.yaml  roster.yaml
+    company.yaml  organization.yaml  roster.yaml
+    groups.yaml                 # 仅旧公司只读兼容；新代码不再写入
     tasks/  comments/  pipelines/  previews/  knowledgebase/
     im/threads/  im/messages/  events/
   agents/<agent-id>/
@@ -177,6 +178,8 @@ $COMPANY_SQLD_ROOT/sqld/shared/
 ```
 
 WASM Session/消息由本地 sqld 落盘：显式模式由所有者准备端点，自动模式使用单一共享实例（宿主按 Agent cwd/scope 隔离 Session）；既有库不会由 Company 服务自动迁移。
+
+`organization.yaml` 保存独立的组织节点树与人员 placement；`roster.yaml` v2 只保留 `{agentId,status,joinedAt}` 的平铺索引。人员 `agent.yaml` 不再把部门当作身份事实，`organization()`/`members()` 的 `groupId`/`orgPath` 由 placement 派生。没有 `organization.yaml` 的旧公司会在读取时从 `groups.yaml` + roster v1 在内存合成，只读请求不落盘；首次组织写才升级为 `organization.yaml` + roster v2，保留既有两个根节点且不改写 `agent.yaml`/`groups.yaml`。成员移动只写 `organization.yaml`；归档保留目录、Session、token 文件、IM 与 Issue，但拒绝后续鉴权。
 
 旧 Agent 的小写 `claude.md` 可用 `bun scripts/migrate-agent-memory.ts --dry-run` 预览，再运行一次完成迁移；脚本把 `agent.yaml` 的当前档案写入托管块、保留自由记忆区，遇到同名 `CLAUDE.md` 与 `claude.md` 共存时只报告冲突而不覆盖，也不会自动提交 Agent 仓库。
 
@@ -199,7 +202,7 @@ bun run test:integration
 bun run example                  # 在隔离临时目录运行真实双 Issue 交付示例
 ```
 
-当前代码已实际执行 `bun run typecheck`、`bun run build` 与全量测试（macOS `349 pass / 24 skip / 0 fail`）；`bun run example` 与浏览器套件未执行。真实 runtime 套件还需设置专用空库的 `COMPANY_TEST_SQLD_URL/COMPANY_TEST_SQLD_TOKEN`；HTTP/MCP 集成套件使用 `COMPANY_TEST_INTEGRATION_STORES_FILE`（相同 stores 格式），为生成公司固定成员及 `integrated-dev/integrated-preview` 准备显式测试端点（可共用同一回环端点）。缺少 Peri 二进制或显式测试存储时套件 SKIP，不计为通过；不能使用生产数据库。集成套件使用固定 `requestId: initialize` 与所有者身份，缺配时可从其临时根的请求文件取得真实生成 ID。Domain 测试替身只证明业务规则，不冒充 WASM/存储证据；测试代码不自动安装或启动 sqld。
+当前代码已实际执行 `bun run typecheck`、`bun run build` 与全量测试（macOS `404 pass / 24 skip / 0 fail`）；`bun run example` 与浏览器套件未执行。真实 runtime 套件还需设置专用空库的 `COMPANY_TEST_SQLD_URL/COMPANY_TEST_SQLD_TOKEN`；HTTP/MCP 集成套件使用 `COMPANY_TEST_INTEGRATION_STORES_FILE`（相同 stores 格式），为生成公司固定成员及 `integrated-dev/integrated-preview` 准备显式测试端点（可共用同一回环端点）。缺少 Peri 二进制或显式测试存储时套件 SKIP，不计为通过；不能使用生产数据库。集成套件使用固定 `requestId: initialize` 与所有者身份，缺配时可从其临时根的请求文件取得真实生成 ID。Domain 测试替身只证明业务规则，不冒充 WASM/存储证据；测试代码不自动安装或启动 sqld。
 
 `SOURCE-MANIFEST.sha256` 是历史源码快照，已过期：2026-10-31 复核有 24/62 项不匹配，且不包含 `scripts/e2e-live.ts`、`scripts/e2e-ci-runner.ts` 等文件。它不得作为当前源码完整性或 E2E 证据；需要时重新生成。
 
@@ -213,7 +216,7 @@ Live E2E 的证据口径：独立 CI/Review 的宿主执行结果与 digest 是�
 
 - 位置：`${COMPANY_DIAGNOSTICS_DIR:-$TMPDIR/company-factory}/runtime.<n>.jsonl`；`current.log` 是指向当前文件的稳定 symlink。
 - 权限与保留：目录 `0700`、文件 `0600`；默认单文件 1 MB、最多 3 个文件（总量约 3 MB）。重启后追加到编号最高的文件，不覆盖旧日志；每行带 `bootId` 区分进程代次。
-- 捕获范围：进程启动、`agent_execution_failed` notice 的公共 `value.message`、allowlist 后的 WASM `printErr`、chat action 5xx 的脱敏元数据。普通回合除 `process_start` 外不产生噪声。
+- 捕获范围：进程启动、`agent_execution_failed` notice 的公共 `value.message`、`im_delivery_failed`（含 code/disposition/attempt/messageId）、allowlist 后的 WASM `printErr`、chat action 5xx 的脱敏元数据。普通回合除 `process_start` 外不产生噪声。
 - 脱敏：所有自由文本统一处理 URL → `[url]`、32+ token → `[redacted]`、`Authorization`/`token`/`api_key`/`password` 键值 → `[redacted]`，并限制长度；不记录用户消息、工具参数/输出、文件内容、`event_json`、`item.content` 或原始 `RpcError`/snapshot。
 - 只读端点：`GET /api/diagnostics/runtime?limit=N`（`N` 为 1–200，默认 50），仅接受现有 `company_session` owner cookie；响应再次脱敏并只返回白名单字段。没有写入、删除或任意路径读取接口。
 

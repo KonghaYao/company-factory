@@ -5,21 +5,26 @@ import type {
   Agent,
   Company,
   FileReference,
-  Group,
   Issue,
+  Organization,
   Runtime,
   Scope,
   Workspace,
 } from "./lib/types";
 import { agentId, scopeKey } from "./lib/types";
-import { api, ApiError, list, post, scoped } from "./lib/api";
+import { action, api, ApiError, list, post, scoped } from "./lib/api";
 import { emptyLocal, useLocal } from "./lib/state";
+import { uuid } from "./lib/uuid";
 import { AppHeader } from "./layout/AppHeader";
 import { SplitWorkspace } from "./layout/SplitWorkspace";
 import { Button, ErrorBox, Spinner } from "./ui/primitives";
 import { OrganizationPanel } from "./features/org/OrganizationPanel";
 import { CreateCompany } from "./features/org/CreateCompany";
-import { OrganizationSheet } from "./features/org/OrganizationSheet";
+import {
+  MoveMemberSheet,
+  OrganizationSheet,
+  RestoreMemberSheet,
+} from "./features/org/OrganizationSheet";
 import { AgentConfiguration, AgentEditor } from "./features/org/AgentSettings";
 import { WorkspacePanel } from "./features/workspace/WorkspacePanel";
 import { CreateIssue } from "./features/workspace/CreateIssue";
@@ -105,6 +110,12 @@ export default function App() {
   const [selectedAgent, setSelectedAgent] = useState("");
   const [companyModal, setCompanyModal] = useState(false);
   const [orgModal, setOrgModal] = useState(false);
+  const [nodeEditor, setNodeEditor] = useState<{
+    nodeId?: string;
+    parentId?: string;
+  } | null>(null);
+  const [moveAgentId, setMoveAgentId] = useState("");
+  const [restoreAgentId, setRestoreAgentId] = useState("");
   const [configModal, setConfigModal] = useState(false);
   const [libraryModal, setLibraryModal] = useState(false);
   const [editAgentId, setEditAgentId] = useState("");
@@ -142,14 +153,20 @@ export default function App() {
     organization.data?.company ||
     allCompanies.find((item) => item.id === companyId);
   const agents: Agent[] = organization.data?.agents || [];
-  const groups: Group[] = organization.data?.groups || [];
+  const orgDoc: Organization | null =
+    organization.data?.organization || null;
+  const movingAgent = agents.find((item) => agentId(item) === moveAgentId);
+  const restoringAgent = agents.find(
+    (item) => agentId(item) === restoreAgentId,
+  );
 
   useEffect(() => {
+    const selectable = agents.filter((item) => item.status !== "archived");
     if (
-      agents.length &&
-      !agents.some((item) => agentId(item) === selectedAgent)
+      selectable.length &&
+      !selectable.some((item) => agentId(item) === selectedAgent)
     )
-      setSelectedAgent(agentId(agents[0]));
+      setSelectedAgent(agentId(selectable[0]));
   }, [organization.data, selectedAgent]);
 
   const agent = agents.find((item) => agentId(item) === selectedAgent);
@@ -232,6 +249,31 @@ export default function App() {
     insertComposerText(hrScope.agentId, text);
     selectAgent(agentId(hr));
     setToast("成员定义已加入 HR 草稿，请检查后发送；尚未创建成员。");
+  };
+  const runOrgAction = async (
+    operation: string,
+    input: Record<string, unknown>,
+    success: string,
+  ) => {
+    if (!orgDoc) {
+      setToast("组织数据尚未加载。");
+      return;
+    }
+    try {
+      await action(companyId, "company_org", operation, {
+        ...input,
+        expectedVersion: orgDoc.version,
+        requestId: uuid(),
+      });
+      qc.invalidateQueries({ queryKey: ["company", companyId] });
+      setToast(success);
+    } catch (error) {
+      setToast(
+        error instanceof ApiError
+          ? error.message
+          : "组织操作失败，请刷新后重试。",
+      );
+    }
   };
 
   if (!accessReady || companies.isLoading)
@@ -350,7 +392,7 @@ export default function App() {
           <OrganizationPanel
             companies={allCompanies}
             companyId={companyId}
-            groups={groups}
+            organization={orgDoc}
             agents={agents}
             selectedAgent={selectedAgent}
             collapsed={collapsed}
@@ -362,12 +404,46 @@ export default function App() {
               selectAgent(id);
               setEditAgentId(id);
             }}
-            onToggleGroup={(groupId) => {
-              const key = `${companyId}:${groupId}`;
+            onToggleNode={(nodeId) => {
+              const key = `${companyId}:${nodeId}`;
               setCollapsed({ ...collapsed, [key]: !collapsed[key] });
             }}
             onCreateCompany={() => setCompanyModal(true)}
-            onOpenSettings={() => setOrgModal(true)}
+            onOpenSettings={() => {
+              setNodeEditor(null);
+              setOrgModal(true);
+            }}
+            onCreateNode={(parentId) => {
+              setNodeEditor({ parentId });
+              setOrgModal(true);
+            }}
+            onEditNode={(nodeId) => {
+              setNodeEditor({ nodeId });
+              setOrgModal(true);
+            }}
+            onArchiveNode={(nodeId) =>
+              void runOrgAction(
+                "archiveOrgNode",
+                { id: nodeId },
+                "节点已归档；不会接收新的成员归属。",
+              )
+            }
+            onDeleteNode={(nodeId) =>
+              void runOrgAction(
+                "deleteOrgNode",
+                { id: nodeId },
+                "节点已删除。",
+              )
+            }
+            onMoveAgent={setMoveAgentId}
+            onArchiveAgent={(id) =>
+              void runOrgAction(
+                "archiveMember",
+                { agentId: id },
+                "成员已归档；目录、Session、IM 与 Issue 保留，鉴权已拒绝。",
+              )
+            }
+            onRestoreAgent={setRestoreAgentId}
           />
         }
         chat={
@@ -384,6 +460,8 @@ export default function App() {
                 key={scopeKey(scope)}
                 scope={scope}
                 issues={issues}
+                agents={agents}
+                threads={threads}
                 actualRuntime={actualRuntime}
                 onOpenSettings={() => setConfigModal(true)}
                 injectedDraft={
@@ -445,9 +523,33 @@ export default function App() {
       {orgModal && company && (
         <OrganizationSheet
           company={company}
-          groups={groups}
-          onClose={() => setOrgModal(false)}
+          organization={orgDoc}
+          agents={agents}
+          editNodeId={nodeEditor?.nodeId}
+          parentId={nodeEditor?.parentId}
+          onClose={() => {
+            setOrgModal(false);
+            setNodeEditor(null);
+          }}
           onAskHR={onAskHR}
+        />
+      )}
+      {movingAgent && company && orgDoc && (
+        <MoveMemberSheet
+          company={company}
+          organization={orgDoc}
+          agent={movingAgent}
+          onClose={() => setMoveAgentId("")}
+          onMoved={setToast}
+        />
+      )}
+      {restoringAgent && company && orgDoc && (
+        <RestoreMemberSheet
+          company={company}
+          organization={orgDoc}
+          agent={restoringAgent}
+          onClose={() => setRestoreAgentId("")}
+          onRestored={setToast}
         />
       )}
       {configModal && agent && (

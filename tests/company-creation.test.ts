@@ -147,6 +147,44 @@ describe("Company creation HTTP/MCP contract with unit provisioning", () => {
     expect(provisions).toHaveLength(7);
     expect(await application.domain.store.ids(join(root, "companys"))).toHaveLength(3);
   });
+  test("MCP publishes organization tree, move and lifecycle tools with expected schemas", async () => {
+    const discovery = await mcp("tools/list");
+    const names = discovery.result.tools.map((tool: any) => tool.name);
+    for (const operation of [
+      "createOrgNode",
+      "updateOrgNode",
+      "deleteOrgNode",
+      "archiveOrgNode",
+      "moveMember",
+      "archiveMember",
+      "restoreMember",
+    ])
+      expect(names).toContain(operation);
+    expect(
+      schemas.createMember!.safeParse({
+        agentId: "member",
+        name: "Member",
+        role: "developer",
+        responsibilities: "Delivery",
+        requestId: "member-without-group",
+      }).success,
+    ).toBe(true);
+    expect(
+      schemas.moveMember!.safeParse({
+        agentId: "member",
+        nodeId: "team",
+        expectedVersion: 1,
+        requestId: "move-schema",
+      }).success,
+    ).toBe(true);
+    expect(
+      schemas.moveMember!.safeParse({
+        agentId: "member",
+        nodeId: "team",
+        requestId: "move-schema",
+      }).success,
+    ).toBe(false);
+  });
   test("MCP advertises generated IDs but still forbids Agents from creating companies", async () => {
     expect(schemas.createCompany!.safeParse(input).success).toBe(true);
     expect(schemas.createCompany!.safeParse({ ...input, config: {} }).success).toBe(true);

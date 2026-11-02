@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RotateCcw, Save } from "lucide-react";
 import type { Agent, Runtime, Scope } from "../../lib/types";
-import { agentId } from "../../lib/types";
+import { agentId, agentOrgPath } from "../../lib/types";
 import { action, api, post, scoped } from "../../lib/api";
 import { uuid } from "../../lib/uuid";
 import {
@@ -366,7 +366,7 @@ export function AgentEditor({
     <Sheet
       open
       title={`${agent.name} · 编辑员工`}
-      subtitle="保存后写回该员工的 agent.yaml；提示词随下一条消息生效。Agent ID、部门和岗位保持不变。"
+      subtitle="保存后写回该员工的 agent.yaml；提示词随下一条消息生效。组织归属由组织树管理，移动不影响身份、固定会话与权限。"
       onClose={onClose}
     >
       <form
@@ -407,7 +407,8 @@ export function AgentEditor({
         <div className="identity-strip">
           <span>{agent.role}</span>
           <span>Agent ID · {agentId(agent)}</span>
-          <span>部门 · {agent.groupId || agent.group_id}</span>
+          <span>部门 · {agentOrgPath(agent) || "未分配"}</span>
+          <span>岗位 · {agent.placement?.title || "未指定"}</span>
         </div>
         <ErrorBox error={save.error} />
         <footer className="sheet-actions">

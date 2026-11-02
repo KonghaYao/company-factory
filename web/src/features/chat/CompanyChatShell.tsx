@@ -1,16 +1,25 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 import {
   CircleDot,
   FileCode2,
   ListOrdered,
   X,
 } from "lucide-react";
-import type { Issue, Runtime, Scope } from "../../lib/types";
-import { scopeKey } from "../../lib/types";
+import type { Agent, Issue, Runtime, Scope, Thread } from "../../lib/types";
+import { agentId, scopeKey } from "../../lib/types";
 import { emptyLocal, useLocal, type LocalScope } from "../../lib/state";
-import { useChat } from "../../peri/chat/runtime";
+import { useChat, type Entry } from "../../peri/chat/runtime";
 import { ChatShellView } from "../../peri/chat/components/ChatShell";
+import {
+  UserMessagePresentationContext,
+  type UserMessagePresentation,
+} from "../../peri/chat/timeline/rows/UserMessageRow";
+import { CompanyImMessageRow } from "./CompanyImMessageRow";
+import { parseCompanyImMessage } from "./companyIm";
 import { createCompanyChatApplication } from "./company-chat-application";
+
+const NO_AGENTS: Agent[] = [];
+const NO_THREADS: Thread[] = [];
 
 /**
  * Company 的 Peri ChatShell 宿主。
@@ -22,6 +31,8 @@ import { createCompanyChatApplication } from "./company-chat-application";
 export function CompanyChatShell({
   scope,
   issues,
+  agents = NO_AGENTS,
+  threads = NO_THREADS,
   onOpenSettings,
   actualRuntime,
   injectedDraft,
@@ -29,6 +40,10 @@ export function CompanyChatShell({
 }: {
   scope: Scope;
   issues: Issue[];
+  /** 公司目录：把 IM senderId 还原成姓名/角色。 */
+  agents?: Agent[];
+  /** 当前 Agent 参与的话题：把 threadId 还原成 subject。 */
+  threads?: Thread[];
   onOpenSettings: () => void;
   /** App 已轮询的 runtime 快照：提供 promptInFlight / promptFailure，不新增端点。 */
   actualRuntime?: Runtime;
@@ -68,24 +83,75 @@ export function CompanyChatShell({
 
   return (
     <div className="peri-chat h-full min-h-0" data-slot="company-chat-shell">
-      <ChatShellView
-        chat={shellChat}
-        onOpenSettings={onOpenSettings}
-        chrome={{ sidebar: false, details: false }}
-        beforeTimeline={<LoadEarlier chat={chat} />}
-        composerExtras={
-          <CompanyComposerExtras
-            chat={chat}
-            scope={scope}
-            issues={issues}
-            local={local}
-          />
-        }
-        injectedDraft={injectedDraft}
-        onInjectedDraft={onInjectedDraft}
-      />
+      <CompanyImPresentationProvider agents={agents} threads={threads}>
+        <ChatShellView
+          chat={shellChat}
+          onOpenSettings={onOpenSettings}
+          chrome={{ sidebar: false, details: false }}
+          beforeTimeline={<LoadEarlier chat={chat} />}
+          composerExtras={
+            <CompanyComposerExtras
+              chat={chat}
+              scope={scope}
+              issues={issues}
+              local={local}
+            />
+          }
+          injectedDraft={injectedDraft}
+          onInjectedDraft={onInjectedDraft}
+        />
+      </CompanyImPresentationProvider>
     </div>
   );
+}
+
+/** 只替换能从文本信封识别的同事 IM；返回 null 时 Peri 继续渲染默认用户气泡。 */
+function CompanyImPresentationProvider({
+  agents,
+  threads,
+  children,
+}: {
+  agents: Agent[];
+  threads: Thread[];
+  children: ReactNode;
+}) {
+  const presentation = useMemo<UserMessagePresentation>(
+    () => (entry) => {
+      const message = parseCompanyImMessage(entryText(entry));
+      if (!message) return null;
+      const sender = message.senderId
+        ? agents.find((agent) => agentId(agent) === message.senderId)
+        : undefined;
+      const thread = message.threadId
+        ? threads.find((item) => item.id === message.threadId)
+        : undefined;
+      return (
+        <CompanyImMessageRow
+          message={message}
+          sender={sender}
+          thread={thread}
+        />
+      );
+    },
+    [agents, threads],
+  );
+
+  return (
+    <UserMessagePresentationContext.Provider value={presentation}>
+      {children}
+    </UserMessagePresentationContext.Provider>
+  );
+}
+
+/** 与 vendored UserMessageRow 的 userText 保持一致：只取 text block。 */
+function entryText(entry: Entry): string {
+  return entry.blocks
+    .filter(
+      (block): block is Extract<Entry["blocks"][number], { type: "text" }> =>
+        block.type === "text",
+    )
+    .map((block) => block.text)
+    .join("\n");
 }
 
 function withCompanyContext(text: string, local: LocalScope) {

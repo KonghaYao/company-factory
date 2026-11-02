@@ -20,7 +20,8 @@ export type AgentConfig = {
 export type ProvisionInput = {
   agentId: string;
   companyId: string;
-  groupId: string;
+  /** Optional initial organization placement; not stored on the person. */
+  groupId?: string;
   role: string;
   name: string;
   responsibilities: string;
@@ -33,12 +34,25 @@ export type ProvisionInput = {
   /** Recovery verifies this already-confirmed binding; it must not be replaced. */
   sessionId?: string;
 };
+export type DeliveryDisposition = "rejected" | "not_sent" | "unknown";
 export type DeliveryInput = {
   companyId: string;
   agentId: string;
   threadId: string;
   messageId: string;
   text: string;
+  /** Stable runtime idempotency key; defaults to messageId when omitted. */
+  requestId?: string;
+  /** 1-based delivery attempt recorded on the message. */
+  attempt?: number;
+};
+export type DeliveryResult = {
+  status: "delivered" | "failed" | "unknown";
+  receipt?: unknown;
+  error?: string;
+  code?: string;
+  disposition?: DeliveryDisposition;
+  uncertain?: boolean;
 };
 export type DomainOptions = {
   root: string;
@@ -46,11 +60,7 @@ export type DomainOptions = {
   provisionAgent(
     input: ProvisionInput,
   ): Promise<{ sessionId: string; mcpConfig?: unknown }>;
-  deliver?(input: DeliveryInput): Promise<{
-    status: "delivered" | "failed";
-    receipt?: unknown;
-    error?: string;
-  }>;
+  deliver?(input: DeliveryInput): Promise<DeliveryResult>;
   onChange?(event: {
     companyId: string;
     kind: string;
@@ -58,10 +68,14 @@ export type DomainOptions = {
     agentIds?: string[];
   }): void;
 };
+/**
+ * A person is flat: identity, display name, access role and runtime facts live
+ * here. Organization membership lives in `organization.yaml`, never in this
+ * record. Legacy `agent.yaml.groupId` may still exist on disk but is ignored.
+ */
 export type AgentRecord = {
   agentId: string;
   companyId: string;
-  groupId: string;
   role: string;
   name: string;
   responsibilities: string;
@@ -75,6 +89,83 @@ export type AgentRecord = {
   version: number;
 };
 export type Group = { id: string; name: string; responsibilities: string };
+export type OrgNodeKind =
+  | "company"
+  | "division"
+  | "department"
+  | "team"
+  | "squad"
+  | "committee";
+export type OrgNodeStatus = "active" | "archived";
+export type OrgNode = {
+  id: string;
+  name: string;
+  kind: OrgNodeKind;
+  parentId: string | null;
+  order: number;
+  responsibilities?: string;
+  leadPersonId?: string | null;
+  status: OrgNodeStatus;
+  version: number;
+};
+export type OrgPlacement = {
+  personId: string;
+  nodeId: string;
+  title?: string;
+  order: number;
+  primary: true;
+  reportsToPersonId?: string | null;
+  since: string;
+  movedAt: string;
+  movedBy: string;
+  previousNodeId?: string | null;
+  version: number;
+};
+export type Organization = {
+  schema: "company-org/v1";
+  version: number;
+  nodes: OrgNode[];
+  placements: OrgPlacement[];
+};
+export type OrgPathEntry = { id: string; name: string };
+export type OrgMemberStatus = "active" | "archived";
+export type RosterMember = {
+  agentId: string;
+  status: OrgMemberStatus;
+  joinedAt: string;
+  /** Legacy roster v1 only; never written back. */
+  groupId?: string;
+  /** Legacy roster v1 only; never written back. */
+  role?: string;
+};
+export type Roster = {
+  schema?: "company-people/v2";
+  version: number;
+  members: RosterMember[];
+};
+export type MoveMemberIntegrity = {
+  agentUnchanged: boolean;
+  sessionUnchanged: boolean;
+  tokenUnchanged: boolean;
+  memoryUnchanged: boolean;
+  mcpUnchanged: boolean;
+  bindingUnchanged: boolean;
+  effectiveConfigUnchanged: boolean;
+  workspaceUnchanged: boolean;
+  agentGitUnchanged: boolean;
+  rosterUnchanged: boolean;
+};
+export type OrgMemberView = {
+  agentId: string;
+  companyId: string;
+  name: string;
+  role: string;
+  responsibilities: string;
+  status: OrgMemberStatus;
+  groupId: string | null;
+  orgPath: OrgPathEntry[];
+  placement: OrgPlacement | null;
+};
 export type Company = {
   id: string;
   name: string;
@@ -191,9 +282,13 @@ export type Message = {
   recipient_id: string;
   reply_to: string | null;
   created_at: string;
-  delivery_status: "saved" | "delivered" | "failed";
+  delivery_status: "saved" | "delivered" | "failed" | "unknown";
   delivered_at?: string;
   delivery_error?: string;
+  delivery_error_code?: string;
+  delivery_disposition?: DeliveryDisposition;
+  delivery_attempts?: number;
+  last_attempt_at?: string;
   receipt?: unknown;
   late: boolean;
   version: number;

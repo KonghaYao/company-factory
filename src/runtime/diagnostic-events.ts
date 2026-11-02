@@ -6,6 +6,7 @@ export const DIAGNOSTIC_EVENTS = [
   "agent_execution_failed",
   "wasm_stderr",
   "chat_action_failed",
+  "im_delivery_failed",
 ] as const;
 
 export type DiagnosticEventName = (typeof DIAGNOSTIC_EVENTS)[number];
@@ -48,6 +49,18 @@ export type DiagnosticFailureEvent =
       snapshotSessionId?: string;
       itemCount?: number;
       activeRequestId?: string;
+    }
+  | {
+      event: "im_delivery_failed";
+      companyId?: string;
+      agentId?: string;
+      messageId?: string;
+      threadId?: string;
+      attempt?: number;
+      code?: string | number;
+      disposition?: "rejected" | "not_sent" | "unknown";
+      uncertain?: boolean;
+      message?: string;
     };
 
 export type DiagnosticEvent = DiagnosticFailureEvent;
@@ -327,6 +340,18 @@ const READ_FIELDS: Record<DiagnosticEventName, readonly string[]> = {
     "snapshotSessionId",
     "itemCount",
     "activeRequestId",
+  ],
+  im_delivery_failed: [
+    "bootId",
+    "companyId",
+    "agentId",
+    "messageId",
+    "threadId",
+    "attempt",
+    "code",
+    "disposition",
+    "uncertain",
+    "message",
   ],
 };
 

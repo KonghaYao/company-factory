@@ -240,6 +240,20 @@ export class CompanyStore {
     await git.addConfig("user.name", "Company Factory");
     await git.addConfig("user.email", "company@localhost");
   }
+  /** Read-only Agent Git identity for invariant checks. Never returns content. */
+  async agentGitSnapshot(
+    dir: string,
+  ): Promise<{ head: string | null; status: string } | null> {
+    if (!(await this.exists(join(dir, ".git")))) return null;
+    try {
+      return {
+        head: (await this.agentGit(dir, ["rev-parse", "HEAD"])).trim() || null,
+        status: (await this.agentGit(dir, ["status", "--porcelain=v1"])).trim(),
+      };
+    } catch {
+      return null;
+    }
+  }
   async commit(dir: string, message: string) {
     await this.initGit(dir);
     if (this.isAgentDirectory(dir)) {

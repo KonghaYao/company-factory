@@ -593,6 +593,34 @@ describe("Company domain — files, permissions and business invariants", () => 
     ).toBe(closed.status);
     expect((await domain.listIssues(user)).length).toBe(before);
   });
+  test("inbox is self-scoped for Agents and explicitly rejects cross-Agent reads", async () => {
+    const sent = await domain.ask(dev, {
+      recipientId: supervisor.id,
+      subject: "Inbox scope",
+      body: "Only the recipient may read this.",
+      requestId: "im-inbox-scope",
+    });
+    // Let the asynchronous post-save delivery settle before the shared temp root is removed.
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const item = (await domain.inbox(supervisor)).items.find(
+        (entry) => entry.id === sent.messageId,
+      );
+      if (item?.delivery_status === "delivered") break;
+      await Bun.sleep(10);
+    }
+    const own = await domain.inbox(dev, { agentId: dev.id });
+    expect(own.items.every((item) => item.recipient_id === dev.id)).toBe(true);
+    expect(own.items.some((item) => item.id === sent.messageId)).toBe(false);
+    await expect(
+      domain.inbox(dev, { agentId: supervisor.id }),
+    ).rejects.toMatchObject({ code: "forbidden", status: 403 });
+    const recipient = await domain.inbox(supervisor);
+    expect(recipient.items.some((item) => item.id === sent.messageId)).toBe(true);
+    const ownerView = await domain.inbox(user, { agentId: supervisor.id });
+    expect(ownerView.items.map((item) => item.id)).toEqual(
+      recipient.items.map((item) => item.id),
+    );
+  });
   test("A12 two independent Issues share Preview with per-Issue acceptance", async () => {
     for (const issueId of ["1", "2"]) {
       let i = await domain.getIssue(dev, { issueId });

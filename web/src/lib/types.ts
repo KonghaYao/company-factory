@@ -12,12 +12,50 @@ export type Company = {
   goal?: string;
 };
 export type Group = { id: string; name: string; description?: string };
+export type OrgNodeKind =
+  | "company"
+  | "division"
+  | "department"
+  | "team"
+  | "squad"
+  | "committee";
+export type OrgNode = {
+  id: string;
+  name: string;
+  kind: OrgNodeKind;
+  parentId: string | null;
+  order: number;
+  responsibilities?: string;
+  leadPersonId?: string | null;
+  status: "active" | "archived";
+  version: number;
+};
+export type OrgPlacement = {
+  personId: string;
+  nodeId: string;
+  title?: string;
+  order: number;
+  primary: true;
+  reportsToPersonId?: string | null;
+  since: string;
+  movedAt: string;
+  movedBy: string;
+  previousNodeId?: string | null;
+  version: number;
+};
+export type Organization = {
+  schema: "company-org/v1";
+  version: number;
+  nodes: OrgNode[];
+  placements: OrgPlacement[];
+};
+export type OrgPathEntry = { id: string; name: string };
 export type Agent = {
   id?: string;
   agentId?: string;
   agent_id?: string;
   name: string;
-  groupId?: string;
+  groupId?: string | null;
   group_id?: string;
   role: string;
   responsibilities?: string;
@@ -25,6 +63,9 @@ export type Agent = {
   version?: number;
   sessionId?: string;
   session_id?: string;
+  status?: "active" | "archived";
+  orgPath?: OrgPathEntry[];
+  placement?: OrgPlacement | null;
   needs_user?: boolean;
   busy?: boolean;
 };
@@ -99,6 +140,11 @@ export type IMMessage = {
   created_at: string;
   delivery_status?: string;
   delivery?: { status?: string };
+  delivery_error?: string;
+  delivery_error_code?: string;
+  delivery_disposition?: "rejected" | "not_sent" | "unknown";
+  delivery_attempts?: number;
+  last_attempt_at?: string;
 };
 export type ModelTier = "fable" | "opus" | "sonnet" | "haiku";
 export type RuntimePublicError = NonNullable<TurnView["error"]>;
@@ -274,3 +320,5 @@ export type Workspace = {
 export const scopeKey = (scope: Scope) => `${scope.companyId}:${scope.agentId}`;
 export const agentId = (a: Agent) => a.id || a.agentId || a.agent_id || "";
 export const agentGroup = (a: Agent) => a.groupId || a.group_id || "";
+export const agentOrgPath = (a: Agent) =>
+  (a.orgPath || []).map((node) => node.name).join(" / ");

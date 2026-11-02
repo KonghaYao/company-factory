@@ -1561,12 +1561,18 @@ export class PeriRuntime {
   }
   async deliver(
     input: RuntimeAgent,
-    message: { text: string; messageId: string; threadId: string },
+    message: {
+      text: string;
+      messageId: string;
+      threadId: string;
+      requestId?: string;
+      attempt?: number;
+    },
   ) {
     try {
       const receipt = await this.send(input, {
         text: `[Company IM ${message.threadId}/${message.messageId}]\n${message.text}`,
-        requestId: message.messageId,
+        requestId: message.requestId ?? message.messageId,
       });
       // "delivered" 表示 direct prompt admission；整轮完成态由事件投影体现。
       return {
@@ -1575,11 +1581,28 @@ export class PeriRuntime {
         sessionId: receipt.sessionId,
       };
     } catch (e) {
+      const details = (e as { details?: Record<string, unknown> } | null)?.details;
+      const rawDisposition = details?.disposition;
+      const disposition:
+        | "rejected"
+        | "not_sent"
+        | "unknown"
+        | undefined =
+        rawDisposition === "rejected" ||
+        rawDisposition === "not_sent" ||
+        rawDisposition === "unknown"
+          ? rawDisposition
+          : undefined;
+      const uncertain = details?.uncertain === true;
+      const code = (e as { code?: unknown } | null)?.code;
       return {
-        status: "failed" as const,
+        status: uncertain ? ("unknown" as const) : ("failed" as const),
         error: redactRuntimeMessage(
           e instanceof Error ? e.message : String(e),
         ),
+        ...(typeof code === "string" ? { code } : {}),
+        ...(disposition ? { disposition } : {}),
+        uncertain,
       };
     }
   }

@@ -150,6 +150,8 @@ export class AgentService {
     text: string;
     messageId: string;
     threadId: string;
+    requestId?: string;
+    attempt?: number;
   }) {
     const a = await this.domain.getAgentInternal(input.agentId);
     if (a.companyId !== input.companyId)

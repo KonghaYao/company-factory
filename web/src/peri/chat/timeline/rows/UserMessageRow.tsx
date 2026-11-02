@@ -1,6 +1,12 @@
+import { createContext, useContext, type ReactNode } from 'react';
 import { Check, Copy } from 'lucide-react';
 import type { Entry } from '../../runtime';
 import { useCopyToClipboard } from '../../../hooks';
+
+export type UserMessagePresentation = (entry: Entry) => ReactNode | null;
+/** 无 Provider 时保持 Peri 默认气泡；Provider 返回 null 表示交回默认渲染。 */
+export const UserMessagePresentationContext =
+  createContext<UserMessagePresentation | null>(null);
 
 function userText(entry: Entry): string {
   return entry.blocks
@@ -11,8 +17,11 @@ function userText(entry: Entry): string {
 
 /** 用户消息：右对齐气泡；复制只在有正文时出现。 */
 export function UserMessageRow({ entry }: { entry: Entry }) {
+  const presentation = useContext(UserMessagePresentationContext);
+  const presented = presentation?.(entry);
   const text = userText(entry);
   const { isCopied, copyToClipboard } = useCopyToClipboard();
+  if (presented !== null && presented !== undefined) return <>{presented}</>;
   return (
     <div className="group flex flex-col items-end gap-1" data-slot="peri-user-message">
       <div className="text-muted-foreground me-1 text-[11px]">你</div>

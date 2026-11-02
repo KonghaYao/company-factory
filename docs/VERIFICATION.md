@@ -10,7 +10,7 @@
 
 - `bun run typecheck`：通过。
 - `bun run build`：通过，保留既有 Monaco chunk 体积提示。
-- `bun test`：**349 pass / 24 skip / 0 fail**，373 项、1,959 断言、42 个文件（2026-11-02，macOS 本地复跑，含运行时诊断、direct prompt 视图投影与 UI 行高/摘要回归）。
+- `bun test`：**404 pass / 24 skip / 0 fail**，428 项、2,216 断言、49 个文件（2026-11-02，macOS 本地复跑，含组织解耦、IM 投递、运行时诊断、direct prompt 视图投影与 UI 回归）。
 - 补丁交付方在原 npm/沙箱基线上报告 186 pass / 29 skip / 1 fail；唯一失败来自 `src/storage/git-sandbox.test.ts` 的 bubblewrap 隔离测试（`Failed to create NETLINK_ROUTE socket: Operation not permitted`）。该测试已随 2026-11-02 本地运行裁定删除，本仓库不再要求 Linux 或 bubblewrap。
 - 24 个跳过项需要真实 Peri/sqld 等外部条件；本轮没有重跑真实模型/WASM live E2E，也没有进行浏览器视觉验收。下文 2026-10-31 的 live 结论不能直接用于本补丁。
 
@@ -75,7 +75,7 @@ npm audit --json
 | 编号 | 状态 | 实际依据与边界 |
 | --- | --- | --- |
 | A01 创建 Company | 已通过 | HTTP 创建，实际总部/HR/主管、个人/公司 Git、跟踪 `.env`、官方原生 UUID Session 和 per-Agent SQLite。初始化失败不返回伪成功；相同请求可继续未完成初始化。 |
-| A02 HR 创建 Agent | 已通过 | 通过真实 bearer 鉴权的 HR MCP 创建部门及成员，唯一归属；伪报角色、用户冒充 HR 拒绝。全局同 Agent ID 并发竞争回归保证仅一方成功。无调组/离职接口。 |
+| A02 HR 创建 Agent | 已通过（历史接口验收；组织解耦 Phase 3 仅领域/组件测试） | 通过真实 bearer 鉴权的 HR MCP 创建部门及成员；伪报角色、用户冒充 HR 拒绝。全局同 Agent ID 并发竞争回归保证仅一方成功。后续能力：user/HR 可移动成员、归档/恢复成员、管理组织树；移动只写 organization.yaml 并自检人员/会话/binding 不变。本轮组织解耦的 move/archive/restore/树管理由领域与 UI 组件测试覆盖，真实 Session/浏览器验收尚未执行（24 个集成测试仍 skip，不冒充通过）。 |
 | A03 保存与重启 | 已通过 | HTTP 保存与重启、SDK 同 Session 加载；真实本地 provider 捕获证明保存未重启保留旧模型/职责，重启应用新值。模型凭据/端点只来自可信宿主环境；Agent 可写的 `.env` 对模型解析无效且在工作区只读，恶意改写不能重定向凭据。普通冷唤醒保留旧模型/密钥与 host-only 生效快照，显式重启才按宿主 env 刷新。host-only 生效快照不可由 Agent 读写。底层 frozen system prompt 不重写，职责通过宿主当前输入上下文装配，已明确记录。 |
 | A04 用户/角色建单 | 已通过 | 用户 HTTP、主管 MCP、用户授权后的 Dev MCP 均可创建；未授权角色 MCP 拒绝且无任务文件。新单 `triage`、主管负责；payload 自报身份不能授权。 |
 | A05 文件与评论 | 已通过 | Issue 描述/头部、用户/Agent 评论真实落盘；本人编辑、他人拒绝；普通评论不改状态。版本冲突、幂等冲突、未知 YAML 字段保留与并发 patch 有回归。 |

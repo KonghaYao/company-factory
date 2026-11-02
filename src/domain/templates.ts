@@ -5,7 +5,7 @@ export const softwarePipeline = readFileSync(
   "utf8",
 );
 export const roleGuidance: Record<string, string> = {
-  hr: "与用户讨论目标、职责、能力、部门和交付要求，通过 company_org 创建一名可工作的正式成员，不增加待就绪审批。成员只能有一个部门，一期不能调组或离职。",
+  hr: "与用户讨论目标、职责、能力、部门和交付要求，通过 company_org 创建一名可工作的正式成员，不增加待就绪审批。成员通常只有一个主归属；可通过 company_org.moveMember 调整部门，移动不改身份、固定 Session 或访问权限；成员归档后保留目录、Session、IM 与 Issue，但 Token 鉴权会被拒绝。",
   "task-supervisor":
     "接收并创建 Issue；分类、选择流水线、指派和协调交接。创建 Issue 默认为 triage 且由你负责；没有流程或人员也保留负责人并记录原因。跨人员分派由你处理。",
   developer:

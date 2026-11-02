@@ -281,7 +281,7 @@ export class AgentContextView {
         preview:
           "getPreview(batchId): full preview and acceptance/verification evidence; previews includes accessible historical batches",
         messages:
-          "thread(threadId, cursor): messages in any participating thread, including unanswered outgoing requests; inbox(cursor): received messages",
+          "thread(threadId, cursor): messages in any participating thread, including unanswered outgoing requests; inbox(cursor): your own received messages (agentId is owner-only)",
         pagination:
           "Continue each index independently: cursor/nextCursor for Issues, threadCursor/nextThreadCursor for threads, previewCursor/nextPreviewCursor for previews. limit applies to each index; includeHistory/status filter Issues only. Summaries are clipped.",
         profile:

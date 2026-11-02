@@ -443,7 +443,7 @@ company_im 支持同一 Company 的成员发现，允许跨部门询问。发现
 | members | 按身份、岗位或职责查找同公司成员 |
 | ask | 发起或续接点对点询问，返回 threadId、messageId |
 | reply | 回复明确的话题与消息 |
-| inbox | 查看自己的消息 |
+| inbox | 查看自己的消息；Agent 只能查询自己的 inbox，跨 Agent 查询会被拒绝，请改用 thread |
 | thread | 按 cursor 查看参与话题 |
 | close | 提问方标记 resolved 或 withdrawn，保留历史 |
 
@@ -453,7 +453,7 @@ company_im 支持同一 Company 的成员发现，允许跨部门询问。发现
 
 保留以下含义：
 
-- 消息已保存、已送入会话、已回复是不同状态。
+- 消息已保存、已送入会话、未送达、结果待核验与已回复是不同状态；delivered 仅表示已送入会话，不代表已消费或已回复。
 - IM 询问不自动创建 Issue、不修改负责人、不创建新 Session。
 - IM threadId 和 Peri sessionId 不混用。
 - 同事回复不等于用户裁定，也不自动通过验收。

@@ -4,8 +4,15 @@ export const MODULE_OPERATIONS = {
     "organization",
     "createCompany",
     "createGroup",
+    "createOrgNode",
+    "updateOrgNode",
+    "deleteOrgNode",
+    "archiveOrgNode",
     "createMember",
     "updateMember",
+    "moveMember",
+    "archiveMember",
+    "restoreMember",
     "setRolePermissions",
   ],
   company_tasks: [
@@ -69,16 +76,76 @@ export const schemas: Record<string, z.ZodType> = {
     id: str,
     name: str,
     responsibilities: str.optional(),
+    parentId: str.nullable().optional(),
+    kind: z
+      .enum(["company", "division", "department", "team", "squad", "committee"])
+      .optional(),
+    order: z.number().int().min(0).optional(),
+    requestId: str,
+  }),
+  createOrgNode: z.object({
+    id: str,
+    name: str,
+    responsibilities: str.optional(),
+    parentId: str.nullable().optional(),
+    kind: z
+      .enum(["company", "division", "department", "team", "squad", "committee"])
+      .optional(),
+    order: z.number().int().min(0).optional(),
+    leadPersonId: str.nullable().optional(),
+    requestId: str,
+  }),
+  updateOrgNode: z.object({
+    id: str,
+    name: str.optional(),
+    responsibilities: str.optional(),
+    parentId: str.nullable().optional(),
+    kind: z
+      .enum(["company", "division", "department", "team", "squad", "committee"])
+      .optional(),
+    order: z.number().int().min(0).optional(),
+    leadPersonId: str.nullable().optional(),
+    expectedVersion: z.number(),
+    requestId: str,
+  }),
+  deleteOrgNode: z.object({
+    id: str,
+    reassignTo: str.optional(),
+    expectedVersion: z.number(),
+    requestId: str,
+  }),
+  archiveOrgNode: z.object({
+    id: str,
+    expectedVersion: z.number(),
     requestId: str,
   }),
   createMember: z.looseObject({
     agentId: str,
     name: str,
-    groupId: str,
+    groupId: str.optional(),
     role: str,
     responsibilities: str,
     systemPrompt: str.optional(),
     config: z.record(str, z.unknown()).optional(),
+    requestId: str,
+  }),
+  moveMember: z.object({
+    agentId: str,
+    nodeId: str,
+    title: str.optional(),
+    order: z.number().int().min(0).optional(),
+    expectedVersion: z.number(),
+    requestId: str,
+  }),
+  archiveMember: z.object({
+    agentId: str,
+    expectedVersion: z.number(),
+    requestId: str,
+  }),
+  restoreMember: z.object({
+    agentId: str,
+    nodeId: str.optional(),
+    expectedVersion: z.number(),
     requestId: str,
   }),
   updateMember: z.looseObject({
@@ -214,7 +281,14 @@ export const schemas: Record<string, z.ZodType> = {
     text: str,
     requestId: str,
   }),
-  inbox: z.object({ agentId: str.optional(), cursor: str.optional() }),
+  inbox: z.object({
+    agentId: str
+      .optional()
+      .describe(
+        "Owner-only; Agent callers always read their own inbox. Use thread(threadId) for another Agent's thread.",
+      ),
+    cursor: str.optional(),
+  }),
   thread: z.object({ threadId: str, cursor: str.optional() }),
   closeThread: z.object({
     threadId: str,

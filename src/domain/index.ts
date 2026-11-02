@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, realpath, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { CompanyStore, safeId, digest } from "../storage/company-store";
@@ -11,6 +11,25 @@ import {
   memoryTemplate,
   softwarePipeline,
 } from "./templates";
+import {
+  MAX_ORG_DEPTH,
+  childNodes,
+  findNode,
+  isOrgNodeKind,
+  legacyOrganization,
+  nextNodeOrder,
+  nextPlacementOrder,
+  nodeDepth,
+  nodePath,
+  normalizeOrganization,
+  normalizeRoster,
+  placementFor,
+  rosterV2,
+  runtimeScopeId,
+  subtreeHeight,
+  subtreeIds,
+  toGroups,
+} from "./org";
 import {
   DomainError,
   requireValue,
@@ -27,6 +46,14 @@ import {
   type Message,
   type AgentConfig,
   type IssueStatus,
+  type MoveMemberIntegrity,
+  type OrgMemberStatus,
+  type OrgMemberView,
+  type OrgNode,
+  type OrgNodeKind,
+  type OrgPlacement,
+  type Organization,
+  type Roster,
 } from "./types";
 export * from "./types";
 export { CompanyStore } from "../storage/company-store";
@@ -132,7 +159,10 @@ const promptText = (v: unknown) => {
   return v;
 };
 const publicAgent = (a: InternalAgent): AgentRecord => {
-  const { authToken, ...rest } = a;
+  // Legacy `groupId` on disk is not a fact source and never leaves the domain.
+  const { authToken, groupId: _legacyGroupId, ...rest } = a as InternalAgent & {
+    groupId?: unknown;
+  };
   return rest;
 };
 /**
@@ -159,11 +189,149 @@ export class CompanyDomain {
   private async company(ctx: CallerContext) {
     return this.store.yaml<Company>(this.path(ctx, "company.yaml"));
   }
-  private async roster(ctx: CallerContext): Promise<{
-    version: number;
-    members: { agentId: string; groupId: string; role: string }[];
+  private async rosterDocument(
+    ctx: CallerContext,
+  ): Promise<{ roster: Roster; raw: string | null }> {
+    const path = this.path(ctx, "roster.yaml");
+    if (!(await this.store.exists(path)))
+      return {
+        roster: { schema: "company-people/v2", version: 0, members: [] },
+        raw: null,
+      };
+    const raw = await this.store.raw(path);
+    const company = await this.company(ctx);
+    return { roster: normalizeRoster(await this.store.yaml(path), company.created_at), raw };
+  }
+  private async roster(ctx: CallerContext): Promise<Roster> {
+    return (await this.rosterDocument(ctx)).roster;
+  }
+  /**
+   * Prefer `organization.yaml`. Legacy companies are projected in memory from
+   * `groups.yaml` + roster v1; reads never upgrade or write anything.
+   */
+  private async organizationState(ctx: CallerContext): Promise<{
+    organization: Organization;
+    legacy: boolean;
+    raw: string | null;
+    roster: Roster;
+    rosterRaw: string | null;
   }> {
-    return this.store.yaml(this.path(ctx, "roster.yaml"));
+    const organizationPath = this.path(ctx, "organization.yaml");
+    const roster = await this.rosterDocument(ctx);
+    if (await this.store.exists(organizationPath)) {
+      const raw = await this.store.raw(organizationPath);
+      return {
+        organization: normalizeOrganization(await this.store.yaml(organizationPath)),
+        legacy: false,
+        raw,
+        roster: roster.roster,
+        rosterRaw: roster.raw,
+      };
+    }
+    const groupsPath = this.path(ctx, "groups.yaml");
+    const groupDoc = (await this.store.exists(groupsPath))
+      ? await this.store.yaml<{ groups: Group[] }>(groupsPath)
+      : { groups: [] as Group[] };
+    const company = await this.company(ctx);
+    return {
+      organization: legacyOrganization(
+        groupDoc.groups ?? [],
+        roster.roster,
+        company.created_at,
+      ),
+      legacy: true,
+      raw: null,
+      roster: roster.roster,
+      rosterRaw: roster.raw,
+    };
+  }
+  private async putOrganization(
+    ctx: CallerContext,
+    organization: Organization,
+    previousVersion: number | null,
+  ) {
+    await this.store.putYaml(
+      this.path(ctx, "organization.yaml"),
+      organization,
+      previousVersion ?? 0,
+    );
+  }
+  private async putRoster(
+    ctx: CallerContext,
+    roster: Roster,
+    previousVersion: number | null,
+    upgrade = false,
+  ) {
+    await this.store.putYaml(
+      this.path(ctx, "roster.yaml"),
+      upgrade ? rosterV2(roster) : roster,
+      previousVersion ?? 0,
+    );
+  }
+  private async memberStatus(
+    companyId: string,
+    agentId: string,
+  ): Promise<OrgMemberStatus | null> {
+    const path = join(this.store.company(companyId), "roster.yaml");
+    if (!(await this.store.exists(path))) return null;
+    const doc = await this.store.yaml<{
+      members?: { agentId?: unknown; status?: unknown }[];
+    }>(path);
+    const member = doc.members?.find((item) => item.agentId === agentId);
+    if (!member) return null;
+    return member.status === "archived" ? "archived" : "active";
+  }
+  private requireNode(org: Organization, nodeId: string): OrgNode {
+    const node = findNode(org, safeId(nodeId, "nodeId"));
+    requireValue(node, "node_not_found", "Organization node does not exist", 404);
+    return node;
+  }
+  private requireActiveNode(org: Organization, nodeId: string): OrgNode {
+    const node = this.requireNode(org, nodeId);
+    requireValue(
+      node.status === "active",
+      "node_archived",
+      "Organization node is archived",
+      409,
+    );
+    return node;
+  }
+  private requireActiveMember(roster: Roster, personId: string) {
+    const member = roster.members.find((item) => item.agentId === personId);
+    requireValue(
+      member,
+      "member_not_found",
+      "Member does not exist in this Company",
+      404,
+    );
+    requireValue(
+      member.status === "active",
+      "member_archived",
+      "Member is archived",
+      409,
+    );
+    return member;
+  }
+  private memberView(
+    agent: InternalAgent,
+    org: Organization,
+    status: OrgMemberStatus,
+    privateProjection: boolean,
+  ): OrgMemberView & Partial<AgentRecord> {
+    const placement =
+      status === "active" ? placementFor(org, agent.agentId) ?? null : null;
+    const shared = {
+      agentId: agent.agentId,
+      companyId: agent.companyId,
+      name: agent.name,
+      role: agent.role,
+      responsibilities: agent.responsibilities,
+      status,
+      groupId: placement?.nodeId ?? null,
+      orgPath: placement ? nodePath(org, placement.nodeId) : [],
+      placement,
+    };
+    return privateProjection ? { ...publicAgent(agent), ...shared } : shared;
   }
   async getAgentInternal(agentId: string): Promise<InternalAgent> {
     const agent = await this.store.yaml<InternalAgent>(
@@ -185,8 +353,11 @@ export class CompanyDomain {
           Buffer.from(digest(a.authToken)),
           Buffer.from(digest(token)),
         )
-      )
+      ) {
+        if ((await this.memberStatus(a.companyId, a.agentId)) === "archived")
+          return null;
         return { type: "agent", id: a.agentId, companyId: a.companyId };
+      }
     }
     return null;
   }
@@ -212,6 +383,12 @@ export class CompanyDomain {
         a.companyId === ctx.companyId,
         "forbidden",
         "Agent belongs to another Company",
+        403,
+      );
+      requireValue(
+        (await this.memberStatus(ctx.companyId, ctx.id)) !== "archived",
+        "member_archived",
+        "Agent is archived",
         403,
       );
       return a;
@@ -257,13 +434,14 @@ export class CompanyDomain {
     );
   }
   private version(record: { version: number }, input: Input) {
+    const expected = input.version ?? input.expectedVersion;
     requireValue(
-      Number.isInteger(input.version),
+      Number.isInteger(expected),
       "invalid_input",
       "version is required",
     );
     requireValue(
-      record.version === input.version,
+      record.version === expected,
       "version_conflict",
       "Record has changed",
       409,
@@ -395,20 +573,29 @@ export class CompanyDomain {
           version: 1,
         };
         await this.store.putYaml(join(root, "company.yaml"), company);
-        await this.store.putYaml(join(root, "groups.yaml"), {
+        await this.store.putYaml(join(root, "organization.yaml"), {
+          schema: "company-org/v1",
           version: 1,
-          groups: [
+          nodes: [
             {
               id: "headquarters",
               name: "总部",
+              kind: "company",
+              parentId: null,
+              order: 0,
               responsibilities: "组织建设与任务协调",
+              leadPersonId: null,
+              status: "active",
+              version: 1,
             },
           ],
-        });
+          placements: [],
+        } satisfies Organization);
         await this.store.putYaml(join(root, "roster.yaml"), {
+          schema: "company-people/v2",
           version: 1,
           members: [],
-        });
+        } satisfies Roster);
         await this.store.atomic(
           join(root, "pipelines", "software-delivery.md"),
           softwarePipeline,
@@ -451,11 +638,48 @@ export class CompanyDomain {
             const agent = await this.getAgentInternal(definition.agentId);
             this.matchInitializationAgent(cctx, definition, agent);
             requireValue(
-              member.groupId === agent.groupId && member.role === agent.role,
+              member.status === "active",
               "already_exists",
               "Existing roster member does not match this Company initialization",
               409,
             );
+            const state = await this.organizationState(cctx);
+            const placement = placementFor(state.organization, definition.agentId);
+            requireValue(
+              !placement || placement.nodeId === definition.groupId,
+              "already_exists",
+              "Existing organization placement does not match this Company initialization",
+              409,
+            );
+            if (!placement) {
+              const organization = state.organization;
+              const previousVersion = organization.version;
+              organization.placements.push({
+                personId: definition.agentId,
+                nodeId: definition.groupId,
+                order: nextPlacementOrder(organization, definition.groupId),
+                primary: true,
+                reportsToPersonId: null,
+                since: now(),
+                movedAt: now(),
+                movedBy: "initialization",
+                previousNodeId: null,
+                version: 1,
+              });
+              organization.version++;
+              await this.putOrganization(
+                cctx,
+                organization,
+                state.raw ? previousVersion : null,
+              );
+              if (state.legacy)
+                await this.putRoster(
+                  cctx,
+                  roster,
+                  state.rosterRaw ? roster.version : null,
+                  true,
+                );
+            }
             await this.commitProvisionedAgent(agent);
           }
         }
@@ -488,62 +712,309 @@ export class CompanyDomain {
   async organization(ctx: CallerContext) {
     await this.access(ctx);
     const company = await this.company(ctx);
-    const { groups } = await this.store.yaml<{ groups: Group[] }>(
-      this.path(ctx, "groups.yaml"),
-    );
-    const roster = await this.roster(ctx);
+    const { organization, roster } = await this.organizationState(ctx);
     const agents = await Promise.all(
-      roster.members.map(async (m) =>
-        publicAgent(await this.getAgentInternal(m.agentId)),
-      ),
+      roster.members.map(async (member) => {
+        const agent = await this.getAgentInternal(member.agentId);
+        return this.memberView(
+          agent,
+          organization,
+          member.status,
+          ctx.type === "user",
+        );
+      }),
     );
     return {
       company,
-      groups,
-      agents:
-        ctx.type === "user"
-          ? agents
-          : agents.map(
-              ({
-                agentId,
-                companyId,
-                groupId,
-                name,
-                role,
-                responsibilities,
-              }) => ({
-                agentId,
-                companyId,
-                groupId,
-                name,
-                role,
-                responsibilities,
-              }),
-            ),
+      organization,
+      groups: toGroups(organization.nodes),
+      agents,
     };
+  }
+  private nodeKind(input: unknown, fallback: OrgNodeKind): OrgNodeKind {
+    const value = input === undefined ? fallback : input;
+    requireValue(
+      isOrgNodeKind(value),
+      "invalid_input",
+      "kind must be company, division, department, team, squad or committee",
+    );
+    return value;
+  }
+  private nodeOrder(
+    org: Organization,
+    parentId: string | null,
+    value: unknown,
+    excludeId?: string,
+  ): number {
+    requireValue(
+      Number.isInteger(value) && Number(value) >= 0,
+      "invalid_input",
+      "order must be a non-negative integer",
+    );
+    const order = Number(value);
+    requireValue(
+      !childNodes(org, parentId).some(
+        (node) => node.id !== excludeId && node.order === order,
+      ),
+      "invalid_input",
+      "Sibling organization order is already used",
+    );
+    return order;
+  }
+  private leadPerson(roster: Roster, value: unknown): string | null {
+    if (value === null || value === "") return null;
+    const personId = safeId(value, "leadPersonId");
+    this.requireActiveMember(roster, personId);
+    return personId;
+  }
+  /** Shared by createOrgNode and the createGroup compatibility alias. */
+  private async createOrgNodeInMutation(
+    ctx: CallerContext,
+    input: Input,
+    fallbackKind: OrgNodeKind,
+  ): Promise<OrgNode> {
+    const state = await this.organizationState(ctx);
+    const organization = state.organization;
+    const previousVersion = organization.version;
+    const previousRosterVersion = state.roster.version;
+    const id = safeId(input.id, "nodeId");
+    requireValue(
+      !findNode(organization, id),
+      "already_exists",
+      "Organization node exists",
+      409,
+    );
+    const parentId =
+      input.parentId === undefined || input.parentId === null || input.parentId === ""
+        ? null
+        : safeId(input.parentId, "parentId");
+    if (parentId) {
+      this.requireActiveNode(organization, parentId);
+      requireValue(
+        nodeDepth(organization, parentId) + 1 <= MAX_ORG_DEPTH,
+        "invalid_input",
+        `Organization depth cannot exceed ${MAX_ORG_DEPTH}`,
+      );
+    }
+    const node: OrgNode = {
+      id,
+      name: cleanText(input.name, "name", 200),
+      kind: this.nodeKind(input.kind, fallbackKind),
+      parentId,
+      order:
+        input.order === undefined
+          ? nextNodeOrder(organization, parentId)
+          : this.nodeOrder(organization, parentId, input.order),
+      responsibilities: String(input.responsibilities ?? ""),
+      leadPersonId:
+        input.leadPersonId === undefined
+          ? null
+          : this.leadPerson(state.roster, input.leadPersonId),
+      status: "active",
+      version: 1,
+    };
+    organization.nodes.push(node);
+    organization.version++;
+    await this.putOrganization(
+      ctx,
+      organization,
+      state.raw ? previousVersion : null,
+    );
+    if (state.legacy)
+      await this.putRoster(
+        ctx,
+        state.roster,
+        state.rosterRaw ? previousRosterVersion : null,
+        true,
+      );
+    return node;
   }
   async createGroup(ctx: CallerContext, input: Input) {
     return this.mutate(ctx, "createGroup", input, async () => {
       await this.role(ctx, ["hr"]);
-      const id = safeId(input.id, "groupId");
-      const data = await this.store.yaml<{ version: number; groups: Group[] }>(
-        this.path(ctx, "groups.yaml"),
+      return this.createOrgNodeInMutation(ctx, input, "department");
+    });
+  }
+  async createOrgNode(ctx: CallerContext, input: Input) {
+    return this.mutate(ctx, "createOrgNode", input, async () => {
+      await this.role(ctx, ["hr"]);
+      return this.createOrgNodeInMutation(ctx, input, "department");
+    });
+  }
+  async updateOrgNode(ctx: CallerContext, input: Input) {
+    return this.mutate(ctx, "updateOrgNode", input, async () => {
+      await this.role(ctx, ["hr"]);
+      const state = await this.organizationState(ctx);
+      const organization = state.organization;
+      const previousVersion = organization.version;
+      const previousRosterVersion = state.roster.version;
+      this.version(organization, input);
+      const node = this.requireNode(organization, safeId(input.id, "nodeId"));
+      if (input.name !== undefined) node.name = cleanText(input.name, "name", 200);
+      if (input.responsibilities !== undefined)
+        node.responsibilities = String(input.responsibilities);
+      if (input.kind !== undefined) node.kind = this.nodeKind(input.kind, node.kind);
+      if (input.leadPersonId !== undefined)
+        node.leadPersonId = this.leadPerson(state.roster, input.leadPersonId);
+      const nextParentId =
+        input.parentId === undefined
+          ? node.parentId
+          : input.parentId === null || input.parentId === ""
+            ? null
+            : safeId(input.parentId, "parentId");
+      if (nextParentId !== node.parentId) {
+        if (nextParentId) {
+          this.requireActiveNode(organization, nextParentId);
+          requireValue(
+            !subtreeIds(organization, node.id).includes(nextParentId),
+            "invalid_input",
+            "Cannot move an organization node under its own subtree",
+          );
+          requireValue(
+            nodeDepth(organization, nextParentId) + subtreeHeight(organization, node.id) <=
+              MAX_ORG_DEPTH,
+            "invalid_input",
+            `Organization depth cannot exceed ${MAX_ORG_DEPTH}`,
+          );
+        }
+        node.parentId = nextParentId;
+        node.order =
+          input.order === undefined
+            ? nextNodeOrder(organization, nextParentId, node.id)
+            : this.nodeOrder(organization, nextParentId, input.order, node.id);
+      } else if (input.order !== undefined) {
+        node.order = this.nodeOrder(
+          organization,
+          node.parentId,
+          input.order,
+          node.id,
+        );
+      }
+      node.version++;
+      organization.version++;
+      await this.putOrganization(
+        ctx,
+        organization,
+        state.raw ? previousVersion : null,
+      );
+      if (state.legacy)
+        await this.putRoster(
+          ctx,
+          state.roster,
+          state.rosterRaw ? previousRosterVersion : null,
+          true,
+        );
+      return node;
+    });
+  }
+  async archiveOrgNode(ctx: CallerContext, input: Input) {
+    return this.mutate(ctx, "archiveOrgNode", input, async () => {
+      await this.role(ctx, ["hr"]);
+      const state = await this.organizationState(ctx);
+      const organization = state.organization;
+      const previousVersion = organization.version;
+      const previousRosterVersion = state.roster.version;
+      this.version(organization, input);
+      const node = this.requireNode(organization, safeId(input.id, "nodeId"));
+      if (node.status === "archived") return node;
+      const subtree = subtreeIds(organization, node.id);
+      const hasActiveChild = organization.nodes.some(
+        (candidate) =>
+          candidate.id !== node.id &&
+          candidate.status === "active" &&
+          subtree.includes(candidate.id),
+      );
+      const hasPlacement = organization.placements.some((placement) =>
+        subtree.includes(placement.nodeId),
       );
       requireValue(
-        !data.groups.some((g) => g.id === id),
-        "already_exists",
-        "Group exists",
+        !hasActiveChild && !hasPlacement,
+        "org_node_not_empty",
+        "Move members out and archive child nodes before archiving this organization node",
         409,
       );
-      const group = {
-        id,
-        name: cleanText(input.name, "name", 200),
-        responsibilities: String(input.responsibilities ?? ""),
+      node.status = "archived";
+      node.version++;
+      organization.version++;
+      await this.putOrganization(
+        ctx,
+        organization,
+        state.raw ? previousVersion : null,
+      );
+      if (state.legacy)
+        await this.putRoster(
+          ctx,
+          state.roster,
+          state.rosterRaw ? previousRosterVersion : null,
+          true,
+        );
+      return node;
+    });
+  }
+  async deleteOrgNode(ctx: CallerContext, input: Input) {
+    return this.mutate(ctx, "deleteOrgNode", input, async () => {
+      await this.role(ctx, ["hr"]);
+      const state = await this.organizationState(ctx);
+      const organization = state.organization;
+      const previousVersion = organization.version;
+      const previousRosterVersion = state.roster.version;
+      this.version(organization, input);
+      const node = this.requireNode(organization, safeId(input.id, "nodeId"));
+      const removedNodeIds = subtreeIds(organization, node.id);
+      const affected = organization.placements.filter((placement) =>
+        removedNodeIds.includes(placement.nodeId),
+      );
+      const reassignTo =
+        input.reassignTo === undefined ||
+        input.reassignTo === null ||
+        input.reassignTo === ""
+          ? null
+          : safeId(input.reassignTo, "reassignTo");
+      if (!reassignTo) {
+        requireValue(
+          removedNodeIds.length === 1 && affected.length === 0,
+          "org_node_not_empty",
+          "Organization node has child nodes or members; provide reassignTo",
+          409,
+        );
+      } else {
+        this.requireActiveNode(organization, reassignTo);
+        requireValue(
+          !removedNodeIds.includes(reassignTo),
+          "invalid_input",
+          "Cannot reassign members into the node being deleted",
+        );
+        let order = nextPlacementOrder(organization, reassignTo);
+        for (const placement of affected) {
+          placement.previousNodeId = placement.nodeId;
+          placement.nodeId = reassignTo;
+          placement.order = order++;
+          placement.movedAt = now();
+          placement.movedBy = ctx.id;
+          placement.version++;
+        }
+      }
+      organization.nodes = organization.nodes.filter(
+        (item) => !removedNodeIds.includes(item.id),
+      );
+      organization.version++;
+      await this.putOrganization(
+        ctx,
+        organization,
+        state.raw ? previousVersion : null,
+      );
+      if (state.legacy)
+        await this.putRoster(
+          ctx,
+          state.roster,
+          state.rosterRaw ? previousRosterVersion : null,
+          true,
+        );
+      return {
+        id: node.id,
+        removedNodeIds,
+        movedPlacementCount: affected.length,
       };
-      data.groups.push(group);
-      data.version++;
-      await this.store.putYaml(this.path(ctx, "groups.yaml"), data);
-      return group;
     });
   }
   private async provision(
@@ -565,7 +1036,6 @@ export class CompanyDomain {
       agent.agentId === input.agentId &&
         agent.companyId === ctx.companyId &&
         agent.directory === this.store.agent(input.agentId) &&
-        agent.groupId === input.groupId &&
         agent.role === input.role &&
         agent.name === input.name &&
         agent.responsibilities === input.responsibilities &&
@@ -613,36 +1083,80 @@ export class CompanyDomain {
       const roster = await this.roster(ctx);
       const member = roster.members.find((m) => m.agentId === agentId);
       requireValue(
-        !member || (member.groupId === agent.groupId && member.role === agent.role),
+        !member || member.status === "active",
         "already_exists",
         "Existing roster member does not match this Company initialization",
         409,
       );
+      const state = await this.organizationState(ctx);
+      const nodeId =
+        input.groupId === undefined || input.groupId === ""
+          ? undefined
+          : safeId(input.groupId, "groupId");
+      const previousOrgVersion = state.organization.version;
+      const previousRosterVersion = roster.version;
+      let orgChanged = false;
+      if (nodeId) {
+        this.requireActiveNode(state.organization, nodeId);
+        const placement = placementFor(state.organization, agentId);
+        requireValue(
+          !placement || placement.nodeId === nodeId,
+          "already_exists",
+          "Existing organization placement does not match this Company initialization",
+          409,
+        );
+        if (!placement) {
+          state.organization.placements.push({
+            personId: agentId,
+            nodeId,
+            order: nextPlacementOrder(state.organization, nodeId),
+            primary: true,
+            reportsToPersonId: null,
+            since: now(),
+            movedAt: now(),
+            movedBy: "initialization",
+            previousNodeId: null,
+            version: 1,
+          });
+          state.organization.version++;
+          orgChanged = true;
+        }
+      }
+      if (orgChanged || state.legacy)
+        await this.putOrganization(
+          ctx,
+          state.organization,
+          state.raw ? previousOrgVersion : null,
+        );
       if (!member) {
-        roster.members.push({ agentId, groupId: agent.groupId, role: agent.role });
+        roster.members.push({ agentId, status: "active", joinedAt: now() });
         roster.version++;
-        await this.store.putYaml(this.path(ctx, "roster.yaml"), roster);
+        await this.putRoster(
+          ctx,
+          roster,
+          state.rosterRaw ? previousRosterVersion : null,
+          true,
+        );
+      } else if (state.legacy) {
+        await this.putRoster(
+          ctx,
+          roster,
+          state.rosterRaw ? previousRosterVersion : null,
+          true,
+        );
       }
       await this.commitProvisionedAgent(agent);
       return publicAgent(agent);
     }
-    requireValue(
-      !(await this.store.exists(join(dir, "agent.yaml"))),
-      "already_exists",
-      "Agent ID already exists globally",
-      409,
-    );
-    const groupId = safeId(input.groupId, "groupId");
+    const groupId =
+      input.groupId === undefined || input.groupId === ""
+        ? undefined
+        : safeId(input.groupId, "groupId");
     const role = safeId(input.role, "role");
-    const groups = await this.store.yaml<{ groups: Group[] }>(
-      this.path(ctx, "groups.yaml"),
-    );
-    requireValue(
-      groups.groups.some((g) => g.id === groupId),
-      "not_found",
-      "Group does not exist",
-      404,
-    );
+    const state = await this.organizationState(ctx);
+    if (groupId) this.requireActiveNode(state.organization, groupId);
+    const previousOrgVersion = state.organization.version;
+    const previousRosterVersion = state.roster.version;
     const company = await this.company(ctx);
     requireValue(
       Object.hasOwn(company.roles, role),
@@ -663,6 +1177,73 @@ export class CompanyDomain {
       "config.instructions": input.config?.instructions,
     });
     const config: AgentConfig = validatedConfig(input.config ?? {});
+    if (await this.store.exists(join(dir, "agent.yaml"))) {
+      // A previous attempt may have written the person before the organization
+      // index. Resume only when every requested person fact matches; otherwise
+      // this is a genuine duplicate identity.
+      const existing = await this.getAgentInternal(agentId);
+      requireValue(
+        existing.companyId === ctx.companyId &&
+          existing.role === role &&
+          existing.name === name &&
+          existing.responsibilities === responsibilities &&
+          existing.systemPrompt === systemPrompt &&
+          digest(existing.config) === digest(config),
+        "already_exists",
+        "Existing Agent does not match this member request",
+        409,
+      );
+      requireValue(
+        !state.roster.members.some((member) => member.agentId === agentId),
+        "already_exists",
+        "Roster member already exists",
+        409,
+      );
+      const placement = placementFor(state.organization, agentId);
+      requireValue(
+        !placement || placement.nodeId === groupId,
+        "already_exists",
+        "Existing organization placement does not match this member request",
+        409,
+      );
+      let orgChanged = false;
+      if (groupId && !placement) {
+        state.organization.placements.push({
+          personId: agentId,
+          nodeId: groupId,
+          order: nextPlacementOrder(state.organization, groupId),
+          primary: true,
+          reportsToPersonId: null,
+          since: now(),
+          movedAt: now(),
+          movedBy: ctx.id,
+          previousNodeId: null,
+          version: 1,
+        });
+        state.organization.version++;
+        orgChanged = true;
+      }
+      if (orgChanged || state.legacy)
+        await this.putOrganization(
+          ctx,
+          state.organization,
+          state.raw ? previousOrgVersion : null,
+        );
+      state.roster.members.push({
+        agentId,
+        status: "active",
+        joinedAt: now(),
+      });
+      state.roster.version++;
+      await this.putRoster(
+        ctx,
+        state.roster,
+        state.rosterRaw ? previousRosterVersion : null,
+        true,
+      );
+      await this.commitProvisionedAgent(existing);
+      return publicAgent(existing);
+    }
     const token = randomBytes(32).toString("hex");
     const knowledgeDirectory = this.path(ctx, "knowledgebase");
     const baseUrl = this.options.baseUrl ?? "http://127.0.0.1:3000";
@@ -706,7 +1287,7 @@ export class CompanyDomain {
     const provisioned = await this.options.provisionAgent({
       agentId,
       companyId: ctx.companyId,
-      groupId,
+      ...(groupId ? { groupId } : {}),
       role,
       name,
       responsibilities,
@@ -727,7 +1308,6 @@ export class CompanyDomain {
     const agent: InternalAgent = {
       agentId,
       companyId: ctx.companyId,
-      groupId,
       role,
       name,
       responsibilities,
@@ -742,10 +1322,46 @@ export class CompanyDomain {
       authToken: token,
     };
     await this.store.putYaml(join(dir, "agent.yaml"), agent);
-    const roster = await this.roster(ctx);
-    roster.members.push({ agentId, groupId, role });
-    roster.version++;
-    await this.store.putYaml(this.path(ctx, "roster.yaml"), roster);
+    if (groupId) {
+      state.organization.placements.push({
+        personId: agentId,
+        nodeId: groupId,
+        order: nextPlacementOrder(state.organization, groupId),
+        primary: true,
+        reportsToPersonId: null,
+        since: now(),
+        movedAt: now(),
+        movedBy: ctx.id,
+        previousNodeId: null,
+        version: 1,
+      });
+      state.organization.version++;
+    }
+    if (groupId || state.legacy)
+      await this.putOrganization(
+        ctx,
+        state.organization,
+        state.raw ? previousOrgVersion : null,
+      );
+    const roster = state.roster;
+    const existing = roster.members.find((member) => member.agentId === agentId);
+    requireValue(
+      !existing || existing.status === "active",
+      "already_exists",
+      "Roster member already exists",
+      409,
+    );
+    if (!existing) {
+      roster.members.push({ agentId, status: "active", joinedAt: now() });
+      roster.version++;
+    }
+    if (!existing || state.legacy)
+      await this.putRoster(
+        ctx,
+        roster,
+        state.rosterRaw ? previousRosterVersion : null,
+        true,
+      );
     await this.commitProvisionedAgent(agent);
     return publicAgent(agent);
   }
@@ -771,6 +1387,407 @@ export class CompanyDomain {
       );
       const config = validatedConfig(rawConfig);
       return this.provision(ctx, { ...input, config });
+    });
+  }
+  private async fileDigest(path: string): Promise<string | null> {
+    try {
+      return digest(await this.store.raw(path));
+    } catch (error) {
+      if ((error as { code?: string }).code === "not_found") return null;
+      throw error;
+    }
+  }
+  private async pathIdentity(path: string): Promise<string | null> {
+    try {
+      const resolved = await realpath(path);
+      const value = await stat(resolved);
+      return `${resolved}:${value.dev}:${value.ino}`;
+    } catch {
+      return null;
+    }
+  }
+  private async factSnapshot(agent: InternalAgent) {
+    const scope = runtimeScopeId(agent.companyId, agent.agentId);
+    return {
+      agentYaml: await this.fileDigest(join(agent.directory, "agent.yaml")),
+      memory: await this.fileDigest(join(agent.directory, MEMORY_FILE)),
+      mcp: await this.fileDigest(join(agent.directory, ".mcp.json")),
+      token: digest(agent.authToken),
+      sessionId: agent.sessionId,
+      directory: await this.pathIdentity(agent.directory),
+      binding: await this.fileDigest(
+        join(this.store.root, "runtime", "wasm-stores", `${scope}.json`),
+      ),
+      effectiveConfig: await this.fileDigest(
+        join(this.store.root, "runtime", "effective-config", `${agent.agentId}.json`),
+      ),
+      workspace: await this.pathIdentity(
+        join(this.store.root, "runtime", "workspace", scope, "home"),
+      ),
+      agentGit: await this.store.agentGitSnapshot(agent.directory),
+    };
+  }
+  private integrityResult(
+    before: Awaited<ReturnType<CompanyDomain["factSnapshot"]>>,
+    after: Awaited<ReturnType<CompanyDomain["factSnapshot"]>>,
+    rosterUnchanged: boolean,
+  ): MoveMemberIntegrity {
+    return {
+      agentUnchanged: before.agentYaml === after.agentYaml,
+      sessionUnchanged: before.sessionId === after.sessionId,
+      tokenUnchanged: before.token === after.token,
+      memoryUnchanged: before.memory === after.memory,
+      mcpUnchanged: before.mcp === after.mcp,
+      bindingUnchanged: before.binding === after.binding,
+      effectiveConfigUnchanged: before.effectiveConfig === after.effectiveConfig,
+      workspaceUnchanged: before.workspace === after.workspace,
+      agentGitUnchanged:
+        JSON.stringify(before.agentGit) === JSON.stringify(after.agentGit),
+      rosterUnchanged,
+    };
+  }
+  private immutableIntegrity(): MoveMemberIntegrity {
+    return {
+      agentUnchanged: true,
+      sessionUnchanged: true,
+      tokenUnchanged: true,
+      memoryUnchanged: true,
+      mcpUnchanged: true,
+      bindingUnchanged: true,
+      effectiveConfigUnchanged: true,
+      workspaceUnchanged: true,
+      agentGitUnchanged: true,
+      rosterUnchanged: true,
+    };
+  }
+  private async restoreFile(path: string, raw: string | null) {
+    if (raw === null) {
+      try {
+        await unlink(path);
+      } catch (error) {
+        if ((error as { code?: string }).code !== "ENOENT") throw error;
+      }
+      return;
+    }
+    await this.store.atomic(path, raw);
+  }
+  async moveMember(ctx: CallerContext, input: Input) {
+    return this.mutate(ctx, "moveMember", input, async () => {
+      await this.role(ctx, ["hr"]);
+      const agentId = safeId(input.agentId, "agentId");
+      const nodeId = safeId(input.nodeId, "nodeId");
+      let agent: InternalAgent;
+      try {
+        agent = await this.getAgentInternal(agentId);
+      } catch (error) {
+        if ((error as { code?: string }).code === "not_found")
+          throw new DomainError(
+            "member_not_found",
+            "Member does not exist",
+            404,
+          );
+        throw error;
+      }
+      requireValue(
+        agent.companyId === ctx.companyId,
+        "member_not_found",
+        "Member does not exist in this Company",
+        404,
+      );
+      const expectedVersion = input.expectedVersion ?? input.version;
+      requireValue(
+        Number.isInteger(expectedVersion),
+        "invalid_input",
+        "expectedVersion is required",
+      );
+      const state = await this.organizationState(ctx);
+      this.requireActiveMember(state.roster, agentId);
+      this.requireActiveNode(state.organization, nodeId);
+      const current = placementFor(state.organization, agentId);
+      const title =
+        input.title === undefined ? undefined : String(input.title).slice(0, 200);
+      const order =
+        input.order === undefined
+          ? undefined
+          : (() => {
+              requireValue(
+                Number.isInteger(input.order) && Number(input.order) >= 0,
+                "invalid_input",
+                "order must be a non-negative integer",
+              );
+              return Number(input.order);
+            })();
+      const noop =
+        !!current &&
+        current.nodeId === nodeId &&
+        (title === undefined || (current.title ?? "") === title) &&
+        (order === undefined || current.order === order);
+      if (noop && !state.legacy)
+        return {
+          placement: current,
+          organization: state.organization,
+          integrity: this.immutableIntegrity(),
+        };
+      if (state.organization.version !== expectedVersion)
+        throw new DomainError(
+          "version_conflict",
+          "Organization has changed",
+          409,
+          { actualVersion: state.organization.version },
+        );
+
+      const before = await this.factSnapshot(agent);
+      const rosterBefore = digest(
+        state.roster.members.map((member) => ({
+          agentId: member.agentId,
+          status: member.status,
+          joinedAt: member.joinedAt,
+        })),
+      );
+      const rosterRawBefore = await this.fileDigest(this.path(ctx, "roster.yaml"));
+      const previousOrgVersion = state.organization.version;
+      const previousRosterVersion = state.roster.version;
+      const at = now();
+      let placement: OrgPlacement;
+      if (noop) {
+        placement = current!;
+      } else if (current) {
+        placement = current;
+        const previousNodeId = placement.nodeId;
+        placement.previousNodeId = previousNodeId;
+        placement.nodeId = nodeId;
+        if (title !== undefined) placement.title = title || undefined;
+        placement.order =
+          order ??
+          (previousNodeId === nodeId
+            ? placement.order
+            : nextPlacementOrder(state.organization, nodeId));
+        placement.movedAt = at;
+        placement.movedBy = ctx.id;
+        placement.version++;
+      } else {
+        placement = {
+          personId: agentId,
+          nodeId,
+          title: title || undefined,
+          order: order ?? nextPlacementOrder(state.organization, nodeId),
+          primary: true,
+          reportsToPersonId: null,
+          since: at,
+          movedAt: at,
+          movedBy: ctx.id,
+          previousNodeId: null,
+          version: 1,
+        };
+        state.organization.placements.push(placement);
+      }
+      if (!noop) state.organization.version++;
+      let orgWritten = false;
+      let rosterWritten = false;
+      try {
+        await this.putOrganization(
+          ctx,
+          state.organization,
+          state.raw ? previousOrgVersion : null,
+        );
+        orgWritten = true;
+        if (state.legacy) {
+          await this.putRoster(
+            ctx,
+            state.roster,
+            state.rosterRaw ? previousRosterVersion : null,
+            true,
+          );
+          rosterWritten = true;
+        }
+        const afterAgent = await this.getAgentInternal(agentId);
+        const after = await this.factSnapshot(afterAgent);
+        const afterRoster = state.legacy
+          ? normalizeRoster(
+              await this.store.yaml(this.path(ctx, "roster.yaml")),
+              (await this.company(ctx)).created_at,
+            )
+          : state.roster;
+        const rosterAfter = digest(
+          afterRoster.members.map((member) => ({
+            agentId: member.agentId,
+            status: member.status,
+            joinedAt: member.joinedAt,
+          })),
+        );
+        const rosterUnchanged =
+          rosterBefore === rosterAfter &&
+          (state.legacy ||
+            rosterRawBefore ===
+              (await this.fileDigest(this.path(ctx, "roster.yaml"))));
+        const integrity = this.integrityResult(before, after, rosterUnchanged);
+        const failedChecks = Object.entries(integrity)
+          .filter(([, value]) => !value)
+          .map(([key]) => key);
+        if (failedChecks.length)
+          throw new DomainError(
+            "integrity_violation",
+            "Organization write violated Agent invariants; organization restored",
+            409,
+            { failedChecks: failedChecks.join(",") },
+          );
+        return { placement, organization: state.organization, integrity };
+      } catch (error) {
+        if (orgWritten)
+          await this.restoreFile(this.path(ctx, "organization.yaml"), state.raw);
+        if (rosterWritten)
+          await this.restoreFile(
+            this.path(ctx, "roster.yaml"),
+            state.rosterRaw,
+          );
+        throw error;
+      }
+    });
+  }
+  async archiveMember(ctx: CallerContext, input: Input) {
+    return this.mutate(ctx, "archiveMember", input, async () => {
+      await this.role(ctx, ["hr"]);
+      const agentId = safeId(input.agentId, "agentId");
+      const state = await this.organizationState(ctx);
+      const previousOrgVersion = state.organization.version;
+      const previousRosterVersion = state.roster.version;
+      this.version(state.organization, input);
+      const member = state.roster.members.find(
+        (item) => item.agentId === agentId,
+      );
+      requireValue(
+        member,
+        "member_not_found",
+        "Member does not exist in this Company",
+        404,
+      );
+      requireValue(
+        await this.store.exists(join(this.store.agent(agentId), "agent.yaml")),
+        "member_not_found",
+        "Member does not exist",
+        404,
+      );
+      const beforePlacements = state.organization.placements.length;
+      state.organization.placements = state.organization.placements.filter(
+        (placement) => placement.personId !== agentId,
+      );
+      let leadCleared = false;
+      for (const node of state.organization.nodes)
+        if (node.leadPersonId === agentId) {
+          node.leadPersonId = null;
+          node.version++;
+          leadCleared = true;
+        }
+      const orgChanged =
+        state.organization.placements.length !== beforePlacements || leadCleared;
+      if (orgChanged) state.organization.version++;
+      let rosterChanged = false;
+      if (member.status !== "archived") {
+        member.status = "archived";
+        state.roster.version++;
+        rosterChanged = true;
+      }
+      if (orgChanged || state.legacy)
+        await this.putOrganization(
+          ctx,
+          state.organization,
+          state.raw ? previousOrgVersion : null,
+        );
+      if (rosterChanged || state.legacy)
+        await this.putRoster(
+          ctx,
+          state.roster,
+          state.rosterRaw ? previousRosterVersion : null,
+          true,
+        );
+      return {
+        agentId,
+        status: "archived" as const,
+        organization: state.organization,
+      };
+    });
+  }
+  async restoreMember(ctx: CallerContext, input: Input) {
+    return this.mutate(ctx, "restoreMember", input, async () => {
+      await this.role(ctx, ["hr"]);
+      const agentId = safeId(input.agentId, "agentId");
+      const state = await this.organizationState(ctx);
+      const previousOrgVersion = state.organization.version;
+      const previousRosterVersion = state.roster.version;
+      this.version(state.organization, input);
+      const member = state.roster.members.find(
+        (item) => item.agentId === agentId,
+      );
+      requireValue(
+        member,
+        "member_not_found",
+        "Member does not exist in this Company",
+        404,
+      );
+      requireValue(
+        await this.store.exists(join(this.store.agent(agentId), "agent.yaml")),
+        "member_not_found",
+        "Member does not exist",
+        404,
+      );
+      requireValue(
+        member.status === "archived",
+        "member_not_archived",
+        "Member is already active; use moveMember to change its organization node",
+        409,
+      );
+      const nodeId =
+        input.nodeId === undefined || input.nodeId === null || input.nodeId === ""
+          ? undefined
+          : safeId(input.nodeId, "nodeId");
+      let orgChanged = false;
+      if (nodeId) {
+        this.requireActiveNode(state.organization, nodeId);
+        const current = placementFor(state.organization, agentId);
+        if (!current) {
+          state.organization.placements.push({
+            personId: agentId,
+            nodeId,
+            order: nextPlacementOrder(state.organization, nodeId),
+            primary: true,
+            reportsToPersonId: null,
+            since: now(),
+            movedAt: now(),
+            movedBy: ctx.id,
+            previousNodeId: null,
+            version: 1,
+          });
+          orgChanged = true;
+        } else if (current.nodeId !== nodeId) {
+          current.previousNodeId = current.nodeId;
+          current.nodeId = nodeId;
+          current.order = nextPlacementOrder(state.organization, nodeId);
+          current.movedAt = now();
+          current.movedBy = ctx.id;
+          current.version++;
+          orgChanged = true;
+        }
+      }
+      if (orgChanged) state.organization.version++;
+      member.status = "active";
+      state.roster.version++;
+      if (orgChanged || state.legacy)
+        await this.putOrganization(
+          ctx,
+          state.organization,
+          state.raw ? previousOrgVersion : null,
+        );
+      await this.putRoster(
+        ctx,
+        state.roster,
+        state.rosterRaw ? previousRosterVersion : null,
+        true,
+      );
+      return {
+        agentId,
+        status: "active" as const,
+        organization: state.organization,
+      };
     });
   }
   async updateMember(ctx: CallerContext, input: Input) {
@@ -1025,9 +2042,18 @@ export class CompanyDomain {
         403,
       );
       const roster = await this.roster(ctx);
-      const supervisor = roster.members.find(
-        (a) => a.role === "task-supervisor",
-      );
+      let supervisor: InternalAgent | undefined;
+      for (const member of roster.members) {
+        if (member.status !== "active") continue;
+        const candidate = await this.getAgentInternal(member.agentId);
+        if (
+          candidate.companyId === ctx.companyId &&
+          candidate.role === "task-supervisor"
+        ) {
+          supervisor = candidate;
+          break;
+        }
+      }
       requireValue(
         supervisor,
         "invalid_state",
@@ -1176,6 +2202,12 @@ export class CompanyDomain {
         "Cannot assign outside Company",
         403,
       );
+      requireValue(
+        (await this.memberStatus(ctx.companyId, target.agentId)) !== "archived",
+        "member_archived",
+        "Cannot assign an archived member",
+        409,
+      );
       const previous = issue.agent_id;
       if (previous !== target.agentId)
         issue.history.push({
@@ -1209,14 +2241,22 @@ export class CompanyDomain {
           "invalid_input",
           "collaborators must be an array",
         );
-        for (const id of input.collaborators)
+        for (const id of input.collaborators) {
+          const collaborator = await this.getAgentInternal(safeId(id));
           requireValue(
-            (await this.getAgentInternal(safeId(id))).companyId ===
-              ctx.companyId,
+            collaborator.companyId === ctx.companyId,
             "forbidden",
             "Collaborator outside Company",
             403,
           );
+          requireValue(
+            (await this.memberStatus(ctx.companyId, collaborator.agentId)) !==
+              "archived",
+            "member_archived",
+            "Cannot add an archived member as a collaborator",
+            409,
+          );
+        }
         issue.collaborators = [...new Set(input.collaborators)] as string[];
       }
       return this.writeIssue(ctx, issue);
@@ -1804,14 +2844,20 @@ export class CompanyDomain {
   }
   async members(ctx: CallerContext, input: Input = {}) {
     await this.access(ctx);
-    const roster = await this.roster(ctx);
+    const { roster, organization } = await this.organizationState(ctx);
     const rows = await Promise.all(
-      roster.members.map(async (m) => {
-        const a = await this.getAgentInternal(m.agentId);
+      roster.members.map(async (member) => {
+        const a = await this.getAgentInternal(member.agentId);
+        const placement =
+          member.status === "active"
+            ? placementFor(organization, a.agentId) ?? null
+            : null;
         return {
           agentId: a.agentId,
           companyId: a.companyId,
-          groupId: a.groupId,
+          groupId: placement?.nodeId ?? null,
+          orgPath: placement ? nodePath(organization, placement.nodeId) : [],
+          status: member.status,
           name: a.name,
           role: a.role,
           responsibilities: a.responsibilities,
@@ -1822,7 +2868,9 @@ export class CompanyDomain {
     return rows.filter(
       (a) =>
         !q ||
-        `${a.agentId} ${a.name} ${a.role} ${a.responsibilities}`
+        `${a.agentId} ${a.name} ${a.role} ${a.responsibilities} ${a.orgPath
+          .map((node) => node.name)
+          .join(" ")}`
           .toLowerCase()
           .includes(q),
     );
@@ -1875,12 +2923,15 @@ export class CompanyDomain {
     const key = `${ctx.companyId}/${message.id}`;
     if (!this.options.deliver || this.pendingDeliveries.has(key)) return;
     this.pendingDeliveries.add(key);
+    const attempt = (message.delivery_attempts ?? 0) + 1;
     void this.options
       .deliver({
         companyId: ctx.companyId,
         agentId: message.recipient_id,
         threadId: message.thread_id,
         messageId: message.id,
+        requestId: message.id,
+        attempt,
         text: `Company IM ${message.thread_id}/${message.id} from ${message.sender_id}\nRead the original via company_im.thread before replying.\n\n${message.body}`,
       })
       .then(async (result) => {
@@ -1888,10 +2939,26 @@ export class CompanyDomain {
           const path = this.path(ctx, "im", "messages", `${message.id}.md`);
           const current = await this.store.markdown<Message>(path);
           current.delivery_status = result.status;
+          current.delivery_attempts = attempt;
+          current.last_attempt_at = now();
           current.version++;
-          if (result.status === "delivered") current.delivered_at = now();
-          if (result.error) current.delivery_error = result.error;
-          if (result.receipt !== undefined) current.receipt = result.receipt;
+          // delivered 仅表示已送入会话（admission）；unknown 绝不能写 delivered_at。
+          if (result.status === "delivered") {
+            current.delivered_at = now();
+            delete current.delivery_error;
+            delete current.delivery_error_code;
+            delete current.delivery_disposition;
+          } else {
+            if (result.error) current.delivery_error = result.error;
+            if (result.code) current.delivery_error_code = result.code;
+            const disposition =
+              result.disposition ??
+              (result.status === "unknown" ? "unknown" : undefined);
+            if (disposition) current.delivery_disposition = disposition;
+          }
+          // A receipt is proof of admission; only delivered may persist it.
+          if (result.status === "delivered" && result.receipt !== undefined)
+            current.receipt = result.receipt;
           await this.store.putMarkdown(path, current);
           await this.store.commit(
             this.store.company(ctx.companyId),
@@ -1909,8 +2976,16 @@ export class CompanyDomain {
         await this.store.locked(`company:${ctx.companyId}`, async () => {
           const path = this.path(ctx, "im", "messages", `${message.id}.md`);
           const current = await this.store.markdown<Message>(path);
-          current.delivery_status = "failed";
-          current.delivery_error = String(error?.message ?? error);
+          // A thrown deliver call proves neither success nor non-delivery.
+          current.delivery_status = "unknown";
+          current.delivery_error = String(
+            (error as { message?: unknown } | null)?.message ?? error,
+          );
+          const code = (error as { code?: unknown } | null)?.code;
+          if (typeof code === "string") current.delivery_error_code = code;
+          current.delivery_disposition = "unknown";
+          current.delivery_attempts = attempt;
+          current.last_attempt_at = now();
           current.version++;
           await this.store.putMarkdown(path, current);
           await this.store.commit(
@@ -1942,6 +3017,13 @@ export class CompanyDomain {
         "forbidden",
         "Recipient must be another member of this Company",
         403,
+      );
+      requireValue(
+        (await this.memberStatus(ctx.companyId, recipient.agentId)) !==
+          "archived",
+        "member_archived",
+        "Cannot send a new message to an archived member",
+        409,
       );
       let thread: Thread;
       if (input.threadId) {
@@ -2034,6 +3116,13 @@ export class CompanyDomain {
   }
   async inbox(ctx: CallerContext, input: Input = {}) {
     await this.access(ctx);
+    if (ctx.type === "agent")
+      requireValue(
+        input.agentId === undefined || input.agentId === ctx.id,
+        "forbidden",
+        "Agents can only read their own inbox; use thread(threadId) for a thread you participate in",
+        403,
+      );
     const agentId =
       ctx.type === "agent" ? ctx.id : safeId(input.agentId, "agentId");
     requireValue(

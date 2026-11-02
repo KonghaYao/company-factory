@@ -254,6 +254,31 @@ function normalizeFailure(event: DiagnosticEvent): NormalizedFailure | null {
       if (!fields.message && fields.code === undefined) return null;
       return { event: event.event, level: "error", fields };
     }
+    case "im_delivery_failed": {
+      const fields: Record<string, unknown> = {};
+      const strings: Array<[string, unknown]> = [
+        ["companyId", event.companyId],
+        ["agentId", event.agentId],
+        ["messageId", event.messageId],
+        ["threadId", event.threadId],
+        ["disposition", event.disposition],
+      ];
+      for (const [key, value] of strings) {
+        const scalar = stringField(value);
+        if (scalar) fields[key] = scalar;
+      }
+      if (typeof event.code === "string") fields.code = event.code.slice(0, 200);
+      else if (numberField(event.code) !== undefined) fields.code = event.code;
+      const attempt = numberField(event.attempt);
+      if (attempt !== undefined) fields.attempt = attempt;
+      if (typeof event.uncertain === "boolean")
+        fields.uncertain = event.uncertain;
+      if (typeof event.message === "string" && event.message.trim())
+        fields.message = redactRuntimeMessage(event.message, 500);
+      if (fields.messageId === undefined && fields.code === undefined && !fields.message)
+        return null;
+      return { event: event.event, level: "error", fields };
+    }
     default:
       return null;
   }
@@ -280,6 +305,16 @@ function dedupeKeyFor(
     if (chatId && requestId) return `chat-action:${chatId}:${requestId}`;
     return `chat-action:${hash(
       `${String(fields.op ?? "")}|${String(fields.code ?? "")}|${String(fields.message ?? "")}`,
+    )}`;
+  }
+  if (event === "im_delivery_failed") {
+    const companyId = stringField(fields.companyId);
+    const messageId = stringField(fields.messageId);
+    const attempt = numberField(fields.attempt);
+    if (companyId && messageId && attempt !== undefined)
+      return `im-delivery:${companyId}:${messageId}:${attempt}`;
+    return `im-delivery:${hash(
+      `${companyId ?? ""}|${messageId ?? ""}|${String(fields.code ?? "")}|${String(fields.message ?? "")}`,
     )}`;
   }
   return null;

@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import type { Agent, IMMessage, Scope, Thread } from "../../lib/types";
 import { action, list } from "../../lib/api";
-import { shortDate, statusLabel, statusTone } from "../../lib/format";
+import { deliveryView, shortDate, statusLabel, statusTone } from "../../lib/format";
 import {
   Avatar,
   Badge,
@@ -75,27 +75,37 @@ export function MessagesView({
         {query.isLoading && <Loading />}
         <ErrorBox error={query.error} />
         <div className="im-thread">
-          {items.map((message) => (
-            <article key={message.id} className="im-message">
-              <header>
-                <Avatar
-                  name={nameOf(message.sender_id || message.author_id)}
-                  size="xs"
-                />
-                <strong>{nameOf(message.sender_id || message.author_id)}</strong>
-                <time>{shortDate(message.created_at)}</time>
-              </header>
-              <Markdown>{message.body}</Markdown>
-              <footer>
-                <span>{message.id}</span>
-                <Badge
-                  value={statusLabel(
-                    message.delivery_status || message.delivery?.status || "saved",
-                  )}
-                />
-              </footer>
-            </article>
-          ))}
+          {items.map((message) => {
+            const status =
+              message.delivery_status || message.delivery?.status || "saved";
+            const delivery = deliveryView(
+              status,
+              message.delivery_disposition,
+            );
+            return (
+              <article key={message.id} className="im-message">
+                <header>
+                  <Avatar
+                    name={nameOf(message.sender_id || message.author_id)}
+                    size="xs"
+                  />
+                  <strong>{nameOf(message.sender_id || message.author_id)}</strong>
+                  <time>{shortDate(message.created_at)}</time>
+                </header>
+                <Markdown>{message.body}</Markdown>
+                <footer>
+                  <span>{message.id}</span>
+                  <Badge value={delivery.label} />
+                </footer>
+                {message.delivery_error && (
+                  <p className="field-hint">{message.delivery_error}</p>
+                )}
+                {delivery.verify && (
+                  <p className="field-hint">请核对，不要自动重发。</p>
+                )}
+              </article>
+            );
+          })}
         </div>
         {query.hasNextPage && (
           <button

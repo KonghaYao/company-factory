@@ -128,6 +128,39 @@ describe("classifyPromptError: session/prompt wire errors", () => {
     }
   });
 
+  test("-32000 stage initialization failure is confirmed not sent", () => {
+    expectClassified(
+      rpc(-32000, "Agent stage initialization failed: snapshot unavailable", {
+        kind: "internal",
+      }),
+      {
+        code: "session_initialization_failed",
+        status: 503,
+        disposition: "not_sent",
+        recovery: "none",
+        uncertain: false,
+      },
+    );
+    // 执行前失败优先于 persistence 文案，不能升级为不可重试的 unknown。
+    expectClassified(
+      rpc(
+        -32000,
+        "Agent stage initialization failed: Conversation persistence is not settled",
+        { kind: "internal" },
+      ),
+      {
+        code: "session_initialization_failed",
+        status: 503,
+        disposition: "not_sent",
+        recovery: "none",
+        uncertain: false,
+      },
+    );
+    expect(
+      promptErrorDefinition("session_initialization_failed")?.message,
+    ).toContain("消息未发送");
+  });
+
   test("-32000 llm/llm_http is an execution failure with uncertain outcome", () => {
     for (const kind of ["llm", "llm_http"]) {
       expectClassified(rpc(-32000, "provider failed", { kind }), {
@@ -274,12 +307,33 @@ describe("classifyAgentExecutionFailure", () => {
       disposition: "unknown",
       recovery: "none",
     });
+    expect(
+      classifyAgentExecutionFailure("Agent stage initialization failed"),
+    ).toMatchObject({
+      code: "session_initialization_failed",
+      status: 503,
+      disposition: "not_sent",
+      recovery: "none",
+      uncertain: false,
+    });
+  });
+
+  test("stage initialization failures beat later persistence notices", () => {
+    expect(
+      classifyAgentExecutionFailure(
+        "Agent stage initialization failed; session persistence is not settled",
+      ),
+    ).toMatchObject({
+      code: "session_initialization_failed",
+      disposition: "not_sent",
+    });
   });
 
   test("helpers identify persistence and admission classes", () => {
     expect(isPersistencePromptError("persistence_pending")).toBe(true);
     expect(isPersistencePromptError("execution_failed")).toBe(false);
     expect(isAdmissionPromptError("session_busy")).toBe(true);
+    expect(isAdmissionPromptError("session_initialization_failed")).toBe(true);
     expect(isAdmissionPromptError("persistence_inconsistent")).toBe(false);
   });
 });
