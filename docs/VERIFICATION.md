@@ -10,7 +10,7 @@
 
 - `bun run typecheck`：通过。
 - `bun run build`：通过，保留既有 Monaco chunk 体积提示。
-- `bun test`：**436 pass / 24 skip / 0 fail**，460 项、2,351 断言、53 个文件（2026-11-02，macOS 本地复跑，含组织解耦、IM 投递、重启门禁、运行时诊断、direct prompt 视图投影与 UI 回归）。
+- `bun test`：**437 pass / 24 skip / 0 fail**，461 项、2,355 断言、53 个文件（2026-11-02，macOS 本地复跑，含组织解耦、IM 投递、重启门禁、运行时诊断、direct prompt 视图投影与 UI 回归）。
 - 补丁交付方在原 npm/沙箱基线上报告 186 pass / 29 skip / 1 fail；唯一失败来自 `src/storage/git-sandbox.test.ts` 的 bubblewrap 隔离测试（`Failed to create NETLINK_ROUTE socket: Operation not permitted`）。该测试已随 2026-11-02 本地运行裁定删除，本仓库不再要求 Linux 或 bubblewrap。
 - 24 个跳过项需要真实 Peri/sqld 等外部条件；本轮没有重跑真实模型/WASM live E2E，也没有进行浏览器视觉验收。下文 2026-10-31 的 live 结论不能直接用于本补丁。
 
@@ -33,7 +33,8 @@
 - 定向测试：`bun test src/runtime/input-receipts.test.ts src/runtime/work-state.test.ts src/domain/im-delivery.test.ts tests/agent-work-notices.test.ts tests/restart-readiness.test.ts scripts/restart-check.test.ts` → **46 pass / 0 fail**，268 断言，6 个文件。
 - `bun run build`：通过；仅有既有的 Monaco/Editor chunk 体积提示。
 - 覆盖：idle/offline/archived、九类 busy reason 合并、archived 有 live work 仍阻止、初始化未完成公司不永久阻塞但仍阻止 Provision 锁、roster 外 bound scope、IM/notice 在途投递生命周期、状态源抛错与超时 fail closed、`companyId` 过滤与 404、无 cookie/Agent bearer 401、HTTP 200/409/503、脚本 0/2/3 映射与 token 不出现在 URL/headers、`/health.version === package.json.version`。
-- 未执行：全量 `bun test`、`bun run verify`、真实服务上的 `bun run check:restart`、进程停止/启动、浏览器与视觉验收、真实模型/WASM live 检查。因此本记录不构成整体验证完成或 live 验收结论。
+- 未执行：浏览器与视觉验收、真实模型/WASM live 检查。因此本记录不构成整体验收结论。
+- 后续补充（同日）：全量 `bun test` **437 pass / 24 skip / 0 fail**（461 项、2,355 断言、53 文件），`bun run typecheck`、`bun run build` 通过。:3400 实际重启后调用 `bun run check:restart`：第一次返回 `BUSY`（supervisor `prompt_in_flight`），据此定位并修复「执行失败通知后 `promptInFlight` 租约残留」缺陷（`src/runtime/index.ts` 在 `recordNoticePromptFailure` 清空租约，回归测试 `src/runtime/binding-recovery.test.ts`）；部署修复后的第二次重启返回 `SAFE`（exit 0），`/health` 200。
 
 ## 最终 live E2E 事实（2026-10-31）
 

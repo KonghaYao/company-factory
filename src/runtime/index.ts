@@ -1319,6 +1319,10 @@ export class PeriRuntime {
       bound,
       classifyAgentExecutionFailure(message),
     );
+    // 通知代表该轮已结束；SDK 的 prompt RPC 在传输故障下可能永不 settle，
+    // 残留的 in-flight 标记会让重启门禁永久判忙。当前架构单 Session 单轮，
+    // 因此整表清空不会抹掉另一轮的标记；不要为假设的并发引入映射。
+    if (bound.promptInFlight.size > 0) bound.promptInFlight.clear();
   }
   private promptTransport(bound: BoundAgent): ModeTransport | undefined {
     return this.promptTransports.get(bound.chat.id);

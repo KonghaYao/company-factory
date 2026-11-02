@@ -59,6 +59,7 @@ async function fixture(session: "present" | "missing" | "wrong-cwd" = "present")
   const store = new ScopedWasmStore(storage as any, input, binding.storeIdentity, binding, manifestPath);
   const actions: Array<{ type: string; sessionId?: string }> = [];
   const chatOptions: any[] = [];
+  const factObservers: Array<(envelope: any) => void> = [];
   let creates = 0;
   const manager = {
     createChat(options: any) {
@@ -67,7 +68,10 @@ async function fixture(session: "present" | "missing" | "wrong-cwd" = "present")
       const chat: any = {
         id: `chat-${creates}`, sessionId: null, bindingRevision: 0,
         get binding() { return chat.sessionId ? { chatId: chat.id, sessionId: chat.sessionId, bindingRevision: chat.bindingRevision } : null; },
-        subscribeFacts: () => () => {},
+        subscribeFacts: (observer: any) => {
+          factObservers.push((envelope) => observer.onFact?.(envelope));
+          return () => {};
+        },
         execute(action: any) {
           actions.push({ type: action.type, sessionId: action.payload?.sessionId });
           if (action.type === "create_new_session") {
@@ -95,7 +99,7 @@ async function fixture(session: "present" | "missing" | "wrong-cwd" = "present")
     scope: async () => ({ caller, agent: input as any, input }),
     restart: async () => {},
   });
-  return { root, input, manifestPath, runtime, internals, store, actions, chatOptions, caller, service, api, creates: () => creates };
+  return { root, input, manifestPath, runtime, internals, store, actions, chatOptions, caller, service, api, creates: () => creates, emitFact: (envelope: any) => factObservers.forEach((observer) => observer(envelope)) };
 }
 
 test("wake and explicit restart leave existing frozen Session instructions untouched", async () => {
@@ -222,6 +226,55 @@ test("runtime internal send retains bounded digests, deduplicates admission, and
   expect(entries.every((entry) => /^[a-f0-9]{64}$/.test(entry.fingerprint))).toBe(true);
   await f.runtime.shutdown();
   expect(f.internals.deliveries.size).toBe(0);
+});
+
+test("an execution-failed notice clears a prompt lease whose RPC never settles", async () => {
+  const f = await fixture();
+  const bound = await f.runtime.wake(f.input);
+  // Transport 在整轮结束后才应 settle；这里模拟传输故障下永不 settle 的 RPC。
+  f.internals.promptTransports.set(bound.chat.id, {
+    prompt: () => new Promise(() => {}),
+    cancel: async () => {},
+    announceExternalUserTurn: () => true,
+    finishExternalUserTurn: () => {},
+  });
+  const admission = await f.runtime.send(f.input, {
+    requestId: "stuck",
+    text: "work",
+  });
+  expect(admission.accepted).toBe(true);
+  expect(f.runtime.workState(f.input).promptInFlight).toBe(1);
+
+  // AgentExecutionFailed notice 到达时该轮已经结束。
+  f.emitFact({
+    fact: {
+      kind: "notice",
+      notification: {
+        method: "peri/agent_event",
+        params: {
+          event_json: JSON.stringify({
+            type: "agent_execution_failed",
+            value: {
+              message: "Agent execution failed: remote store transport failed",
+              turn_id: "turn-1",
+              stop_reason: "error",
+            },
+          }),
+          _meta: { peri: { eventId: "evt-1" } },
+        },
+      },
+    },
+  });
+
+  expect(f.runtime.workState(f.input)).toMatchObject({
+    promptInFlight: 0,
+    running: false,
+  });
+  expect(bound.promptFailure).toMatchObject({
+    code: "execution_failed",
+    disposition: "unknown",
+    recovery: "none",
+  });
 });
 
 test("runtime send retries not_sent and rejected, but preserves an unknown admission", async () => {
