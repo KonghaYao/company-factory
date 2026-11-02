@@ -10,12 +10,14 @@ export function ModelChain({
   model,
   alias,
   empty = "未配置",
+  showAlias = true,
 }: {
   profile?: string | null;
   provider?: string | null;
   model?: string | null;
   alias?: ModelTier | null;
   empty?: string;
+  showAlias?: boolean;
 }) {
   const parts = [profile, provider].filter(Boolean) as string[];
   const path = model
@@ -29,7 +31,9 @@ export function ModelChain({
       data-testid="model-chain"
     >
       <span className="model-chain-path">{path}</span>
-      <span className="model-chain-alias">alias · {alias ?? "—"}</span>
+      {showAlias && (
+        <span className="model-chain-alias">alias · {alias ?? "—"}</span>
+      )}
     </span>
   );
 }

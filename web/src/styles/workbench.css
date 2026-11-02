@@ -5,7 +5,9 @@
   min-height: 0;
   gap: 0;
   padding: 0 14px 14px;
-  grid-template-columns: 18% 6px 34% 6px 48%;
+  /* 两条 6px gutter 先占位，fr 只分配剩余内容宽度；
+     原来的 18%+34%+48% 再加 12px 会把右侧 padding 挤掉。 */
+  grid-template-columns: minmax(0, 18fr) 6px minmax(0, 34fr) 6px minmax(0, 48fr);
 }
 
 .workbench-column {

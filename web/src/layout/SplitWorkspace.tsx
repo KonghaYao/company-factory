@@ -6,6 +6,20 @@ export type ColumnSizes = [number, number, number];
 const STORAGE_KEY = "company.workbench.columns";
 const DEFAULT_SIZES: ColumnSizes = [18, 34, 48];
 const MINIMUMS: ColumnSizes = [200, 320, 360];
+const GUTTER = 6;
+const GUTTERS = GUTTER * 2;
+
+/**
+ * 三列可分配的宽度：元素内容盒宽度再扣除两条 gutter。
+ * clientWidth 包含 padding、不含滚动条；computed padding 兼容 1180px 处的 14→10 切换。
+ */
+function availableWidth(container: HTMLElement): number {
+  const style = getComputedStyle(container);
+  const padding =
+    Number.parseFloat(style.paddingLeft) +
+    Number.parseFloat(style.paddingRight);
+  return Math.max(0, container.clientWidth - padding - GUTTERS);
+}
 
 function clampSizes(next: number[], total: number): ColumnSizes {
   const sizes: ColumnSizes = [
@@ -13,35 +27,46 @@ function clampSizes(next: number[], total: number): ColumnSizes {
     Math.max(MINIMUMS[1], next[1]),
     Math.max(MINIMUMS[2], next[2]),
   ];
-  const sum = sizes.reduce((a, b) => a + b, 0);
-  const overflow = sum - total;
+  let overflow = sizes.reduce((a, b) => a + b, 0) - total;
   if (overflow > 0) {
-    // 从最宽的列开始回收，保证三列都留得住最小宽度。
-    let remaining = overflow;
+    // 优先从最宽的列回收，尽量保住三列的最小宽度。
     const order = [...sizes.keys()].sort((a, b) => sizes[b] - sizes[a]);
     for (const index of order) {
-      const room = sizes[index] - MINIMUMS[index];
-      const take = Math.min(room, remaining);
+      const take = Math.min(sizes[index] - MINIMUMS[index], overflow);
       sizes[index] -= take;
-      remaining -= take;
-      if (remaining <= 0) break;
+      overflow -= take;
+      if (overflow <= 0) break;
+    }
+    // 901–911px 的极端窄桌面：最小宽度之和仍超出可用宽度，
+    // 由最宽列继续吸收，宁可略低于最小宽度也不能溢出视口。
+    if (overflow > 0) {
+      for (const index of order) {
+        const take = Math.min(sizes[index], overflow);
+        sizes[index] -= take;
+        overflow -= take;
+        if (overflow <= 0) break;
+      }
     }
   }
   return sizes;
 }
 
-function readSizes(container: HTMLElement | null): ColumnSizes | null {
+function readSizes(
+  container: HTMLElement | null,
+  total: number,
+): ColumnSizes | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw || !container) return null;
+    if (!raw || !container || !total) return null;
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed) || parsed.length !== 3) return null;
-    const total = container.getBoundingClientRect().width;
-    if (!total) return null;
     const pixels = parsed.map((value: number) =>
       value <= 100 ? (value / 100) * total : value,
     ) as ColumnSizes;
-    return clampSizes(pixels, total);
+    const sum = pixels.reduce((a, b) => a + b, 0);
+    const scaled =
+      sum > 0 ? pixels.map((value) => (value / sum) * total) : pixels;
+    return clampSizes(scaled, total);
   } catch {
     return null;
   }
@@ -49,7 +74,8 @@ function readSizes(container: HTMLElement | null): ColumnSizes | null {
 
 /**
  * 三栏工作台：组织 / 会话 / 数据工作区。
- * 尺寸以像素保存，窗口缩放时按当前总宽重新分配，避免小屏压垮某一栏。
+ * 尺寸以像素保存；以扣除左右 padding 和两条 gutter 后的可用宽度为基准，
+ * 窗口缩放时按新基准重新分配，避免右列被裁切。
  */
 export function SplitWorkspace({
   sidebar,
@@ -79,8 +105,8 @@ export function SplitWorkspace({
   useEffect(() => {
     const container = ref.current;
     if (!container) return;
-    const total = container.getBoundingClientRect().width;
-    const stored = readSizes(container);
+    const total = availableWidth(container);
+    const stored = readSizes(container, total);
     setSizes(
       stored ??
         clampSizes(
@@ -89,11 +115,18 @@ export function SplitWorkspace({
         ),
     );
     const onResize = () => {
-      const width = container.getBoundingClientRect().width;
+      const width = availableWidth(container);
       if (!width) return;
       setSizes((current) => {
         if (!current) return current;
-        const scale = width / current.reduce((a, b) => a + b, 0);
+        const currentTotal = current.reduce((a, b) => a + b, 0);
+        if (!currentTotal) {
+          return clampSizes(
+            DEFAULT_SIZES.map((value) => (value / 100) * width),
+            width,
+          );
+        }
+        const scale = width / currentTotal;
         return clampSizes(
           current.map((value) => value * scale),
           width,
@@ -115,7 +148,7 @@ export function SplitWorkspace({
     const state = drag.current;
     const container = ref.current;
     if (!state || !container) return;
-    const total = container.getBoundingClientRect().width;
+    const total = availableWidth(container);
     const delta = event.clientX - state.startX;
     const next = [...state.start] as ColumnSizes;
     next[state.index] = state.start[state.index] + delta;
@@ -135,7 +168,7 @@ export function SplitWorkspace({
       style={
         sizes
           ? {
-              gridTemplateColumns: `${sizes[0]}px 6px ${sizes[1]}px 6px ${sizes[2]}px`,
+              gridTemplateColumns: `${sizes[0]}px ${GUTTER}px ${sizes[1]}px ${GUTTER}px ${sizes[2]}px`,
             }
           : undefined
       }

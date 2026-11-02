@@ -222,6 +222,25 @@ try {
   );
   await page.screenshot({ path: "docs/ui-02-workbench.png", fullPage: true });
 
+  const workbenchLayout = await page.evaluate(() => {
+    const wb = document.querySelector(".workbench") as HTMLElement;
+    const data = document.querySelector(".workbench-data") as HTMLElement;
+    const style = getComputedStyle(wb);
+    return {
+      overflow: wb.scrollWidth - wb.clientWidth,
+      dataRight: data.getBoundingClientRect().right,
+      expectedRight:
+        window.innerWidth - Number.parseFloat(style.paddingRight),
+      documentOverflow:
+        document.documentElement.scrollWidth - window.innerWidth,
+    };
+  });
+  expect(workbenchLayout.overflow).toBeLessThanOrEqual(1);
+  expect(
+    Math.abs(workbenchLayout.dataRight - workbenchLayout.expectedRight),
+  ).toBeLessThanOrEqual(1);
+  expect(workbenchLayout.documentOverflow).toBeLessThanOrEqual(1);
+
   // Read-only model library: header sheet, right-panel tab, and config pickers.
   await page.getByTestId("open-model-library").click();
   const modelLibrary = page.getByRole("dialog", { name: "模型库", exact: true });
