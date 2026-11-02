@@ -14,6 +14,11 @@ import {
 } from "@peri-code/sdk";
 import type { AgentRecord, CallerContext } from "../../domain";
 import { RuntimeError, type PeriRuntime, type RuntimeAgent } from "../../runtime";
+import {
+  extractRpcErrorMetadata,
+  type RpcErrorMetadata,
+} from "../../runtime/diagnostic-events";
+import type { DiagnosticsSink } from "../../runtime/diagnostics";
 import { chatNotFound, closeIncomplete, mapChatActionError, mapPayloadError } from "./errors";
 import { logError } from "./logging";
 import {
@@ -36,6 +41,8 @@ export interface PeriChatApiDeps {
   scope(c: Context): Promise<ChatScope>;
   /** DELETE = 重启同一 Session（运行中由路由前置拒绝）。 */
   restart(caller: CallerContext, agentId: string): Promise<unknown>;
+  /** Optional structured diagnostics; raw RpcError objects never go to stderr. */
+  diagnostics?: DiagnosticsSink;
 }
 
 interface ActionTarget {
@@ -395,12 +402,20 @@ export function createPeriChatApi(deps: PeriChatApiDeps): Hono<SyncEnv> {
         chatId: chat.id,
         requestId: action.requestId,
       });
-      if (mapped.status >= 500)
-        logError("[peri] Chat action failed", error, {
+      if (mapped.status >= 500) {
+        // Structured, whitelisted scalar metadata only. The raw RpcError is not
+        // handed to stderr; item content and event payloads are never read.
+        const metadata: RpcErrorMetadata | null = extractRpcErrorMetadata(error);
+        deps.diagnostics?.record({
+          event: "chat_action_failed",
+          companyId: scope.input.companyId,
+          agentId: scope.agent.agentId,
           chatId: chat.id,
           op: action.type,
           requestId: action.requestId,
+          ...(metadata ?? {}),
         });
+      }
       return c.json(mapped.body, mapped.status);
     }
   });

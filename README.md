@@ -202,3 +202,28 @@ bun run example                  # 在隔离临时目录运行真实双 Issue �
 Live E2E 的证据口径：独立 CI/Review 的宿主执行结果与 digest 是权威；Reviewer 的 `recordVerification` 文本或 digest 本身不证明执行，只有 Session 投影中真实 Bash 工具调用同时包含“本轮随机 challenge + 宿主 digest”才记为 `agentCiExecuted`。该记录证明 Agent 确实调用了命令工具并观察到本轮结果，但不构成对恶意 Agent 伪造 stdout 的密码学防护；若 Session 投影只给出 result 引用而非完整结果，E12/E13 直接失败、`agentCiExecuted=false`、`closure=false`。`--dry-run` 只读探测所选 Docker/bwrap backend，缺失时直接失败；不会启动服务、容器或拉取镜像。
 
 入口：`src/server/index.ts`。业务：`src/domain/`、`src/storage/`。真实适配：`src/runtime/`。工作台：`web/`。`docs/INTERFACES.md` 与 `src/domain/CONTRACTS.md` 说明身份、输入、错误、事件、版本与幂等规则。
+
+## 6. Runtime diagnostics（临时诊断）
+
+服务端默认写入本地 JSONL 诊断日志，由 `pino` + `pino-roll` 托管，用于定位 `agent_execution_failed`、WASM 持久化错误与 chat action 5xx；公共 HTTP 错误契约、`activeTurn.error` 与前端 schema 均不改变。
+
+- 位置：`${COMPANY_DIAGNOSTICS_DIR:-$TMPDIR/company-factory}/runtime.<n>.jsonl`；`current.log` 是指向当前文件的稳定 symlink。
+- 权限与保留：目录 `0700`、文件 `0600`；默认单文件 1 MB、最多 3 个文件（总量约 3 MB）。重启后追加到编号最高的文件，不覆盖旧日志；每行带 `bootId` 区分进程代次。
+- 捕获范围：进程启动、`agent_execution_failed` notice 的公共 `value.message`、allowlist 后的 WASM `printErr`、chat action 5xx 的脱敏元数据。普通回合除 `process_start` 外不产生噪声。
+- 脱敏：所有自由文本统一处理 URL → `[url]`、32+ token → `[redacted]`、`Authorization`/`token`/`api_key`/`password` 键值 → `[redacted]`，并限制长度；不记录用户消息、工具参数/输出、文件内容、`event_json`、`item.content` 或原始 `RpcError`/snapshot。
+- 只读端点：`GET /api/diagnostics/runtime?limit=N`（`N` 为 1–200，默认 50），仅接受现有 `company_session` owner cookie；响应再次脱敏并只返回白名单字段。没有写入、删除或任意路径读取接口。
+
+```bash
+DIR="${COMPANY_DIAGNOSTICS_DIR:-$(bun -e 'process.stdout.write(require("node:os").tmpdir()+"/company-factory")')}"
+ls -la "$DIR"
+tail -f "$DIR/current.log"
+```
+
+| 变量 | 默认值 / 用途 |
+| --- | --- |
+| `COMPANY_DIAGNOSTICS` | 设为 `0` 完全关闭诊断；默认开启 |
+| `COMPANY_DIAGNOSTICS_DIR` | 覆盖诊断目录；相对路径按 cwd 解析 |
+| `COMPANY_PERI_WASM_STDERR` | 设为 `1` 才启用 WASM `printErr` allowlist；默认关闭 |
+| `COMPANY_DIAGNOSTICS_STDERR` | 设为 `1` 时把 error 级诊断镜像到宿主 stderr（同样脱敏）；默认关闭 |
+
+诊断是临时排障设施，建议保留 1–2 周；确认不再需要后移除监听或设置 `COMPANY_DIAGNOSTICS=0`。

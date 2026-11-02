@@ -17,6 +17,13 @@ import {
 } from "../runtime";
 import { AccessControl, AccessError } from "./security";
 import { createPeriChatApi } from "./peri/chat-api";
+import { createDiagnosticsApi } from "./diagnostics-api";
+import {
+  disabledDiagnostics,
+  openRuntimeDiagnostics,
+  type DiagnosticsOptions,
+  type DiagnosticsSink,
+} from "../runtime/diagnostics";
 import { AgentService } from "./agent-service";
 import { AgentWorkNotices } from "./agent-work-notices";
 import { AgentContextView } from "../domain/agent-context";
@@ -31,6 +38,8 @@ export type ApplicationOptions = {
   storesFile?: string;
   webToken?: string;
   staticRoot?: string;
+  /** Enabled explicitly by the server entrypoint; omitted in tests that do not exercise diagnostics. */
+  diagnostics?: DiagnosticsOptions | false;
 };
 export async function createApplication(options: ApplicationOptions = {}) {
   const root = resolve(
@@ -67,6 +76,10 @@ export async function createApplication(options: ApplicationOptions = {}) {
     }
   }
   const access = new AccessControl(root, baseUrl, ownerToken);
+  const diagnostics: DiagnosticsSink =
+    options.diagnostics === false || options.diagnostics === undefined
+      ? disabledDiagnostics
+      : await openRuntimeDiagnostics(options.diagnostics);
   const pendingTokens = new Map<string, CallerContext>();
   const authenticate = access.agent.bind(access);
   access.agent = async (request) => {
@@ -92,6 +105,7 @@ export async function createApplication(options: ApplicationOptions = {}) {
     periBinary: options.periBinary ?? process.env.PERI_BINARY,
     storeProvider,
     storesFile,
+    diagnostics,
     onChange: (scope) => emit({ ...scope, kind: "runtime" }),
   });
   const files = new WorkspaceViewAdapter({
@@ -303,10 +317,15 @@ export async function createApplication(options: ApplicationOptions = {}) {
   };
   app.route(
     "/",
+    createDiagnosticsApi({ diagnostics, access }),
+  );
+  app.route(
+    "/",
     createPeriChatApi({
       runtime,
       scope: chatScope,
       restart: (caller, agentId) => agents.restart(caller, agentId),
+      diagnostics,
     }),
   );
   app.get("/api/agents/:agentId/workspace", async (c) => {
@@ -474,6 +493,7 @@ export async function createApplication(options: ApplicationOptions = {}) {
     files,
     access,
     mcp,
+    diagnostics,
     root,
     baseUrl,
     ownerToken,
@@ -487,6 +507,8 @@ export async function createApplication(options: ApplicationOptions = {}) {
       ]);
       if (sharedStores)
         results.push(...(await Promise.allSettled([sharedStores.close()])));
+      // Diagnostics shutdown must never change the application close result.
+      await diagnostics.close().catch(() => {});
       if (results.some((result) => result.status === "rejected"))
         throw new Error(
           "应用关闭未确认；Workspace/WASM/共享 sqld handle 已保留，请重试关闭。",

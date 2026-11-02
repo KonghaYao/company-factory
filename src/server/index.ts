@@ -11,6 +11,15 @@ if (
 const port = Number(process.env.PORT ?? 3000);
 const application = await createApplication({
   baseUrl: process.env.COMPANY_BASE_URL ?? `http://${hostname}:${port}`,
+  // Runtime diagnostics are on by default for the server entrypoint.
+  diagnostics:
+    process.env.COMPANY_DIAGNOSTICS === "0"
+      ? false
+      : {
+          dir: process.env.COMPANY_DIAGNOSTICS_DIR,
+          wasmStderr: process.env.COMPANY_PERI_WASM_STDERR === "1",
+          stderr: process.env.COMPANY_DIAGNOSTICS_STDERR === "1",
+        },
 });
 const server = Bun.serve({
   hostname,

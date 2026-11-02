@@ -8,13 +8,44 @@ import {
   type PeriWasmModuleFactory,
 } from "@peri-code/sdk/wasm-node";
 import { ModeTransport } from "./mode-transport";
+import { wasmDiagnosticLine } from "./diagnostic-events";
+import type { DiagnosticsSink } from "./diagnostics";
 
 /** 与 SDK WasmRuntimePool 的默认启动预算一致。 */
 const STARTUP_TIMEOUT_MS = 20_000;
 
+export interface WasmAgentScope {
+  companyId: string;
+  agentId: string;
+  diagnostics?: DiagnosticsSink;
+}
+
 /** Manager 拥有端口兜底回收；native 与 scheduler 生命周期仍由 SDK 驱动。 */
-export function createAgentWasmModules() {
+export function createAgentWasmModules(scope?: WasmAgentScope) {
   const pending = new Set<() => Promise<void>>();
+  /**
+   * Native stderr is allowlist-only: at most 8 lines per callback, and only the
+   * recognized diagnostic patterns survive. Raw output is never forwarded.
+   */
+  const printErr = (text: string) => {
+    const current = scope;
+    const diagnostics = current?.diagnostics;
+    if (!current || !diagnostics?.wasmEnabled) return;
+    try {
+      for (const line of String(text ?? "").split(/\r?\n/).slice(0, 8)) {
+        const diagnostic = wasmDiagnosticLine(line);
+        if (!diagnostic) continue;
+        diagnostics.record({
+          event: "wasm_stderr",
+          companyId: current.companyId,
+          agentId: current.agentId,
+          ...diagnostic,
+        });
+      }
+    } catch {
+      // A diagnostics failure must never surface into the WASM runtime.
+    }
+  };
   const factory: PeriWasmModuleFactory = async (options = {}) => {
     const network = createNodeNetworkPort();
     const closeNetwork = async () => {
@@ -32,9 +63,9 @@ export function createAgentWasmModules() {
           periNet: network.module,
           periDns: createNodeDnsPort(),
           periWorkerSockets: true,
-          // 原生输出可能包含连接或模型凭据，不转为宿主日志。
+          // 原生输出可能包含连接或模型凭据；print 保持 no-op，printErr 仅走 allowlist。
           print: () => {},
-          printErr: () => {},
+          printErr,
         },
       });
       return {

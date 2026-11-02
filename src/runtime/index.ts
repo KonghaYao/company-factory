@@ -28,6 +28,10 @@ import {
   type StoreProvider,
 } from "./wasm-store";
 import { createAgentWasmModules } from "./wasm-runtime";
+import { agentExecutionFailureFromNotice } from "./diagnostic-events";
+import type { DiagnosticsSink } from "./diagnostics";
+import { redactRuntimeMessage } from "./redaction";
+export { redactRuntimeMessage } from "./redaction";
 import { createWorkspaceMcpServerFactory } from "./workspace";
 import {
   ModelConfigurationError,
@@ -235,14 +239,6 @@ function causeCodeOf(error: unknown): string | undefined {
     | undefined;
   return typeof cause?.code === "string" && cause.code ? cause.code : undefined;
 }
-/** 诊断/透传前脱敏：去掉 URL 与 32+ 长 token，并限制长度。 */
-export function redactRuntimeMessage(message: string, limit = 240): string {
-  const compact = message.replace(/\s+/g, " ").trim();
-  const redacted = compact
-    .replace(/https?:\/\/[^\s"'`]+/gi, "[url]")
-    .replace(/\b[A-Za-z0-9_-]{32,}\b/g, "[redacted]");
-  return redacted.length > limit ? `${redacted.slice(0, limit)}…` : redacted;
-}
 /**
  * SDK `ChatActionError` → `RuntimeError`：保留 code/disposition/requestId 与 causeCode，
  * 只把非秘密 details 交给 HTTP 层；cause 仅保留在内存，不序列化。
@@ -322,6 +318,8 @@ export class PeriRuntime {
       storesFile?: string;
       /** Explicit test/deployment override; defaults to COMPANY_MODEL_LIBRARY or <root>/model-library.yaml. */
       modelLibraryPath?: string;
+      /** Optional diagnostics sink; omitted in tests that do not exercise diagnostics. */
+      diagnostics?: DiagnosticsSink;
       onChange?: (scope: { companyId: string; agentId: string }) => void;
     },
   ) {
@@ -369,7 +367,11 @@ export class PeriRuntime {
           throw new RuntimeError("wasm_cleanup_unconfirmed", "此前 Manager 或网络端口关闭未获确认；拒绝启动新 activation。");
         this.managers.delete(this.key(input));
       }
-      const modules = createAgentWasmModules();
+      const modules = createAgentWasmModules({
+        companyId: input.companyId,
+        agentId: input.agentId,
+        diagnostics: this.options.diagnostics,
+      });
       const manager = new ChatManager({
         store: { storage: store.storage.storageConfig, machineId: this.machineId },
         database: store,
@@ -753,6 +755,34 @@ export class PeriRuntime {
           typeof value?.nextCursor === "string" && value.nextCursor
             ? value.nextCursor
             : null;
+      } else if (envelope.fact?.kind === "notice") {
+        // Only the public failure message is extracted; event_json and value
+        // payloads never reach the diagnostics sink.
+        const failure = agentExecutionFailureFromNotice(envelope.fact);
+        if (failure) {
+          const diagnostics = this.options.diagnostics;
+          if (diagnostics) {
+            const sessionId =
+              typeof envelope.sessionId === "string"
+                ? envelope.sessionId
+                : bound.chat.sessionId ?? undefined;
+            const chatId =
+              typeof envelope.chatId === "string"
+                ? envelope.chatId
+                : bound.chat.id;
+            diagnostics.record({
+              event: "agent_execution_failed",
+              companyId: input.companyId,
+              agentId: input.agentId,
+              ...(sessionId ? { sessionId } : {}),
+              ...(chatId ? { chatId } : {}),
+              ...(typeof envelope.bindingRevision === "number"
+                ? { bindingRevision: envelope.bindingRevision }
+                : {}),
+              ...failure,
+            });
+          }
+        }
       }
     };
     chat.subscribeFacts({
