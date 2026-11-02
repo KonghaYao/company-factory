@@ -26,12 +26,22 @@ export interface WorkNotice {
  * Accepted means input admission only. Unknown admission is not auto-retried.
  */
 export class AgentWorkNotices {
-  private readonly active = new Map<string, Promise<void>>();
+  private readonly active = new Map<
+    string,
+    { promise: Promise<void>; companyId: string; notice: WorkNotice }
+  >();
   constructor(
     private readonly domain: CompanyDomain,
     private readonly agents: Pick<AgentService, "send">,
     private readonly changed: (event: Record<string, unknown>) => void,
   ) {}
+
+  /** Notices this process is currently delivering for a Company; read-only. */
+  inFlight(companyId: string): WorkNotice[] {
+    return [...this.active.values()]
+      .filter((entry) => entry.companyId === companyId)
+      .map((entry) => ({ ...entry.notice }));
+  }
 
   /** Owner inspection does not activate an Agent or change any work. */
   async list(caller: CallerContext, agentId: string): Promise<WorkNotice[]> {
@@ -229,10 +239,10 @@ export class AgentWorkNotices {
       const work = Promise.resolve().then(() =>
         this.deliver(companyId, notice),
       );
-      this.active.set(id, work);
+      this.active.set(id, { promise: work, companyId, notice });
       void work
         .finally(() => {
-          if (this.active.get(id) === work) this.active.delete(id);
+          if (this.active.get(id)?.promise === work) this.active.delete(id);
         })
         .catch(() => {});
       return notice;
@@ -375,6 +385,8 @@ export class AgentWorkNotices {
     }
   }
   async close() {
-    await Promise.allSettled([...this.active.values()]);
+    await Promise.allSettled(
+      [...this.active.values()].map((entry) => entry.promise),
+    );
   }
 }

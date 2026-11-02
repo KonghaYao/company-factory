@@ -44,6 +44,7 @@ import {
   type Preview,
   type Thread,
   type Message,
+  type InFlightDelivery,
   type AgentConfig,
   type IssueStatus,
   type MoveMemberIntegrity,
@@ -173,7 +174,7 @@ const publicAgent = (a: InternalAgent): AgentRecord => {
  */
 export class CompanyDomain {
   readonly store: CompanyStore;
-  private readonly pendingDeliveries = new Set<string>();
+  private readonly pendingDeliveries = new Map<string, InFlightDelivery>();
   constructor(readonly options: DomainOptions) {
     this.store = new CompanyStore(options.root);
   }
@@ -2918,11 +2919,23 @@ export class CompanyDomain {
     );
     return message;
   }
+  /** Read-only view of IM messages this process is delivering for a Company. */
+  inFlightDeliveries(companyId: string): InFlightDelivery[] {
+    return [...this.pendingDeliveries.values()]
+      .filter((delivery) => delivery.companyId === companyId)
+      .map((delivery) => ({ ...delivery }));
+  }
   /** Delivery is a post-save side effect. Receipt is recorded separately from reply. */
   private queueDelivery(ctx: CallerContext, message: Message) {
     const key = `${ctx.companyId}/${message.id}`;
     if (!this.options.deliver || this.pendingDeliveries.has(key)) return;
-    this.pendingDeliveries.add(key);
+    this.pendingDeliveries.set(key, {
+      companyId: ctx.companyId,
+      messageId: message.id,
+      threadId: message.thread_id,
+      recipientId: message.recipient_id,
+      startedAt: now(),
+    });
     const attempt = (message.delivery_attempts ?? 0) + 1;
     void this.options
       .deliver({

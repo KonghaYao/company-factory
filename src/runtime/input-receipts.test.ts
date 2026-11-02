@@ -67,6 +67,37 @@ describe("bounded input admission receipts", () => {
     void thirdPending;
   });
 
+  test("pendingCount counts only unsettled admissions and honors a scope prefix", async () => {
+    const cache = new InputReceiptCache<number>();
+    let finishA!: (value: number) => void;
+    let finishB!: (value: number) => void;
+    const a = cache.run(
+      "c-1/dev-1/request-a",
+      "a",
+      () => new Promise<number>((done) => { finishA = done; }),
+    );
+    const b = cache.run(
+      "c-1/dev-2/request-b",
+      "b",
+      () => new Promise<number>((done) => { finishB = done; }),
+    );
+    await cache.run("c-2/dev-1/request-c", "c", async () => 3);
+    await expect(
+      cache.run("c-1/dev-1/request-d", "d", async () => {
+        throw { details: { disposition: "unknown" } };
+      }),
+    ).rejects.toMatchObject({ details: { disposition: "unknown" } });
+
+    expect(cache.pendingCount()).toBe(2);
+    expect(cache.pendingCount("c-1/dev-1/")).toBe(1);
+    expect(cache.pendingCount("c-2/")).toBe(0);
+    finishA(1);
+    finishB(2);
+    await Promise.all([a, b]);
+    expect(cache.pendingCount()).toBe(0);
+    expect(cache.pendingCount("c-1/")).toBe(0);
+  });
+
   test("direct prompt admission window is 750ms by contract", () => {
     expect(PROMPT_ADMIT_WINDOW_MS).toBe(750);
   });

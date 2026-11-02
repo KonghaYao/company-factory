@@ -124,6 +124,39 @@ export interface EffectiveConfiguration {
   systemPrompt?: string;
   model?: ModelResolutionMetadata;
 }
+/** Scope that currently has a bound chat handle or an in-flight runtime operation. */
+export interface RuntimeScope {
+  companyId: string;
+  agentId: string;
+}
+export interface RuntimeWorkInteraction {
+  id: string;
+  kind: string;
+  status: string;
+}
+export interface RuntimeWorkTask {
+  id: string;
+  status: string;
+}
+/**
+ * Immediate, read-only execution facts for restart gating. It never activates a
+ * chat, resolves a model, or reads message/task content.
+ */
+export interface RuntimeWorkState {
+  companyId: string;
+  agentId: string;
+  sessionId: string | null;
+  bound: boolean;
+  operation: boolean;
+  pendingAdmissions: number;
+  status: string;
+  running: boolean;
+  promptInFlight: number;
+  activeTurn: { turnId: string; status: string } | null;
+  queueCount: number;
+  interactions: RuntimeWorkInteraction[];
+  tasks: RuntimeWorkTask[];
+}
 /**
  * Bind-time snapshot reconciliation. A frozen snapshot that is already usable
  * never drifts. A legacy snapshot without `model` metadata is rebuilt from the
@@ -1122,6 +1155,68 @@ export class PeriRuntime {
   /** Current Session identity and the last replacement, without activating it. */
   sessionBinding(input: { companyId: string; agentId: string }) {
     return this.database.boundSessionInfo(input);
+  }
+  /**
+   * Pure in-memory execution facts for an Agent scope. Does not wake, read
+   * effective config/model library, or expose task/message content.
+   */
+  workState(input: {
+    companyId: string;
+    agentId: string;
+    sessionId?: string;
+  }): RuntimeWorkState {
+    const key = this.key(input);
+    const bound = this.agents.get(key);
+    const view = bound?.replica.read();
+    const activeTurn =
+      view?.turns.find((turn) => turn.turnId === view.activeTurnId) ?? null;
+    return {
+      companyId: input.companyId,
+      agentId: input.agentId,
+      sessionId:
+        bound?.chat.sessionId ??
+        input.sessionId ??
+        this.provisioned.get(key)?.sessionId ??
+        null,
+      bound: Boolean(bound),
+      operation: this.locks.has(key),
+      pendingAdmissions: this.deliveries.pendingCount(`${key}/`),
+      status: view?.activeTurnStatus ?? "idle",
+      running: Boolean(view?.running),
+      promptInFlight: bound?.promptInFlight.size ?? 0,
+      activeTurn: activeTurn
+        ? { turnId: activeTurn.turnId, status: activeTurn.status }
+        : null,
+      queueCount: view?.inputQueue?.items.length ?? 0,
+      interactions: (view?.pendingInteractions ?? [])
+        .filter((interaction) => interaction.status === "pending")
+        .map((interaction) => ({
+          id: interaction.id,
+          kind: interaction.kind,
+          status: interaction.status,
+        })),
+      tasks: (view?.tasks ?? []).map((task) => ({
+        id: task.taskId,
+        status: task.status,
+      })),
+    };
+  }
+  /**
+   * Every scope that currently has a chat handle or an operation lock. Used to
+   * detect Provision/orphan work that has not reached the roster yet.
+   */
+  activeScopes(): RuntimeScope[] {
+    const keys = new Set([...this.agents.keys(), ...this.locks.keys()]);
+    const scopes: RuntimeScope[] = [];
+    for (const key of keys) {
+      const separator = key.indexOf("/");
+      if (separator <= 0 || separator === key.length - 1) continue;
+      scopes.push({
+        companyId: key.slice(0, separator),
+        agentId: key.slice(separator + 1),
+      });
+    }
+    return scopes;
   }
   /** 取得或激活该 Agent 的固定 Chat 句柄。 */
   async wakeChat(input: RuntimeAgent) {

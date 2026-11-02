@@ -81,6 +81,15 @@ export class InputReceiptCache<T> {
 
   get size(): number { return this.entries.size; }
 
+  /** Process-local admissions that are still waiting for an outcome. */
+  pendingCount(prefix?: string): number {
+    let count = 0;
+    for (const [key, entry] of this.entries)
+      if (entry.state === "pending" && (!prefix || key.startsWith(prefix)))
+        count++;
+    return count;
+  }
+
   run(key: string, fingerprint: string, submit: () => Promise<T>): Promise<T> {
     const now = this.now();
     for (const [id, entry] of this.entries)

@@ -141,6 +141,55 @@ describe("Company fact notices through the HTTP/MCP boundary", () => {
     await rm(root, { recursive: true, force: true });
   });
 
+  test("inFlight exposes only notices this process is currently delivering", async () => {
+    const created = await action("createIssue", {
+      title: "notice in flight",
+      requestId: "notice-in-flight",
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let started!: () => void;
+    const sending = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const notices = new AgentWorkNotices(
+      app.domain,
+      {
+        send: async () => {
+          started();
+          await gate;
+          return {
+            accepted: true,
+            mode: "prompt" as const,
+            inputId: "input-in-flight",
+            requestId: "notice-in-flight",
+            sessionId: "fixture-session",
+          };
+        },
+      },
+      () => {},
+    );
+    const user: CallerContext = { type: "user", id: "owner", companyId };
+    try {
+      const notice = await notices.afterOperation(
+        user,
+        "createIssue",
+        { requestId: "notice-in-flight-direct" },
+        created,
+      );
+      await sending;
+      expect(notices.inFlight(companyId).map((item) => item.id)).toEqual([
+        notice!.id,
+      ]);
+      expect(notices.inFlight("other-company")).toEqual([]);
+    } finally {
+      release();
+      await notices.close();
+    }
+    expect(notices.inFlight(companyId)).toEqual([]);
+  });
   test("creating and assigning notifies the fixed Agent without choosing its next stage", async () => {
     const input = {
       title: "Agent decides the method",

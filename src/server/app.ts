@@ -30,6 +30,12 @@ import { AgentWorkNotices } from "./agent-work-notices";
 import { AgentContextView } from "../domain/agent-context";
 import { createCompanyMcp } from "./mcp";
 import { MODULE_OPERATIONS, type CompanyModule } from "./operations";
+import {
+  RestartReadiness,
+  RestartReadinessError,
+  type RestartReadinessService,
+} from "./restart-readiness";
+import packageJson from "../../package.json";
 
 export type ApplicationOptions = {
   root?: string;
@@ -41,6 +47,8 @@ export type ApplicationOptions = {
   staticRoot?: string;
   /** Enabled explicitly by the server entrypoint; omitted in tests that do not exercise diagnostics. */
   diagnostics?: DiagnosticsOptions | false;
+  /** Narrow injection point for restart-gate tests; production constructs the default. */
+  readiness?: RestartReadinessService;
 };
 export async function createApplication(options: ApplicationOptions = {}) {
   const root = resolve(
@@ -193,6 +201,14 @@ export async function createApplication(options: ApplicationOptions = {}) {
   });
   agents = new AgentService(domain, runtime);
   const notices = new AgentWorkNotices(domain, agents, emit);
+  const readiness: RestartReadinessService =
+    options.readiness ??
+    new RestartReadiness({
+      domain,
+      runtime,
+      notices,
+      version: packageJson.version,
+    });
   const agentContext = new AgentContextView(domain);
   const dispatch = async (
     module: CompanyModule,
@@ -282,7 +298,7 @@ export async function createApplication(options: ApplicationOptions = {}) {
     c.json({
       ok: true,
       service: "company-factory",
-      version: "1.0.0",
+      version: packageJson.version,
       mcpModules: Object.keys(MODULE_OPERATIONS),
       runtime:
         "@peri-code/sdk@0.3.0 WASM + local sqld (explicit or host-provisioned shared)",
@@ -326,6 +342,33 @@ export async function createApplication(options: ApplicationOptions = {}) {
         })),
       ),
     });
+  });
+  // Owner-only restart gate. Agent bearer credentials are not owner sessions, so
+  // they receive 401 here. This endpoint is not exposed through Company MCP.
+  app.get("/api/restart-readiness", async (c) => {
+    access.user(c.req.raw, "");
+    const companyId = c.req.query("companyId")?.trim() || undefined;
+    try {
+      const result = await readiness.check(companyId ? { companyId } : {});
+      const status = !result.verified
+        ? 503
+        : result.safeToRestart
+          ? 200
+          : 409;
+      return c.json(result, status);
+    } catch (error) {
+      if (error instanceof RestartReadinessError)
+        return c.json(
+          {
+            error: {
+              code: error.code,
+              message: redactPublicMessage(error.message),
+            },
+          },
+          error.status as 404,
+        );
+      throw error;
+    }
   });
   app.post("/api/action", async (c) => {
     const body = await c.req.json();
@@ -541,6 +584,8 @@ export async function createApplication(options: ApplicationOptions = {}) {
     files,
     access,
     mcp,
+    notices,
+    readiness,
     diagnostics,
     root,
     baseUrl,

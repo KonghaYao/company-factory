@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "verify": "bun run typecheck && bun run build && bun test",
+    "check:restart": "bun scripts/restart-check.ts",
     "example": "bun scripts/example.ts",
     "setup:peri": "bun scripts/setup-peri.ts",
     "test:integration": "bun test tests/integration.test.ts",

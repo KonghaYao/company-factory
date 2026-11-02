@@ -45,3 +45,52 @@ Mutation responses may contain `notification` (`answerDecision` also retains the
 Explicit restart validates memory before activation and rereads it after activation, then records the exact applied configuration version. A later save or memory conflict is reported without falsely marking that revision applied. This is not a transaction spanning the external runtime and multiple files; post-activation conflicts require an explicit retry.
 
 UI query keys, drafts, subscriptions and open file buffers include both Company and Agent. Sending captures its full scope and clears the original draft only if it has not changed while awaiting the receipt. Unsupported SDK queue editing/upload/runtime preferences are not advertised as working features.
+
+## Restart readiness
+
+`GET /api/restart-readiness` is an owner-only, read-only gate for stopping the single Bun service process. It accepts an optional `?companyId=` filter. An owner session cookie is required; an Agent bearer credential, or no cookie, receives `401`. The route is not part of `MODULE_OPERATIONS` and is not exposed through any Company MCP. Responses use `Cache-Control: no-store` from the existing `/api/*` middleware.
+
+```json
+{
+  "safeToRestart": false,
+  "verified": true,
+  "checkedAt": "2026-11-02T18:20:00.000Z",
+  "serverVersion": "1.0.0",
+  "busy": [
+    {
+      "companyId": "c-...",
+      "companyName": "Company",
+      "agentId": "c-...-developer",
+      "name": "Developer",
+      "status": "running",
+      "reasons": ["active_turn", "im_delivery"],
+      "sessionId": "01a19b...",
+      "turnId": "turn:3",
+      "threadId": "T2",
+      "archived": false
+    }
+  ],
+  "counts": {
+    "companies": 1,
+    "activeAgents": 6,
+    "archivedAgents": 1,
+    "busyAgents": 1,
+    "idleAgents": 5,
+    "offlineAgents": 2
+  },
+  "errors": []
+}
+```
+
+- `safeToRestart = verified && busy.length === 0`.
+- `verified` is true only when every Company, roster, runtime scope and in-flight source was read successfully. Any unreadable source or the 5-second timeout yields `verified=false`, `safeToRestart=false`, `503`, and an `errors[]` entry with a redacted message.
+- HTTP status: `200` safe, `409` verified but busy, `503` unverified, `401` no owner session, `404` explicit `companyId` not found.
+- `serverVersion` is `package.json.version`; `/health.version` reads the same field. There is no version-write API.
+- Stable `reasons` are `active_turn`, `prompt_in_flight`, `prompt_admission`, `agent_operation`, `queued_input`, `awaiting_input`, `running_task`, `im_delivery`, `work_notice`.
+- `status` prefers the runtime turn status (`accepting`/`running`/`cancelling`), then `awaiting_input`; an operation-only lock is `binding`, delivery-only is `delivering`, queue-only is `queued`, task-only is `task_running`, and mixed facts fall back to `busy`.
+
+Busy means this process currently has at least one unfinished unit attributable to the Agent: an active Chat turn, `promptInFlight > 0` or a pending input admission, a runtime wake/bind/restart/provision operation lock, a non-empty legacy input queue, a pending interaction, a `running`/`in_progress` Session task, an in-flight Company IM delivery, or an in-flight Agent work-notice. The following are explicitly **not** busy: peri-loom `threads.agent_status=active`, existence of `session_bindings`, IM thread `open`, `delivered`/`accepted` admissions, Issue workflow stage (for example a stable `triage`), Preview URLs, `executionBlocked`/`closed`/`not-ready`, and pending `needs_user` decisions. Archived Agents are still reported and still block when they have live work. An Agent without a bound chat is counted as offline, not busy.
+
+Companies whose `initialization_status` is not `complete` are not asked for a roster, so a historical failed initialization cannot block forever. Their runtime `activeScopes()` and `workState()` are still checked, so an active Provision lock or bound work is reported. Roster-external bound/orphan scopes and IM/notice recipients outside the roster are also included to avoid under-reporting. `counts.activeAgents`/`archivedAgents` count roster members; `busyAgents` counts every reported Agent; `idleAgents` is `max(0, activeAgents - busy active roster members)`; `offlineAgents` is active roster members without a bound chat.
+
+`bun run check:restart` (implemented in `scripts/restart-check.ts`) logs in with the owner token, calls this endpoint, and maps the answer to exit `0` SAFE, `2` BUSY, `3` UNVERIFIED, or `1` usage/missing token. It never stops, starts, signals or spawns a process, and never prints the token or cookie. The check is advisory rather than a distributed lock: new input can arrive between a safe answer and the actual stop. External host processes, external Preview services and manual terminal work are outside the single-process scope.

@@ -294,6 +294,14 @@ export type Message = {
   version: number;
   body: string;
 };
+/** Process-local fact: an IM message this process is delivering right now. */
+export type InFlightDelivery = {
+  companyId: string;
+  messageId: string;
+  threadId: string;
+  recipientId: string;
+  startedAt: string;
+};
 export class DomainError extends Error {
   constructor(
     public code: string,

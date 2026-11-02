@@ -8,7 +8,7 @@
 
 **2026-11-02 架构变更：Workspace 本地运行。** 按所有者裁定，Agent 的官方 Workspace MCP 与宿主 Git 直接以宿主用户身份运行，不再依赖 Linux / bubblewrap，也不再提供 OS 级隔离；Agent 工具可访问该用户可访问的本机文件。`COMPANY_SANDBOX` 已移除；`COMPANY_WORKSPACE=disabled` 仅作为显式关闭 Agent Workspace 的调试开关。
 
-**测试基线（2026-11-02，macOS）：** 全量 `409 pass / 24 skip / 0 fail`（433 项、2,253 断言、50 个文件）；`bun run typecheck` 与 `bun run build` 通过。历史 Linux live 验收（2026-10-31，沙箱版，`closure=true`）是过去实现的证据，**不代表当前本地架构**，需要重新做 live 验收；详见 [验证记录](docs/VERIFICATION.md)。
+**测试基线（2026-11-02，macOS）：** 全量 `436 pass / 24 skip / 0 fail`（460 项、2,351 断言、53 个文件）；`bun run typecheck` 与 `bun run build` 通过。历史 Linux live 验收（2026-10-31，沙箱版，`closure=true`）是过去实现的证据，**不代表当前本地架构**，需要重新做 live 验收；详见 [验证记录](docs/VERIFICATION.md)。
 
 **未验证项，不能声称：** 独立 fable 模型仍未验证（供应商无独立 fable 模型）；四档 alias 路由可用，但不能声称四档四模型全部真实通过。历史 live 证据中的 `agentCiExecuted` 与 digest 口径仅对那轮沙箱版运行有效。
 
@@ -151,6 +151,30 @@ profiles:
 - 新建工单、指派信息更新和明确答复会发出携带 Issue 引用的简短通知，Agent 自主决定如何响应；通知不推进状态。运行面板显示最近通知与确定失败后的重试入口。Agent MCP 的工作区返回有界索引与详情读取入口，完整历史按需读取。
 - 运行时授权/问答与 Company 决策分开；停止和输入队列使用 SDK 原生控制。未接通的附件上传能力不开放。
 
+### 重启与版本更新门禁
+
+服务重启前必须先确认没有人员正在工作。门禁是只读检查，不会停止、启动或拉起任何进程：
+
+```bash
+bun run check:restart                  # 检查本机默认服务
+bun run check:restart --company <id>   # 只检查一个公司
+bun run check:restart --json           # 机器可读输出
+```
+
+退出码：`0` SAFE（可以重启）、`2` BUSY（列出仍工作的公司与人员及原因）、`3` UNVERIFIED（无法确认，按失败闭合处理）、`1` 用法错误或缺少 owner token。token 依次读取 `COMPANY_WEB_TOKEN`、`$COMPANY_HOME/owner-token`（默认 `~/.company/owner-token`），脚本不会打印 token 或 cookie。也可以直接以 owner 会话调用 `GET /api/restart-readiness`（可选 `?companyId=`）：`200` 安全、`409` 有人员在工作、`503` 无法确认、`401` 未登录、`404` 公司不存在；Agent bearer 不能调用，接口也不暴露到 Company MCP。
+
+“工作中”只按当前服务进程内的执行事实判断：运行中的 Chat turn、尚未结算的 prompt admission、runtime 的 wake/bind/restart/provision 操作锁、legacy 输入队列、等待用户回答/权限、`running`/`in_progress` 的 Session task、正在投递的 Company IM 消息和 Agent work-notice。peri-loom 的 `threads.agent_status=active`、Issue 工作流阶段、Preview URL、IM thread 的 `open`，以及已 `delivered`/`accepted` 的 admission 都不算忙。初始化未完成的公司不会因为历史失败状态永久阻塞：只检查其 runtime 锁与已绑定工作。任一状态源读取失败或 5 秒超时，都会返回 `503 verified=false`。
+
+固定重启与版本更新顺序：
+
+1. `bun run verify` 通过。
+2. `bun run check:restart` 必须 exit `0`；记录输出中的 `serverVersion` 与 `checkedAt`。
+3. 检查通过后，才修改 `package.json` 的 `version`。应用版本唯一来源是该字段；`/health.version` 动态读取它，没有版本写入 API。
+4. 人工停止服务，执行 `bun start`。
+5. 用 `/health` 确认 `version` 已是新值，再执行一次 `bun run check:restart`，确认新版本启动后仍为 SAFE。
+
+门禁不是分布式锁：检查通过后、停止进程前仍可能有新输入或新投递。当前架构只有单个 Bun 服务进程；Agent 通过 Workspace 启动的宿主进程、外部 Preview 服务或手工终端任务不在检查范围内。
+
 ## 4. 数据和安全边界
 
 ```text
@@ -202,7 +226,7 @@ bun run test:integration
 bun run example                  # 在隔离临时目录运行真实双 Issue 交付示例
 ```
 
-当前代码已实际执行 `bun run typecheck`、`bun run build` 与全量测试（macOS `409 pass / 24 skip / 0 fail`）；`bun run example` 与浏览器套件未执行。真实 runtime 套件还需设置专用空库的 `COMPANY_TEST_SQLD_URL/COMPANY_TEST_SQLD_TOKEN`；HTTP/MCP 集成套件使用 `COMPANY_TEST_INTEGRATION_STORES_FILE`（相同 stores 格式），为生成公司固定成员及 `integrated-dev/integrated-preview` 准备显式测试端点（可共用同一回环端点）。缺少 Peri 二进制或显式测试存储时套件 SKIP，不计为通过；不能使用生产数据库。集成套件使用固定 `requestId: initialize` 与所有者身份，缺配时可从其临时根的请求文件取得真实生成 ID。Domain 测试替身只证明业务规则，不冒充 WASM/存储证据；测试代码不自动安装或启动 sqld。
+当前代码已实际执行 `bun run typecheck`、`bun run build` 与全量测试（macOS `436 pass / 24 skip / 0 fail`）；`bun run example` 与浏览器套件未执行。真实 runtime 套件还需设置专用空库的 `COMPANY_TEST_SQLD_URL/COMPANY_TEST_SQLD_TOKEN`；HTTP/MCP 集成套件使用 `COMPANY_TEST_INTEGRATION_STORES_FILE`（相同 stores 格式），为生成公司固定成员及 `integrated-dev/integrated-preview` 准备显式测试端点（可共用同一回环端点）。缺少 Peri 二进制或显式测试存储时套件 SKIP，不计为通过；不能使用生产数据库。集成套件使用固定 `requestId: initialize` 与所有者身份，缺配时可从其临时根的请求文件取得真实生成 ID。Domain 测试替身只证明业务规则，不冒充 WASM/存储证据；测试代码不自动安装或启动 sqld。
 
 `SOURCE-MANIFEST.sha256` 是历史源码快照，已过期：2026-10-31 复核有 24/62 项不匹配，且不包含 `scripts/e2e-live.ts`、`scripts/e2e-ci-runner.ts` 等文件。它不得作为当前源码完整性或 E2E 证据；需要时重新生成。
 

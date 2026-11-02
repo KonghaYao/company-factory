@@ -10,7 +10,7 @@
 
 - `bun run typecheck`：通过。
 - `bun run build`：通过，保留既有 Monaco chunk 体积提示。
-- `bun test`：**409 pass / 24 skip / 0 fail**，433 项、2,253 断言、50 个文件（2026-11-02，macOS 本地复跑，含组织解耦、IM 投递、运行时诊断、direct prompt 视图投影与 UI 回归）。
+- `bun test`：**436 pass / 24 skip / 0 fail**，460 项、2,351 断言、53 个文件（2026-11-02，macOS 本地复跑，含组织解耦、IM 投递、重启门禁、运行时诊断、direct prompt 视图投影与 UI 回归）。
 - 补丁交付方在原 npm/沙箱基线上报告 186 pass / 29 skip / 1 fail；唯一失败来自 `src/storage/git-sandbox.test.ts` 的 bubblewrap 隔离测试（`Failed to create NETLINK_ROUTE socket: Operation not permitted`）。该测试已随 2026-11-02 本地运行裁定删除，本仓库不再要求 Linux 或 bubblewrap。
 - 24 个跳过项需要真实 Peri/sqld 等外部条件；本轮没有重跑真实模型/WASM live E2E，也没有进行浏览器视觉验收。下文 2026-10-31 的 live 结论不能直接用于本补丁。
 
@@ -24,6 +24,16 @@
 | UTF-8 | 真实长驻子进程逐字节发送中文/emoji，两次请求与通知均完整，stderr 退出诊断完整；用 StringDecoder 避免 Bun 管道 setEncoding 停发事件，无增加测试超时 |
 
 这些证据验证宿主控制流和接口不变量，不代表模型已能自主完成复杂真实项目。跨外部运行时与多文件的崩溃事务仍未承诺；发生应用后版本/记忆冲突会明确报错。未知通知不自动重送，需先查看固定 Session 与队列。
+
+## 重启门禁实现验证（2026-11-02）
+
+范围：新增 owner-only `GET /api/restart-readiness`、`bun run check:restart`、runtime `workState`/`activeScopes`、in-flight IM/notice 只读事实，以及 `/health.version` 动态读取 `package.json.version`。本轮只做实现与定向自动化验证；未重启 :3400 服务、未做浏览器验收、未跑 live E2E、未提交 Git。
+
+- `bun run typecheck`：通过。
+- 定向测试：`bun test src/runtime/input-receipts.test.ts src/runtime/work-state.test.ts src/domain/im-delivery.test.ts tests/agent-work-notices.test.ts tests/restart-readiness.test.ts scripts/restart-check.test.ts` → **46 pass / 0 fail**，268 断言，6 个文件。
+- `bun run build`：通过；仅有既有的 Monaco/Editor chunk 体积提示。
+- 覆盖：idle/offline/archived、九类 busy reason 合并、archived 有 live work 仍阻止、初始化未完成公司不永久阻塞但仍阻止 Provision 锁、roster 外 bound scope、IM/notice 在途投递生命周期、状态源抛错与超时 fail closed、`companyId` 过滤与 404、无 cookie/Agent bearer 401、HTTP 200/409/503、脚本 0/2/3 映射与 token 不出现在 URL/headers、`/health.version === package.json.version`。
+- 未执行：全量 `bun test`、`bun run verify`、真实服务上的 `bun run check:restart`、进程停止/启动、浏览器与视觉验收、真实模型/WASM live 检查。因此本记录不构成整体验证完成或 live 验收结论。
 
 ## 最终 live E2E 事实（2026-10-31）
 

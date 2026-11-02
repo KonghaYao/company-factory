@@ -60,3 +60,13 @@
   - 所有者文件视图、Preview、CI 等能力保留；不再声称 OS 级隔离。
   - macOS 可直接运行 Workspace 与宿主 Git，不再 fail closed。
 - **状态**：生效中
+
+## 7. 服务重启前置检查与版本更新门禁
+
+- **决策**：每次重启服务前，必须先确认没有人员正在工作。新增 owner-only `GET /api/restart-readiness` 与只读脚本 `bun run check:restart`；检查只在当前进程内聚合执行事实，不引入自动重启、进程管理或新的工作流状态机。
+- **“工作中”的裁定**：只包括运行中的 Chat turn、未结算的 prompt admission、runtime 操作锁、legacy 输入队列、待用户回答/权限、运行中的 Session task、在途 Company IM 投递和在途 Agent work-notice。`threads.agent_status=active`、`session_bindings` 存在、IM thread `open`、`delivered`/`accepted` admission、Issue 工作流阶段、Preview URL、`executionBlocked`/`closed`、`needs_user` decision 都不算忙。归档人员仍有 live work 时同样阻止重启；无 bound chat 的 active 人员计为 offline，不算忙。
+- **失败闭合**：任一状态源失败或 5 秒超时，返回 `verified=false` / `safeToRestart=false` / HTTP 503；检查脚本以 exit `3` 失败。绝不在未知状态报告 SAFE。初始化未完成的公司不读取 roster，只检查 runtime 锁与已绑定工作，避免历史失败状态永久阻塞。
+- **版本更新**：应用版本唯一来源是 `package.json.version`；`/health.version` 动态读取同一字段，不新增版本写入 API。固定流程为：`bun run verify` → `bun run check:restart` exit 0 → 才修改版本 → 人工停止并 `bun start` → `/health` 确认新版本 → 重启后再检查一次。
+- **理由/约束**：用户要求“每次重启服务时，检查人员是否在工作”“下个版本检查之后才能更新版本”。当前架构是单 Bun 进程，没有 supervisor；自动杀进程/拉起会引入新的进程管理责任，因此脚本只检查，停止与启动保持人工显式操作。
+- **影响**：检查是 advisory，不是分布式锁；检查通过到停止之间仍可能出现新工作。外部宿主进程、外部 Preview 与手工终端任务不在覆盖范围。Agent bearer 与 Company MCP 不能访问该接口。
+- **状态**：生效中

@@ -8,7 +8,7 @@ import {
   type DeliveryInput,
 } from "./index";
 
-type Outcome = "failed" | "unknown" | "unknown-receipt" | "throw";
+type Outcome = "failed" | "unknown" | "unknown-receipt" | "throw" | "deferred";
 
 const roots: string[] = [];
 
@@ -23,6 +23,10 @@ async function fixture(outcome: () => Outcome) {
   roots.push(root);
   const calls: DeliveryInput[] = [];
   let notifyDelivery: (() => void) | undefined;
+  let releaseDeferred!: () => void;
+  const deferred = new Promise<void>((resolve) => {
+    releaseDeferred = resolve;
+  });
   const domain = new CompanyDomain({
     root,
     provisionAgent: async (input) => ({
@@ -49,6 +53,16 @@ async function fixture(outcome: () => Outcome) {
           disposition: "not_sent",
           uncertain: false,
         };
+      if (mode === "deferred") {
+        await deferred;
+        return {
+          status: "unknown",
+          error: "结果不确定",
+          code: "prompt_failed",
+          disposition: "unknown",
+          uncertain: true,
+        };
+      }
       if (mode === "unknown-receipt")
         return {
           status: "unknown",
@@ -104,6 +118,7 @@ async function fixture(outcome: () => Outcome) {
   return {
     domain,
     calls,
+    releaseDelivery: releaseDeferred,
     nextDelivery: () =>
       new Promise<void>((resolve) => {
         notifyDelivery = resolve;
@@ -134,6 +149,37 @@ async function messageInThread(
 }
 
 describe("IM delivery state machine", () => {
+  test("in-flight deliveries expose metadata only while the process is sending", async () => {
+    const f = await fixture(() => "deferred");
+    const ask = await f.domain.ask(f.dev, {
+      recipientId: f.supervisor.id,
+      subject: "In flight",
+      body: "Still sending",
+      requestId: "ask-in-flight",
+    });
+    const inFlight = f.domain.inFlightDeliveries(f.dev.companyId);
+    expect(inFlight).toHaveLength(1);
+    expect(inFlight[0]).toMatchObject({
+      companyId: f.dev.companyId,
+      messageId: ask.messageId,
+      threadId: ask.threadId,
+      recipientId: f.supervisor.id,
+    });
+    expect(typeof inFlight[0]!.startedAt).toBe("string");
+    expect(f.domain.inFlightDeliveries("other-company")).toEqual([]);
+
+    const delivered = f.nextDelivery();
+    f.releaseDelivery();
+    await delivered;
+    for (
+      let attempt = 0;
+      attempt < 100 && f.domain.inFlightDeliveries(f.dev.companyId).length > 0;
+      attempt++
+    )
+      await Bun.sleep(1);
+    expect(f.domain.inFlightDeliveries(f.dev.companyId)).toEqual([]);
+  });
+
   test("failed(not_sent) keeps disposition and never writes delivered_at", async () => {
     const f = await fixture(() => "failed");
     const delivered = f.nextDelivery();
