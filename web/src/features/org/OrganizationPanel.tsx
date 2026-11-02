@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Archive,
   Building2,
@@ -22,19 +22,21 @@ import {
   Spinner,
 } from "../../ui/primitives";
 
-/** Keep node actions behind one trigger so the tree header stays quiet. */
-function NodeActionsMenu({
-  node,
-  onCreate,
-  onEdit,
-  onArchive,
-  onDelete,
+type RunAction = (action: () => void) => () => void;
+
+/** One trigger per row; outside click, Escape or selection closes the menu. */
+function RowActionsMenu({
+  label,
+  testId,
+  menuTestId,
+  className,
+  children,
 }: {
-  node: OrgNode;
-  onCreate: () => void;
-  onEdit: () => void;
-  onArchive: () => void;
-  onDelete: () => void;
+  label: string;
+  testId: string;
+  menuTestId: string;
+  className: string;
+  children: (run: RunAction) => ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLSpanElement>(null);
@@ -55,17 +57,16 @@ function NodeActionsMenu({
     };
   }, [open]);
 
-  const run = (action: () => void) => () => {
+  const run: RunAction = (action) => () => {
     setOpen(false);
     action();
   };
-  const archived = node.status === "archived";
 
   return (
-    <span className={`org-node-actions ${open ? "is-open" : ""}`} ref={root}>
+    <span className={`${className} ${open ? "is-open" : ""}`.trim()} ref={root}>
       <IconButton
-        label={`${node.name} 的更多操作`}
-        data-testid={`org-node-more-${node.id}`}
+        label={label}
+        data-testid={testId}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
@@ -74,12 +75,82 @@ function NodeActionsMenu({
       </IconButton>
       {open && (
         <div
-          className="org-node-menu"
+          className="row-actions-menu"
           role="menu"
-          aria-label={`${node.name} 的操作`}
-          data-testid={`org-node-menu-${node.id}`}
+          aria-label={label}
+          data-testid={menuTestId}
         >
-          {archived ? (
+          {children(run)}
+        </div>
+      )}
+    </span>
+  );
+}
+
+/** Keep node actions behind one trigger so the tree header stays quiet. */
+function NodeActionsMenu({
+  node,
+  onCreate,
+  onEdit,
+  onArchive,
+  onDelete,
+}: {
+  node: OrgNode;
+  onCreate: () => void;
+  onEdit: () => void;
+  onArchive: () => void;
+  onDelete: () => void;
+}) {
+  const archived = node.status === "archived";
+
+  return (
+    <RowActionsMenu
+      label={`${node.name} 的更多操作`}
+      testId={`org-node-more-${node.id}`}
+      menuTestId={`org-node-menu-${node.id}`}
+      className="org-node-actions"
+    >
+      {(run) =>
+        archived ? (
+          <button
+            type="button"
+            role="menuitem"
+            className="is-danger"
+            data-testid={`org-node-delete-${node.id}`}
+            onClick={run(onDelete)}
+          >
+            <Trash2 size={12} />
+            删除已归档节点
+          </button>
+        ) : (
+          <>
+            <button
+              type="button"
+              role="menuitem"
+              data-testid={`org-node-add-${node.id}`}
+              onClick={run(onCreate)}
+            >
+              <Plus size={12} />
+              新建子节点
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              data-testid={`org-node-edit-${node.id}`}
+              onClick={run(onEdit)}
+            >
+              <Pencil size={12} />
+              编辑节点
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              data-testid={`org-node-archive-${node.id}`}
+              onClick={run(onArchive)}
+            >
+              <Archive size={12} />
+              归档节点
+            </button>
             <button
               type="button"
               role="menuitem"
@@ -88,52 +159,83 @@ function NodeActionsMenu({
               onClick={run(onDelete)}
             >
               <Trash2 size={12} />
-              删除已归档节点
+              删除节点
             </button>
-          ) : (
-            <>
-              <button
-                type="button"
-                role="menuitem"
-                data-testid={`org-node-add-${node.id}`}
-                onClick={run(onCreate)}
-              >
-                <Plus size={12} />
-                新建子节点
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                data-testid={`org-node-edit-${node.id}`}
-                onClick={run(onEdit)}
-              >
-                <Pencil size={12} />
-                编辑节点
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                data-testid={`org-node-archive-${node.id}`}
-                onClick={run(onArchive)}
-              >
-                <Archive size={12} />
-                归档节点
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="is-danger"
-                data-testid={`org-node-delete-${node.id}`}
-                onClick={run(onDelete)}
-              >
-                <Trash2 size={12} />
-                删除节点
-              </button>
-            </>
-          )}
-        </div>
-      )}
-    </span>
+          </>
+        )
+      }
+    </RowActionsMenu>
+  );
+}
+
+/** Person rows use the same menu so identity actions stay out of the way. */
+function AgentActionsMenu({
+  agent,
+  onMove,
+  onArchive,
+  onEdit,
+  onRestore,
+}: {
+  agent: Agent;
+  onMove: () => void;
+  onArchive: () => void;
+  onEdit: () => void;
+  onRestore: () => void;
+}) {
+  const id = agentId(agent);
+  const archived = agent.status === "archived";
+
+  return (
+    <RowActionsMenu
+      label={`${agent.name} 的更多操作`}
+      testId={`agent-more-${id}`}
+      menuTestId={`agent-menu-${id}`}
+      className="agent-actions"
+    >
+      {(run) =>
+        archived ? (
+          <button
+            type="button"
+            role="menuitem"
+            data-testid={`agent-restore-${id}`}
+            onClick={run(onRestore)}
+          >
+            <Undo2 size={12} />
+            恢复成员
+          </button>
+        ) : (
+          <>
+            <button
+              type="button"
+              role="menuitem"
+              data-testid={`agent-move-${id}`}
+              onClick={run(onMove)}
+            >
+              <MoveRight size={12} />
+              移动到其他节点
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              data-testid={`agent-archive-${id}`}
+              onClick={run(onArchive)}
+            >
+              <Archive size={12} />
+              归档成员
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              data-testid={`agent-edit-${id}`}
+              onClick={run(onEdit)}
+            >
+              <Pencil size={12} />
+              编辑成员
+            </button>
+          </>
+        )
+      }
+    </RowActionsMenu>
   );
 }
 
@@ -232,29 +334,13 @@ export function OrganizationPanel({
             <span className="needs-dot" title="有待用户裁定" />
           )}
         </button>
-        <span className="agent-actions">
-          <IconButton
-            label={`把 ${agent.name} 移动到其他节点`}
-            data-testid={`agent-move-${id}`}
-            onClick={() => onMoveAgent(id)}
-          >
-            <MoveRight size={12} />
-          </IconButton>
-          <IconButton
-            label={`归档 ${agent.name}`}
-            data-testid={`agent-archive-${id}`}
-            onClick={() => onArchiveAgent(id)}
-          >
-            <Archive size={12} />
-          </IconButton>
-          <IconButton
-            label={`编辑 ${agent.name}`}
-            data-testid={`agent-edit-${id}`}
-            onClick={() => onEditAgent(id)}
-          >
-            <Pencil size={12} />
-          </IconButton>
-        </span>
+        <AgentActionsMenu
+          agent={agent}
+          onMove={() => onMoveAgent(id)}
+          onArchive={() => onArchiveAgent(id)}
+          onEdit={() => onEditAgent(id)}
+          onRestore={() => onRestoreAgent(id)}
+        />
       </div>
     );
   };
@@ -391,15 +477,13 @@ export function OrganizationPanel({
                       <span className="agent-role">已归档 · 权限已拒绝</span>
                     </span>
                   </span>
-                  <span className="agent-actions">
-                    <IconButton
-                      label={`恢复 ${agent.name}`}
-                      data-testid={`agent-restore-${id}`}
-                      onClick={() => onRestoreAgent(id)}
-                    >
-                      <Undo2 size={12} />
-                    </IconButton>
-                  </span>
+                  <AgentActionsMenu
+                    agent={agent}
+                    onMove={() => onMoveAgent(id)}
+                    onArchive={() => onArchiveAgent(id)}
+                    onEdit={() => onEditAgent(id)}
+                    onRestore={() => onRestoreAgent(id)}
+                  />
                 </div>
               );
             })}

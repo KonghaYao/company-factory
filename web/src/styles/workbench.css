@@ -321,15 +321,17 @@
   opacity: 1;
 }
 
-.org-node-actions {
+.org-node-actions,
+.agent-actions {
   position: relative;
 }
 
-.org-node-actions.is-open .icon-btn {
+.org-node-actions.is-open .icon-btn,
+.agent-actions.is-open .icon-btn {
   opacity: 1;
 }
 
-.org-node-menu {
+.row-actions-menu {
   position: absolute;
   top: calc(100% + 4px);
   right: 0;
@@ -345,7 +347,7 @@
   box-shadow: var(--shadow);
 }
 
-.org-node-menu button {
+.row-actions-menu button {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -355,18 +357,19 @@
   color: var(--ink-soft);
   font-size: 11px;
   text-align: left;
+  white-space: nowrap;
 }
 
-.org-node-menu button:hover {
+.row-actions-menu button:hover {
   background: var(--surface-muted);
   color: var(--ink);
 }
 
-.org-node-menu button.is-danger {
+.row-actions-menu button.is-danger {
   color: var(--danger);
 }
 
-.org-node-menu button.is-danger:hover {
+.row-actions-menu button.is-danger:hover {
   background: var(--danger-soft);
 }
 

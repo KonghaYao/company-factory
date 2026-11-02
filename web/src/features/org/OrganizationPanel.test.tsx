@@ -107,9 +107,10 @@ describe("OrganizationPanel", () => {
     expect(html).toContain('data-testid="org-unassigned"');
     expect(html).toContain("未分配成员");
     expect(html).toContain("未分配开发");
-    expect(html).toContain('data-testid="agent-move-dev-1"');
-    expect(html).toContain('data-testid="agent-archive-dev-1"');
-    expect(html).toContain('data-testid="agent-edit-dev-1"');
+    expect(html).toContain('data-testid="agent-more-dev-1"');
+    expect(html).not.toContain('data-testid="agent-move-dev-1"');
+    expect(html).not.toContain('data-testid="agent-archive-dev-1"');
+    expect(html).not.toContain('data-testid="agent-edit-dev-1"');
   });
 
   test("a placed member is not duplicated in the unassigned section", () => {
@@ -127,7 +128,8 @@ describe("OrganizationPanel", () => {
     expect(archived).toBeGreaterThan(-1);
     expect(unassigned).toBeGreaterThan(-1);
     expect(archived).toBeGreaterThan(unassigned);
-    expect(html).toContain('data-testid="agent-restore-dev-2"');
+    expect(html).toContain('data-testid="agent-more-dev-2"');
+    expect(html).not.toContain('data-testid="agent-restore-dev-2"');
     expect(html).not.toContain('data-testid="agent-move-dev-2"');
   });
 });
