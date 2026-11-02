@@ -19,8 +19,12 @@ const server = Bun.serve({
   websocket,
   idleTimeout: 60,
 });
+const loopback = ["127.0.0.1", "localhost", "::1"].includes(hostname);
+const access = loopback
+  ? `http://${hostname}:${server.port}/#access=${application.ownerToken}`
+  : `http://${hostname}:${server.port}/ (sign in with COMPANY_WEB_TOKEN or the owner-token file)`;
 console.log(
-  `Company Factory: http://${hostname}:${server.port}/#access=${application.ownerToken}\nData: ${application.root}\nKeep this local access URL private.\nThree Company MCP modules; official Peri runtime + default Workspace.`,
+  `Company Factory: ${access}\nData: ${application.root}\nKeep this local access URL private.\nThree Company MCP modules; official Peri runtime + default Workspace.`,
 );
 let closing = false;
 for (const signal of ["SIGINT", "SIGTERM"] as const)
