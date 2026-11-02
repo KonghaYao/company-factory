@@ -92,6 +92,15 @@ function render(): string {
 }
 
 describe("OrganizationPanel", () => {
+  test("node actions stay behind a more menu", () => {
+    const html = render();
+
+    expect(html).toContain('data-testid="org-node-more-headquarters"');
+    expect(html).toContain('aria-haspopup="menu"');
+    expect(html).not.toContain('data-testid="org-node-add-headquarters"');
+    expect(html).not.toContain('data-testid="org-node-edit-headquarters"');
+  });
+
   test("active members without a placement stay visible in the unassigned section", () => {
     const html = render();
 

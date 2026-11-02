@@ -321,6 +321,55 @@
   opacity: 1;
 }
 
+.org-node-actions {
+  position: relative;
+}
+
+.org-node-actions.is-open .icon-btn {
+  opacity: 1;
+}
+
+.org-node-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 40;
+  display: flex;
+  min-width: 136px;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.org-node-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 6px;
+  color: var(--ink-soft);
+  font-size: 11px;
+  text-align: left;
+}
+
+.org-node-menu button:hover {
+  background: var(--surface-muted);
+  color: var(--ink);
+}
+
+.org-node-menu button.is-danger {
+  color: var(--danger);
+}
+
+.org-node-menu button.is-danger:hover {
+  background: var(--danger-soft);
+}
+
 .org-node-actions .icon-btn:hover,
 .agent-actions .icon-btn:hover {
   background: rgba(32, 36, 42, 0.06);

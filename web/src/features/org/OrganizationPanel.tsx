@@ -1,8 +1,10 @@
+import { useEffect, useRef, useState } from "react";
 import {
   Archive,
   Building2,
   ChevronDown,
   ChevronRight,
+  MoreHorizontal,
   MoveRight,
   Pencil,
   Plus,
@@ -19,6 +21,121 @@ import {
   Loading,
   Spinner,
 } from "../../ui/primitives";
+
+/** Keep node actions behind one trigger so the tree header stays quiet. */
+function NodeActionsMenu({
+  node,
+  onCreate,
+  onEdit,
+  onArchive,
+  onDelete,
+}: {
+  node: OrgNode;
+  onCreate: () => void;
+  onEdit: () => void;
+  onArchive: () => void;
+  onDelete: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: PointerEvent) => {
+      if (!root.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", close);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", close);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [open]);
+
+  const run = (action: () => void) => () => {
+    setOpen(false);
+    action();
+  };
+  const archived = node.status === "archived";
+
+  return (
+    <span className={`org-node-actions ${open ? "is-open" : ""}`} ref={root}>
+      <IconButton
+        label={`${node.name} 的更多操作`}
+        data-testid={`org-node-more-${node.id}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <MoreHorizontal size={14} />
+      </IconButton>
+      {open && (
+        <div
+          className="org-node-menu"
+          role="menu"
+          aria-label={`${node.name} 的操作`}
+          data-testid={`org-node-menu-${node.id}`}
+        >
+          {archived ? (
+            <button
+              type="button"
+              role="menuitem"
+              className="is-danger"
+              data-testid={`org-node-delete-${node.id}`}
+              onClick={run(onDelete)}
+            >
+              <Trash2 size={12} />
+              删除已归档节点
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                role="menuitem"
+                data-testid={`org-node-add-${node.id}`}
+                onClick={run(onCreate)}
+              >
+                <Plus size={12} />
+                新建子节点
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                data-testid={`org-node-edit-${node.id}`}
+                onClick={run(onEdit)}
+              >
+                <Pencil size={12} />
+                编辑节点
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                data-testid={`org-node-archive-${node.id}`}
+                onClick={run(onArchive)}
+              >
+                <Archive size={12} />
+                归档节点
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="is-danger"
+                data-testid={`org-node-delete-${node.id}`}
+                onClick={run(onDelete)}
+              >
+                <Trash2 size={12} />
+                删除节点
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </span>
+  );
+}
 
 /**
  * 组织树是独立于人员实体的投影：节点只引用成员，移动成员不改变身份、
@@ -172,48 +289,13 @@ export function OrganizationPanel({
             </span>
             <em>{members.length}</em>
           </button>
-          {!archived ? (
-            <span className="org-node-actions">
-              <IconButton
-                label={`在 ${node.name} 下新建节点`}
-                data-testid={`org-node-add-${node.id}`}
-                onClick={() => onCreateNode(node.id)}
-              >
-                <Plus size={12} />
-              </IconButton>
-              <IconButton
-                label={`编辑 ${node.name}`}
-                data-testid={`org-node-edit-${node.id}`}
-                onClick={() => onEditNode(node.id)}
-              >
-                <Pencil size={12} />
-              </IconButton>
-              <IconButton
-                label={`归档 ${node.name}`}
-                data-testid={`org-node-archive-${node.id}`}
-                onClick={() => onArchiveNode(node.id)}
-              >
-                <Archive size={12} />
-              </IconButton>
-              <IconButton
-                label={`删除 ${node.name}`}
-                data-testid={`org-node-delete-${node.id}`}
-                onClick={() => onDeleteNode(node.id)}
-              >
-                <Trash2 size={12} />
-              </IconButton>
-            </span>
-          ) : (
-            <span className="org-node-actions">
-              <IconButton
-                label={`删除已归档节点 ${node.name}`}
-                data-testid={`org-node-delete-${node.id}`}
-                onClick={() => onDeleteNode(node.id)}
-              >
-                <Trash2 size={12} />
-              </IconButton>
-            </span>
-          )}
+          <NodeActionsMenu
+            node={node}
+            onCreate={() => onCreateNode(node.id)}
+            onEdit={() => onEditNode(node.id)}
+            onArchive={() => onArchiveNode(node.id)}
+            onDelete={() => onDeleteNode(node.id)}
+          />
         </div>
         {!isCollapsed && (
           <>
