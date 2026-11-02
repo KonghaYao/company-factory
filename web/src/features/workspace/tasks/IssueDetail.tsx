@@ -22,7 +22,8 @@ import {
   Field,
   Loading,
 } from "../../../ui/primitives";
-import { Markdown } from "../../../ui/Markdown";
+import { CollapsibleSection } from "../../../ui/CollapsibleSection";
+import { StreamdownText } from "../../../peri/chat/timeline/StreamdownText";
 import { DecisionCard } from "./DecisionCard";
 import { PreviewCard } from "./PreviewCard";
 
@@ -55,6 +56,8 @@ export function IssueDetail({
 }) {
   const qc = useQueryClient();
   const [editing, setEditing] = useState(false);
+  const [descriptionOpen, setDescriptionOpen] = useState(false);
+  const [commentsOpen, setCommentsOpen] = useState(false);
   const [body, setBody] = useState(issue.body || issue.description || "");
   const [progress, setProgress] = useState(issue.progress || "");
   const [status, setStatus] = useState(issue.status);
@@ -112,6 +115,7 @@ export function IssueDetail({
       }),
     onSuccess: (_data, text) => {
       setComment((current) => (current === text ? "" : current));
+      setCommentsOpen(true);
       refresh();
     },
   });
@@ -173,16 +177,21 @@ export function IssueDetail({
         />
       ))}
 
-      <section className="panel-section">
-        <header className="section-head">
-          <div>
-            <h3>描述与交付记录</h3>
-            <p>Agent 通过 Company MCP 维护，保存不等于验收。</p>
-          </div>
+      <CollapsibleSection
+        className="panel-section"
+        testId="description-section"
+        title="描述与交付记录"
+        description="Agent 通过 Company MCP 维护，保存不等于验收。"
+        collapsedHeight={160}
+        open={descriptionOpen}
+        onOpenChange={setDescriptionOpen}
+        lockOpen={editing}
+        actions={
           <Button
             variant="ghost"
             size="sm"
             onClick={() => {
+              if (!editing) setDescriptionOpen(true);
               setEditing(!editing);
               setBody(issue.body || issue.description || "");
               setProgress(issue.progress || "");
@@ -193,8 +202,8 @@ export function IssueDetail({
             <Pencil size={13} />
             {editing ? "取消编辑" : "编辑"}
           </Button>
-        </header>
-
+        }
+      >
         {editing ? (
           <div className="edit-issue">
             <Field label="描述 · Markdown">
@@ -246,11 +255,12 @@ export function IssueDetail({
             </Button>
           </div>
         ) : (
-          <Markdown>
-            {issue.body || issue.description || "*尚未填写描述。*"}
-          </Markdown>
+          <StreamdownText
+            className="issue-markdown"
+            text={issue.body || issue.description || "*尚未填写描述。*"}
+          />
         )}
-      </section>
+      </CollapsibleSection>
 
       {preview && (
         <PreviewCard
@@ -261,122 +271,158 @@ export function IssueDetail({
         />
       )}
 
-      <section className="panel-section">
-        <header className="section-head">
-          <div>
-            <h3>评论时间线</h3>
-            <p>{allComments.length} 条讨论 · 评论不会自动改变状态</p>
-          </div>
-        </header>
-        {comments.isLoading && <Loading />}
-        <ErrorBox error={comments.error} />
-        {allComments.map((item) => {
-          const author =
-            item.author_type === "user"
-              ? "你"
-              : agents.find(
-                  (agent) => (agent.agentId || agent.id) === item.author_id,
-                )?.name || item.author_id || "未知成员";
-          return (
-            <article key={item.id} className="comment">
-              <header className="comment-meta">
-                <Avatar
-                  name={author}
-                  size="xs"
-                  tone={item.author_type === "user" ? "user" : "agent"}
-                />
-                <strong>{author}</strong>
-                <time>{shortDate(item.created_at)}</time>
-                {item.author_type === "user" &&
-                  editComment?.id !== item.id && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      aria-label="编辑我的评论"
-                      onClick={() => {
-                        setEditComment(item);
-                        setEditText(item.body);
-                      }}
-                    >
-                      <Pencil size={12} />
-                    </Button>
-                  )}
-              </header>
-              {editComment?.id === item.id ? (
-                <div className="comment-edit">
-                  <textarea
-                    rows={4}
-                    value={editText}
-                    onChange={(event) => setEditText(event.target.value)}
-                  />
-                  <ErrorBox error={edit.error} />
-                  <div className="inline-actions">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setEditComment(null)}
-                    >
-                      取消
-                    </Button>
-                    <Button
-                      size="sm"
-                      disabled={edit.isPending}
-                      onClick={() => edit.mutate()}
-                    >
-                      保存评论
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <Markdown>{item.body}</Markdown>
-              )}
-              {item.updated_at && (
-                <small className="muted">
-                  已编辑 {shortDate(item.updated_at)}
-                </small>
-              )}
-            </article>
-          );
-        })}
-        {comments.hasNextPage && (
-          <Button
-            size="sm"
-            disabled={comments.isFetchingNextPage}
-            onClick={() => comments.fetchNextPage()}
-          >
-            {comments.isFetchingNextPage ? "正在加载…" : "加载更多评论"}
-          </Button>
-        )}
-        <form
-          className="comment-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (comment.trim()) add.mutate(comment);
-          }}
-        >
-          <textarea
-            aria-label="评论内容"
-            value={comment}
-            onChange={(event) => setComment(event.target.value)}
-            placeholder="讨论、进展或验收意见… 支持 Markdown"
-            rows={3}
-          />
-          <div className="comment-form-foot">
-            <span>评论不自动改变状态</span>
-            <Button
-              type="submit"
-              variant="primary"
-              size="sm"
-              data-testid="comment-submit"
-              disabled={!comment.trim() || add.isPending}
+      <CollapsibleSection
+        className="panel-section"
+        testId="comments-section"
+        title="评论时间线"
+        description={
+          comments.isLoading
+            ? "正在读取讨论…"
+            : `${allComments.length} 条讨论 · 评论不会自动改变状态`
+        }
+        collapsedHeight={240}
+        open={commentsOpen}
+        onOpenChange={setCommentsOpen}
+        lockOpen={editComment !== null}
+        footer={
+          <>
+            <ErrorBox error={comments.error} />
+            <form
+              className="comment-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (comment.trim()) add.mutate(comment);
+              }}
             >
-              <MessageSquare size={13} />
-              发表
+              <textarea
+                aria-label="评论内容"
+                value={comment}
+                onChange={(event) => setComment(event.target.value)}
+                placeholder="讨论、进展或验收意见… 支持 Markdown"
+                rows={3}
+              />
+              <div className="comment-form-foot">
+                <span>评论不自动改变状态</span>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  size="sm"
+                  data-testid="comment-submit"
+                  disabled={!comment.trim() || add.isPending}
+                >
+                  <MessageSquare size={13} />
+                  发表
+                </Button>
+              </div>
+              <ErrorBox error={add.error} />
+            </form>
+          </>
+        }
+      >
+        {comments.isLoading && <Loading />}
+        <ol
+          className="comment-timeline"
+          role="list"
+          data-testid="comment-timeline"
+        >
+          {allComments.map((item) => {
+            const author =
+              item.author_type === "user"
+                ? "你"
+                : agents.find(
+                    (agent) => (agent.agentId || agent.id) === item.author_id,
+                  )?.name ||
+                  item.author_id ||
+                  "未知成员";
+            const isUser = item.author_type === "user";
+            return (
+              <li
+                key={item.id}
+                className="comment-item"
+                data-author={isUser ? "user" : "agent"}
+              >
+                <span className="comment-avatar" aria-hidden="true">
+                  <Avatar
+                    name={author}
+                    size="xs"
+                    tone={isUser ? "user" : "agent"}
+                  />
+                </span>
+                <article
+                  className={`comment ${isUser ? "is-user" : "is-agent"}`}
+                >
+                  <header className="comment-meta">
+                    <strong className="comment-author">{author}</strong>
+                    <time dateTime={item.created_at}>
+                      {shortDate(item.created_at)}
+                    </time>
+                    {isUser && editComment?.id !== item.id && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        aria-label="编辑我的评论"
+                        onClick={() => {
+                          setEditComment(item);
+                          setEditText(item.body);
+                        }}
+                      >
+                        <Pencil size={12} />
+                      </Button>
+                    )}
+                  </header>
+                  {editComment?.id === item.id ? (
+                    <div className="comment-edit">
+                      <textarea
+                        rows={4}
+                        value={editText}
+                        onChange={(event) => setEditText(event.target.value)}
+                      />
+                      <ErrorBox error={edit.error} />
+                      <div className="inline-actions">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setEditComment(null)}
+                        >
+                          取消
+                        </Button>
+                        <Button
+                          size="sm"
+                          disabled={edit.isPending}
+                          onClick={() => edit.mutate()}
+                        >
+                          保存评论
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <StreamdownText
+                      className="issue-markdown"
+                      text={item.body}
+                    />
+                  )}
+                  {item.updated_at && (
+                    <small className="comment-edited">
+                      已编辑 {shortDate(item.updated_at)}
+                    </small>
+                  )}
+                </article>
+              </li>
+            );
+          })}
+        </ol>
+        {comments.hasNextPage && (
+          <div className="comment-more">
+            <Button
+              size="sm"
+              disabled={comments.isFetchingNextPage}
+              onClick={() => comments.fetchNextPage()}
+            >
+              {comments.isFetchingNextPage ? "正在加载…" : "加载更多评论"}
             </Button>
           </div>
-          <ErrorBox error={add.error} />
-        </form>
-      </section>
+        )}
+      </CollapsibleSection>
     </div>
   );
 }

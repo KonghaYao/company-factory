@@ -5,7 +5,7 @@ import type { Issue, Preview, Scope } from "../../../lib/types";
 import { action } from "../../../lib/api";
 import { uuid } from "../../../lib/uuid";
 import { Button, ErrorBox } from "../../../ui/primitives";
-import { Markdown } from "../../../ui/Markdown";
+import { StreamdownText } from "../../../peri/chat/timeline/StreamdownText";
 
 /** Preview 卡同时承载「看结果」和「按 Issue 验收」两件事。 */
 export function PreviewCard({
@@ -64,7 +64,9 @@ export function PreviewCard({
           <ExternalLink size={13} />
         </a>
       )}
-      {preview.body && <Markdown>{preview.body}</Markdown>}
+      {preview.body && (
+        <StreamdownText className="issue-markdown" text={preview.body} />
+      )}
       {!!preview.checklist && (
         <details>
           <summary>逐 Issue 验收清单</summary>

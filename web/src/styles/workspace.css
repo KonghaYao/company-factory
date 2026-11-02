@@ -182,6 +182,120 @@
   margin-top: 20px;
 }
 
+/* ---------- 可折叠分区 ---------- */
+.section-head .collapsible-heading {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: block; /* 覆盖 .section-head h3 的 flex */
+}
+
+.collapsible-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 1px 0;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  text-align: left;
+}
+
+.collapsible-label {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.collapsible-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.collapsible-desc {
+  color: var(--faint);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.collapsible-chevron {
+  flex: 0 0 auto;
+  color: var(--faint);
+  transition: transform 160ms ease;
+}
+
+.collapsible-section[data-open="true"] .collapsible-chevron {
+  transform: rotate(90deg);
+}
+
+.collapsible-trigger:hover .collapsible-title {
+  color: var(--accent-strong);
+}
+
+.collapsible-trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.collapsible-trigger:disabled {
+  cursor: default;
+}
+
+.collapsible-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.collapsible-body {
+  position: relative;
+  max-height: var(--collapsible-h, 160px);
+  overflow: hidden;
+}
+
+.collapsible-inner {
+  display: flow-root; /* 让 scrollHeight 包含子元素 margin */
+}
+
+.collapsible-section[data-open="true"] .collapsible-body {
+  max-height: none;
+  overflow: visible;
+}
+
+.collapsible-section[data-open="false"] .collapsible-inner {
+  pointer-events: none;
+}
+
+.collapsible-section[data-open="false"]
+  .collapsible-body[data-overflow="true"] {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    #000 calc(100% - 44px),
+    transparent
+  );
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 44px), transparent);
+}
+
+.collapsible-footer {
+  margin-top: 12px;
+}
+
+.collapsible-footer .comment-form {
+  margin-top: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .collapsible-chevron {
+    transition: none;
+  }
+}
+
 /* ---------- 概览 ---------- */
 .run-view {
   container-type: inline-size;
@@ -919,39 +1033,146 @@
   background: var(--surface-muted);
 }
 
+/* `.comment-more` 是时间线的兄弟节点，需与 `.comment-timeline` 一起声明。 */
+.comment-timeline,
+.comment-more {
+  --comment-gutter: 32px;
+}
+
+.comment-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.comment-item {
+  --comment-node: 20px;
+  position: relative;
+  padding: 0 0 14px var(--comment-gutter);
+}
+
+.comment-item:last-child {
+  padding-bottom: 0;
+}
+
+/* 竖线：从第一条节点中心，到最后一条节点中心 */
+.comment-item::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--comment-node) / 2 - 0.5px);
+  width: 1px;
+  background: var(--line-strong);
+}
+
+.comment-item:first-child::before {
+  top: calc(var(--comment-node) / 2);
+}
+
+.comment-item:last-child::before {
+  bottom: auto;
+  height: calc(var(--comment-node) / 2);
+}
+
+.comment-item:first-child:last-child::before {
+  display: none;
+}
+
+/* 用户评论卡片有 9px 顶部内边距，节点与竖线随之下移。 */
+.comment-item[data-author="user"] .comment-avatar {
+  top: 9px;
+}
+
+.comment-item:first-child[data-author="user"]::before {
+  top: calc(var(--comment-node) / 2 + 9px);
+}
+
+.comment-item:last-child[data-author="user"]::before {
+  height: calc(var(--comment-node) / 2 + 9px);
+}
+
+.comment-avatar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  display: inline-grid;
+  place-items: center;
+  width: var(--comment-node);
+  height: var(--comment-node);
+  border-radius: 999px;
+  background: var(--surface);
+  /* 用面板底色在节点周围“断开”竖线，形成编织感 */
+  box-shadow: 0 0 0 3px var(--surface);
+}
+
 .comment {
   display: flex;
   flex-direction: column;
   gap: 5px;
-  padding: 12px 0;
-  border-top: 1px solid var(--line);
+  min-width: 0;
 }
 
-.comment:first-of-type {
-  border-top: 0;
+/* Agent：保持无卡片，靠节点和作者区分 */
+.comment.is-agent {
+  padding: 0;
+}
+
+/* 用户：浅色强调卡片，不用重边框 */
+.comment.is-user {
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--accent-soft);
 }
 
 .comment-meta {
   display: flex;
   align-items: center;
   gap: 7px;
+  min-height: 20px;
   color: var(--faint);
   font-size: 10.5px;
 }
 
 .comment-author {
+  min-width: 0;
+  overflow: hidden;
   color: var(--ink-soft);
   font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .comment-meta time {
+  flex: 0 0 auto;
   margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.comment.is-user .comment-meta {
+  color: var(--muted);
+}
+
+.comment.is-user .comment-author {
+  color: var(--accent-strong);
+}
+
+.comment-edited {
+  color: var(--faint);
+  font-size: 10.5px;
 }
 
 .comment-edit {
   display: flex;
   flex-direction: column;
   gap: 7px;
+}
+
+.comment-more {
+  padding-left: var(--comment-gutter);
+  margin-top: 2px;
 }
 
 .comment-form {
@@ -1567,6 +1788,15 @@
   .thread-list {
     grid-template-columns: minmax(0, 1fr);
   }
+
+  .comment-timeline,
+  .comment-more {
+    --comment-gutter: 28px;
+  }
+
+  .comment.is-user {
+    padding: 8px 9px;
+  }
 }
 
 /* 详情页在通用 panel-scroll 基础上收紧标题与正文节奏。 */
@@ -1578,6 +1808,140 @@
 
 .issue-detail .issue-title {
   margin: 2px 0 0;
+}
+
+/* 详情正文复用 Chat 的 Streamdown：映射工作台 token 并收紧排版。 */
+.issue-detail .aui-md {
+  --background: var(--surface);
+  --foreground: var(--ink);
+  --muted: var(--surface-muted);
+  --muted-foreground: var(--faint);
+  --border: var(--line);
+  --sidebar: var(--surface-muted);
+
+  color: var(--ink-soft);
+  font-size: 13px;
+  line-height: 1.72;
+}
+
+.issue-detail .aui-md p {
+  margin: 0 0 9px;
+}
+
+.issue-detail .aui-md h1,
+.issue-detail .aui-md h2,
+.issue-detail .aui-md h3,
+.issue-detail .aui-md h4 {
+  margin: 16px 0 7px;
+  color: var(--ink);
+  font-weight: 650;
+  line-height: 1.4;
+  letter-spacing: -0.01em;
+}
+
+.issue-detail .aui-md h1 {
+  font-size: 18px;
+}
+.issue-detail .aui-md h2 {
+  font-size: 16px;
+}
+.issue-detail .aui-md h3 {
+  font-size: 14px;
+}
+.issue-detail .aui-md h4 {
+  font-size: 13px;
+}
+
+.issue-detail .aui-md ul,
+.issue-detail .aui-md ol {
+  margin: 0 0 9px;
+  padding-inline-start: 1.3em;
+}
+
+.issue-detail .aui-md li {
+  margin: 2px 0;
+}
+
+.issue-detail .aui-md li > p {
+  margin: 0;
+}
+
+.issue-detail .aui-md a {
+  color: var(--accent);
+  font-weight: inherit;
+  text-underline-offset: 2px;
+}
+
+.issue-detail .aui-md [data-streamdown="strong"] {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.issue-detail .aui-md blockquote {
+  margin: 9px 0;
+  padding: 2px 0 2px 11px;
+  border-inline-start: 2px solid var(--line-strong);
+  color: var(--ink-soft);
+}
+
+.issue-detail .aui-md hr {
+  height: 0;
+  margin: 14px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: none;
+}
+
+.issue-detail .aui-md :not(pre) > code {
+  padding: 1px 5px;
+  border: 0;
+  border-radius: 4px;
+  background: var(--surface-strong);
+  font-size: 11.5px;
+}
+
+.issue-detail .aui-md .aui-md-img {
+  max-width: 100%;
+  max-height: 360px;
+  border-radius: 8px;
+}
+
+.issue-detail .aui-md [data-streamdown="code-block"] {
+  margin: 9px 0;
+  padding: 6px;
+  border-color: var(--line);
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.issue-detail .aui-md [data-streamdown="code-block-body"] {
+  padding: 10px 12px;
+  border-color: var(--line);
+  border-radius: 6px;
+  background: var(--surface-strong);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.issue-detail .aui-md [data-streamdown="table-wrapper"] {
+  margin: 9px 0;
+  padding: 6px;
+  border-color: var(--line);
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.issue-detail .aui-md [data-streamdown="table"] {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.issue-detail .aui-md [data-streamdown="table"] th,
+.issue-detail .aui-md [data-streamdown="table"] td {
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  text-align: left;
 }
 
 .form-row {
