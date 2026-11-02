@@ -32,6 +32,8 @@ describe("composeSystemInstructions", () => {
     expect(text).toContain("company_tasks");
     expect(text).toContain("company_im");
     expect(text).toContain("fixed Session");
+    expect(text).toContain("multitasks");
+    expect(text).toContain("skill");
     expect(text).toContain("contractors");
     expect(text).toContain("You decide how to decompose work");
     expect(text).toContain("getIssue(issueId)");

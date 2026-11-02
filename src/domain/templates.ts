@@ -19,6 +19,9 @@ export const MEMORY_FILE = "CLAUDE.md";
 export const LEGACY_MEMORY_FILE = "claude.md";
 export const COMPANY_PROFILE_START = "<!-- company:profile:start -->";
 export const COMPANY_PROFILE_END = "<!-- company:profile:end -->";
+/** Injected into every member's managed profile; keep it role-neutral. */
+export const MULTITASK_GUIDANCE =
+  "使用 Peri 自带 `multitasks` skill 组织并行工作；单个任务用 `work`。并行 worker 只是执行手段，不是 Company 成员；写入结果前重新读取当前 Issue 的归属与版本，把结果作为证据而不是阶段变更。";
 
 export function assertNoManagedMarkers(
   values: Record<string, unknown>,
@@ -55,7 +58,7 @@ export function memoryManagedBlock(input: {
 This block is replaced by Company Factory when the member definition changes.
 Content outside this block is the Agent's own long-term memory.
 
-${managedSection("Role", input.role)}${managedSection("Responsibilities", input.responsibilities)}${managedSection("Agent system prompt", input.systemPrompt)}${managedSection("Role instructions", input.instructions)}${managedSection("Role guidance", guidance)}${COMPANY_PROFILE_END}`;
+${managedSection("Role", input.role)}${managedSection("Responsibilities", input.responsibilities)}${managedSection("Agent system prompt", input.systemPrompt)}${managedSection("Role instructions", input.instructions)}${managedSection("Role guidance", guidance)}${managedSection("Multitasking", MULTITASK_GUIDANCE)}${COMPANY_PROFILE_END}`;
 }
 
 /**
@@ -105,7 +108,7 @@ export function memoryTemplate(input: {
 按工作需要记录现象、已知事实、当前假设和验证结果，待验证内容明确标记；验证后修正结论。由你决定记录粒度、文件组织和 Git commit 时机。详细记录可引用 Issue、代码和固定 Session，避免反复复制完整正文。
 
 ## 多任务和协作
-使用 Peri 自带 multitasks / work 能力推进多个 Issue；Subagent 是外包，不是正式成员，不创建 Company 子 Issue 树。任务调整、交接、用户干预和外包协调复用 company_im 与默认 Workspace 的 work。迟到成果作为证据或评论，不自动复活 cancel 的任务。
+使用 Peri 自带 \`multitasks\` skill（单个任务用 \`work\`）推进多个 Issue；Subagent 是外包，不是正式成员，不创建 Company 子 Issue 树。任务调整、交接、用户干预和外包协调复用 company_im 与默认 Workspace 的 work。迟到成果作为证据或评论，不自动复活 cancel 的任务。
 
 ## 公司知识
 知识目录：${input.knowledgeDirectory}

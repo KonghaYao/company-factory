@@ -10,7 +10,7 @@
 
 - `bun run typecheck`：通过。
 - `bun run build`：通过，保留既有 Monaco chunk 体积提示。
-- `bun test`：**407 pass / 24 skip / 0 fail**，431 项、2,231 断言、49 个文件（2026-11-02，macOS 本地复跑，含组织解耦、IM 投递、运行时诊断、direct prompt 视图投影与 UI 回归）。
+- `bun test`：**409 pass / 24 skip / 0 fail**，433 项、2,253 断言、50 个文件（2026-11-02，macOS 本地复跑，含组织解耦、IM 投递、运行时诊断、direct prompt 视图投影与 UI 回归）。
 - 补丁交付方在原 npm/沙箱基线上报告 186 pass / 29 skip / 1 fail；唯一失败来自 `src/storage/git-sandbox.test.ts` 的 bubblewrap 隔离测试（`Failed to create NETLINK_ROUTE socket: Operation not permitted`）。该测试已随 2026-11-02 本地运行裁定删除，本仓库不再要求 Linux 或 bubblewrap。
 - 24 个跳过项需要真实 Peri/sqld 等外部条件；本轮没有重跑真实模型/WASM live E2E，也没有进行浏览器视觉验收。下文 2026-10-31 的 live 结论不能直接用于本补丁。
 
