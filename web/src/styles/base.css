@@ -370,30 +370,34 @@ dt {
 }
 
 /* ---------- 表单 ---------- */
-input,
-textarea,
-select {
-  width: 100%;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  padding: 8px 10px;
-  outline: none;
-  transition:
-    border-color 0.15s ease,
-    box-shadow 0.15s ease;
-}
+/* 元素级重置必须留在 base 层：Peri 子树的 Tailwind utilities 需要能覆盖
+   width/padding/border/background；未分层规则会无条件压过 utilities。 */
+@layer base {
+  input,
+  textarea,
+  select {
+    width: 100%;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    padding: 8px 10px;
+    outline: none;
+    transition:
+      border-color 0.15s ease,
+      box-shadow 0.15s ease;
+  }
 
-textarea {
-  resize: vertical;
-  line-height: 1.6;
-}
+  textarea {
+    resize: vertical;
+    line-height: 1.6;
+  }
 
-input:focus,
-textarea:focus,
-select:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  input:focus,
+  textarea:focus,
+  select:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
 }
 
 .code-input {

@@ -189,6 +189,16 @@
     font: inherit;
     color: inherit;
   }
+  /* 表单控件复位：与 Tailwind preflight 对齐。宿主 input 全局规则即使
+     放进 base 层，仍会带来 width/padding/border/background，足以把
+     radio/checkbox 拉成整行宽并挤没选项文字。 */
+  .peri-chat :where(input, textarea, select) {
+    margin: 0;
+    padding: 0;
+    border: 0 solid;
+    border-radius: 0;
+    background-color: transparent;
+  }
   .peri-chat :where(button) {
     cursor: pointer;
     background: none;
@@ -198,10 +208,9 @@
 /*
  * Company Composer 皮肤（作用域：.peri-chat + Composer data-slot）。
  *
- * 不放 @layer：styles/base.css 的 `textarea` 规则未分层，会压过 Peri 的
- * utilities（bg-transparent / outline-none），造成内层白底、灰边框与
- * accent-soft focus ring。这里用未分层的、更高 specificity 的作用域规则
- * 统一面板外观：外框是唯一焦点指示，textarea 自身无边框、无背景、无 ring。
+ * 不放 @layer：这里需要稳定覆盖 Peri 内层 textarea 的 utilities，统一成
+ * 外框唯一焦点指示（textarea 自身无边框、无背景、无 ring）。base 层的
+ * 全局 textarea 重置已不会再压过 Peri 的 utilities。
  */
 .peri-chat [data-slot="composer-shell"] {
   background: var(--panel, var(--surface, #fff));
