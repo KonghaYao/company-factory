@@ -19,6 +19,7 @@ import {
   ErrorBox,
   IconButton,
   Loading,
+  Sheet,
   Spinner,
 } from "../../ui/primitives";
 
@@ -289,6 +290,17 @@ export function OrganizationPanel({
   onRestoreAgent: (agentId: string) => void;
 }) {
   const company = companies.find((c) => c.id === companyId);
+  const [archiveOpen, setArchiveOpen] = useState(false);
+
+  useEffect(() => {
+    if (!archiveOpen) return;
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setArchiveOpen(false);
+    };
+    document.addEventListener("keydown", escape);
+    return () => document.removeEventListener("keydown", escape);
+  }, [archiveOpen]);
+
   const nodes = organization?.nodes ?? [];
   const nodeIds = new Set(nodes.map((node) => node.id));
   const roots = nodes
@@ -431,6 +443,20 @@ export function OrganizationPanel({
           </span>
           <ChevronDown size={13} className="company-chevron" />
         </label>
+        {archivedAgents.length > 0 && (
+          <button
+            type="button"
+            className="org-archived-trigger"
+            data-testid="org-archived-trigger"
+            aria-haspopup="dialog"
+            aria-expanded={archiveOpen}
+            onClick={() => setArchiveOpen(true)}
+          >
+            <Archive size={13} />
+            <span>已归档成员</span>
+            <em>{archivedAgents.length}</em>
+          </button>
+        )}
       </div>
 
       <div className="org-scroll">
@@ -457,38 +483,6 @@ export function OrganizationPanel({
             {unassignedAgents.map(renderActiveAgent)}
           </section>
         )}
-        {archivedAgents.length > 0 && (
-          <section className="org-group org-archived">
-            <div className="org-node-head">
-              <span className="org-group-head">
-                <Archive size={12} />
-                <span>已归档成员</span>
-                <em>{archivedAgents.length}</em>
-              </span>
-            </div>
-            {archivedAgents.map((agent) => {
-              const id = agentId(agent);
-              return (
-                <div className="agent-row" key={id}>
-                  <span className="agent-main agent-archived-copy">
-                    <Avatar name={agent.name} size="sm" />
-                    <span className="agent-copy">
-                      <span className="agent-name">{agent.name}</span>
-                      <span className="agent-role">已归档 · 权限已拒绝</span>
-                    </span>
-                  </span>
-                  <AgentActionsMenu
-                    agent={agent}
-                    onMove={() => onMoveAgent(id)}
-                    onArchive={() => onArchiveAgent(id)}
-                    onEdit={() => onEditAgent(id)}
-                    onRestore={() => onRestoreAgent(id)}
-                  />
-                </div>
-              );
-            })}
-          </section>
-        )}
       </div>
 
       <div className="org-bottom">
@@ -500,6 +494,49 @@ export function OrganizationPanel({
           <span className="tiny-mark">◆</span> 移动只改组织归属，不改身份、会话与权限。
         </p>
       </div>
+
+      <Sheet
+        open={archiveOpen}
+        title="已归档成员"
+        subtitle="归档成员保留目录、Session、IM 与 Issue；恢复后可重新分配节点。"
+        onClose={() => setArchiveOpen(false)}
+      >
+        <div className="org-archived-list" data-testid="org-archived-list">
+          {archivedAgents.map((agent) => {
+            const id = agentId(agent);
+            return (
+              <div className="agent-row" key={id}>
+                <span className="agent-main agent-archived-copy">
+                  <Avatar name={agent.name} size="sm" />
+                  <span className="agent-copy">
+                    <span className="agent-name">{agent.name}</span>
+                    <span className="agent-role">已归档 · 权限已拒绝</span>
+                  </span>
+                </span>
+                <AgentActionsMenu
+                  agent={agent}
+                  onMove={() => {
+                    setArchiveOpen(false);
+                    onMoveAgent(id);
+                  }}
+                  onArchive={() => {
+                    setArchiveOpen(false);
+                    onArchiveAgent(id);
+                  }}
+                  onEdit={() => {
+                    setArchiveOpen(false);
+                    onEditAgent(id);
+                  }}
+                  onRestore={() => {
+                    setArchiveOpen(false);
+                    onRestoreAgent(id);
+                  }}
+                />
+              </div>
+            );
+          })}
+        </div>
+      </Sheet>
     </div>
   );
 }

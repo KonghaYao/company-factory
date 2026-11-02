@@ -62,14 +62,14 @@ const agents: Agent[] = [
   },
 ];
 
-function render(): string {
+function render(panelAgents: Agent[] = agents): string {
   const noop = () => {};
   return renderToStaticMarkup(
     <OrganizationPanel
       companies={[company]}
       companyId={company.id}
       organization={organization}
-      agents={agents}
+      agents={panelAgents}
       selectedAgent=""
       collapsed={{}}
       loading={false}
@@ -120,16 +120,28 @@ describe("OrganizationPanel", () => {
     expect(rows).toHaveLength(1);
   });
 
-  test("archived members stay in the archived section and out of unassigned", () => {
+  test("archived members stay behind a header trigger and out of unassigned", () => {
     const html = render();
-    const archived = html.indexOf("已归档成员");
-    const unassigned = html.indexOf('data-testid="org-unassigned"');
+    const trigger =
+      html.match(
+        /<button[^>]*data-testid="org-archived-trigger"[\s\S]*?<\/button>/,
+      )?.[0] ?? "";
+    const unassigned = html.slice(html.indexOf('data-testid="org-unassigned"'));
 
-    expect(archived).toBeGreaterThan(-1);
-    expect(unassigned).toBeGreaterThan(-1);
-    expect(archived).toBeGreaterThan(unassigned);
-    expect(html).toContain('data-testid="agent-more-dev-2"');
+    expect(trigger).toContain("已归档成员");
+    expect(trigger).toContain("<em>1</em>");
+    expect(html).toContain('aria-haspopup="dialog"');
+    expect(unassigned).not.toContain("已归档开发");
+    expect(unassigned).not.toContain('data-testid="agent-dev-2"');
+    expect(html).not.toContain("已归档开发");
+    expect(html).not.toContain('data-testid="agent-more-dev-2"');
     expect(html).not.toContain('data-testid="agent-restore-dev-2"');
-    expect(html).not.toContain('data-testid="agent-move-dev-2"');
+    expect(html).not.toContain('data-testid="org-archived-list"');
+  });
+
+  test("the archived trigger is hidden when nobody is archived", () => {
+    const html = render(agents.filter((agent) => agent.status !== "archived"));
+
+    expect(html).not.toContain('data-testid="org-archived-trigger"');
   });
 });
