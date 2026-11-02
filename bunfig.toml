@@ -1,0 +1,4 @@
+[install]
+# Dependencies' lifecycle scripts are not required for this project. The only
+# blocked script is @openuidev/lang-core telemetry, wrapped in try/catch.
+ignoreScripts = true

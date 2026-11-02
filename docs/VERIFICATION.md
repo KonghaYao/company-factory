@@ -1,5 +1,7 @@
 # Company Factory 验证报告
 
+> **2026-11-02 架构变更：**Workspace 已改为本地运行，删除 Linux / bubblewrap 沙箱及 `COMPANY_SANDBOX`。本文 2026-10-31 的 live E2E 是沙箱版历史证据，不再代表当前实现；当前版本需要重新做 live 验收。下文提到的 `sandbox_unavailable`、bwrap 版本与 Linux 全量结果均不再适用。历史命令保留 npm 形式；当前项目统一使用 Bun（`bun install` / `bun run` / `bun test`）。
+
 日期：2026-10-30（UTC）。最后更新：2026-10-31（UTC）。现行要求：原始任务书 + `USER-OVERRIDES.md`。
 
 ## 最终 live E2E 事实（2026-10-31）
@@ -8,7 +10,7 @@
 
 - **结论**：按计划 §11 字面口径 `closure=true`；Stage 2 `--mode=linux-full` 的 E00–E19 全部 `passed`。运行 `91201b67`。证据：`/tmp/cf-e2e-delivery-round2.n5TgK726/`。下方 A01–A15 与命令记录保留为 2026-10-30 的历史接口验收。
 - **真实执行范围**：Linux 容器内官方 Peri 4.4.1、sqld 0.24.32、bwrap 0.8.0；真实模型端点与真实 Session；Workspace/Git/Preview/CI/Review、重启与 IM 均实际执行。
-- **测试**：Linux 全量 `101 pass / 24 skip / 0 fail`；宿主 macOS 全量 `100 pass / 24 skip / 1 fail`，唯一失败是既有 `sandbox_unavailable`（`src/storage/git-sandbox.test.ts`，要求 Linux bubblewrap），不是 live 轮引入。
+- **测试（历史沙箱版）**：Linux 全量 `101 pass / 24 skip / 0 fail`；宿主 macOS 全量 `100 pass / 24 skip / 1 fail`，唯一失败是既有 `sandbox_unavailable`（`src/storage/git-sandbox.test.ts`，要求 Linux bubblewrap），不是 live 轮引入。该测试与失败项已随 2026-11-02 裁定删除。
 - **fable 限制**：原始 `PERI_MODEL_ID_FABLE` 请求返回 HTTP 400；供应商 `/models` 无独立 fable 模型。测试用项目外临时 0600 env 将 fable 映射到 opus 档模型 ID。四档 alias 路由已验证，但**独立 fable 模型未验证**；不能声称“四档四模型全部真实通过”。
 - **M1 限制**：`agentCiExecuted=true` 是真实 Session 中 Bash 调用的 args/result 匹配，不是密码学证明；宿主独立 CI digest 是权威；恶意 Agent 理论上可用 `echo "<challenge> <digest>"` 伪造。E12 transcript 的 canonical JSON 已由独立 Verifier 复算，与宿主 digest 一致。
 - **证据缺口**：多数步骤的 `toolCalls` 数组为空，只有 E12/E13 有 toolCallId/flags 与 transcript；E13 的 canonical JSON 未保存，无法仅凭交付文件独立重算其 digest。E07 的 `resolveDecision` 返回 `invalid_state`（decision 已 answered），报告中的 `resolved=true` 表示业务终态，不是该工具调用成功。
@@ -23,7 +25,7 @@
 
 - 前端 TypeScript 与生产构建通过；UI scope/draft/receipt/conflict 等状态单测通过。
 - 业务单测使用明确标注的 runtime double，只用于业务规则，不充当 Peri 接入证据。
-- SDK/Workspace 测试使用官方 Peri 4.4.1、SDK 0.3.0、真实 SQLite、Git 和 bubblewrap。
+- SDK/Workspace 测试（历史沙箱版）使用官方 Peri 4.4.1、SDK 0.3.0、真实 SQLite 与 Git；2026-11-02 起 Workspace 本地运行，不再使用 bubblewrap。
 - 本地 provider **协议 fixture** 验证真实 Peri 请求/流式投影/投递/生效配置，不是外部模型推理能力验收（历史轮次；live 轮已改用真实模型端点，见上）。
 - 双 Issue 软件示例实际创建独立 Git worktree/计划/提交，真实合并到 Preview 分支，HTTP Preview 读取合并产物，CI 校验产物和同一 SHA；用户验收与 Review 记录由接口模拟者提交并明确标为测试证据。
 - **历史轮次（2026-10-30）没有声称**外部真实模型已自动完成 HR 对话、复杂多任务编码、真实同事推理回复，或真实项目已通过人工验收。2026-10-31 live 轮已用真实模型验证 HR `createGroup`、Session 回复、IM 往返与 Preview/CI/Review；仍不声称用户自有真实项目的复杂编码或人工验收已通过。
@@ -88,8 +90,8 @@ npm audit --json
 
 ## 剩余用户侧验证条件
 
-- 在你自己的 Linux 环境配置真实模型 endpoint / model / key，并手动重启 Agent；本轮 live 只在隔离容器和测试公司中完成，未使用你的生产数据。
+- 在你自己的本机环境配置真实模型 endpoint / model / key，并手动重启 Agent；历史 live 轮在隔离容器和测试公司中完成，未使用你的生产数据。
 - 授予所需真实 Git 项目根，运行自己的工程命令和 CI；外部 MCP 仅按你的实际配置使用。
 - 真实自然语言 HR 创建与 Agent 间推理往返已在 2026-10-31 live 轮用真实模型验证；用户自有项目的复杂多任务编码、真实项目人工验收仍待你的环境验证。
-- Linux arm64 容器路径已在 live 轮验证；macOS/Windows 仍未做产品级运行验证，当前运行时对非 Linux 或缺少有效 bubblewrap 的主机 fail closed。
+- 2026-10-31 live 轮验证的是 Linux arm64 沙箱版；2026-11-02 起 Workspace 本地运行，macOS 本地产品级运行仍需重新验收。
 - 浏览器已被用户排除，本报告不声称做过视觉验收。早期启动限制保留在 `browser-results.json` 作为历史记录，不是当前验收阻塞。

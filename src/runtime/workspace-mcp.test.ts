@@ -1,38 +1,27 @@
 import { describe, expect, test } from "bun:test";
 import { snapshotWorkspaceMcpServerOptions } from "./workspace-mcp";
 
-describe("Workspace MCP server factory isolation snapshot", () => {
-  test("copies privatePaths and projectRoots instead of aliasing them", () => {
-    const privatePaths = ["/var/lib/company/stores.db"];
-    const projectRoots = ["/tmp/company-project"];
+describe("Workspace MCP server factory snapshot", () => {
+  test("copies the launch options instead of aliasing them", () => {
+    const env = { PATH: "/usr/bin", LANG: "C.UTF-8", HOME: "/home/dev" };
     const snapshot = snapshotWorkspaceMcpServerOptions({
       periBinary: "/opt/peri/peri",
-      scope: {
-        directory: "/tmp/company/agents/dev",
-        companyHome: "/tmp/company",
-        privatePaths,
-        projectRoots,
-      },
+      directory: "/tmp/company/agents/dev",
+      env,
     });
-    expect(snapshot.scope.privatePaths).toEqual(["/var/lib/company/stores.db"]);
-    expect(snapshot.scope.projectRoots).toEqual(["/tmp/company-project"]);
-    expect(snapshot.scope.privatePaths).not.toBe(privatePaths);
-    expect(snapshot.scope.projectRoots).not.toBe(projectRoots);
+    expect(snapshot.directory).toBe("/tmp/company/agents/dev");
+    expect(snapshot.env).toEqual(env);
+    expect(snapshot.env).not.toBe(env);
 
-    privatePaths.push("/tmp/other-store");
-    projectRoots.push("/tmp/other-project");
-    expect(snapshot.scope.privatePaths).toEqual(["/var/lib/company/stores.db"]);
-    expect(snapshot.scope.projectRoots).toEqual(["/tmp/company-project"]);
+    env.PATH = "/changed";
+    expect(snapshot.env?.PATH).toBe("/usr/bin");
   });
 
-  test("keeps the optional fields absent when they are not provided", () => {
+  test("keeps optional fields absent when they are not provided", () => {
     const snapshot = snapshotWorkspaceMcpServerOptions({
       periBinary: "/opt/peri/peri",
-      scope: { directory: "/tmp/agent" },
+      directory: "/tmp/agent",
     });
-    expect(snapshot.scope.privatePaths).toBeUndefined();
-    expect(snapshot.scope.projectRoots).toBeUndefined();
-    expect(snapshot.scope.companyHome).toBeUndefined();
     expect(snapshot.env).toBeUndefined();
   });
 });

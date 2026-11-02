@@ -690,10 +690,8 @@ export class CompanyDomain {
     roster.members.push({ agentId, groupId, role });
     roster.version++;
     await this.store.putYaml(this.path(ctx, "roster.yaml"), roster);
-    // 显式降级只关闭宿主 Workspace，不为 Agent 仓库增加无沙箱 Git 路径。
-    // 初始化提交不承载事件或幂等状态；其余内部/用户触发的 Git 仍按原边界 fail closed。
-    if (process.env.COMPANY_WORKSPACE !== "disabled")
-      await this.store.commit(dir, `Provision ${name} with fixed Session`);
+    // Workspace 现在本地直接运行，不再有 OS 沙箱；Agent Git 与 Workspace 开关解耦。
+    await this.store.commit(dir, `Provision ${name} with fixed Session`);
     return publicAgent(agent);
   }
   async createMember(ctx: CallerContext, input: Input) {

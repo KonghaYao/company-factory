@@ -10,9 +10,9 @@
 - **理由/约束**：用户确定运行时边界；后续改造不得突破该边界。
 - **影响**：
   - MCP 仍由宿主读取 `~/.company/agents/<agentId>/.mcp.json`（公司 MCP 为 HTTP），并在显式重启时注入。
-  - workspace 继续使用 `peri mcp-start workspace --stdio`，由沙箱托管。
+  - workspace 继续使用 `peri mcp-start workspace --stdio`；2026-11-02 起本地直接运行，不再套 OS 沙箱。
   - SDK WASM 不 spawn 任意 stdio MCP。
-  - 未来 sandbox/MCP 改造（例如 `none` sandbox + 适配器）必须落在 SDK WASM 边界内。
+  - 未来 MCP 改造必须落在 SDK WASM 边界内，不得改为 native `peri acp`。
 - **状态**：永久
 
 ## 2. 系统提示词更新语义：固定 Session
@@ -42,3 +42,13 @@
 - **理由/约束**：服务变更必须通过显式停止与启动生效，不引入 watch 模式。
 - **影响**：所有服务改动均先停再起。
 - **状态**：永久
+
+## 6. Workspace 本地运行，不使用 OS 沙箱
+
+- **决策**：Agent Workspace MCP 与宿主 Git 直接以宿主用户身份运行；删除 Linux / bubblewrap 依赖、沙箱命令包装与 `COMPANY_SANDBOX` 开关。
+- **理由/约束**：产品基于本地运行，不绑定 Linux 与 bubblewrap；接受 Agent 工具拥有宿主用户的文件权限。
+- **影响**：
+  - `COMPANY_WORKSPACE=disabled` 仅用于显式关闭 Agent Workspace，与 Git 能力解耦。
+  - 所有者文件视图、Preview、CI 等能力保留；不再声称 OS 级隔离。
+  - macOS 可直接运行 Workspace 与宿主 Git，不再 fail closed。
+- **状态**：生效中

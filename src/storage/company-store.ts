@@ -13,7 +13,6 @@ import { parseDocument, stringify } from "yaml";
 import { simpleGit } from "simple-git";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { sandboxCommand } from "../runtime/sandbox";
 const execFileAsync = promisify(execFile);
 import { DomainError, requireValue } from "../domain/types";
 
@@ -188,8 +187,8 @@ export class CompanyStore {
     return rel !== "" && !rel.startsWith("..") && !rel.startsWith("/");
   }
   /** Agent Git config, hooks, fsmonitor and filters are untrusted executable code.
-   * Every Git subprocess stays inside the same OS boundary as official Workspace.
-   * Disabling selected hooks is not an adequate substitute for this boundary.
+   * Git now runs directly as the host user: there is no OS sandbox. The directory
+   * containment check only prevents writing outside the private Agent root.
    */
   private async agentGit(dir: string, args: string[]): Promise<string> {
     const canonical = await realpath(dir);
@@ -201,11 +200,7 @@ export class CompanyStore {
       "Agent Git directory escaped the private Agent root",
       403,
     );
-    const launch = sandboxCommand("/usr/bin/git", args, {
-      directory: canonical,
-      companyHome: this.root,
-    });
-    const result = await execFileAsync(launch.command, launch.args, {
+    const result = await execFileAsync("/usr/bin/git", args, {
       cwd: canonical,
       encoding: "utf8",
       timeout: 30000,

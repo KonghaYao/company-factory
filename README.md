@@ -1,38 +1,37 @@
 # Company Factory
 
-一个 **Bun HTTP 服务 + 本地磁盘** 的 Agent 软件工厂。React 三栏工作台以 Agent 为第一维度，业务事实保存在 YAML / Markdown / Git；主 Agent 推理、Session 与控制面采用 **Peri SDK 0.3.0 WASM**，接入用户显式配置的本地 sqld 或宿主自动供给的单一共享本地 sqld；**官方 Peri 4.4.1 进程仅提供隔离的 Workspace MCP**，不启动 native `peri acp`，不自动回退。
+一个 **Bun HTTP 服务 + 本地磁盘** 的 Agent 软件工厂。React 三栏工作台以 Agent 为第一维度，业务事实保存在 YAML / Markdown / Git；主 Agent 推理、Session 与控制面采用 **Peri SDK 0.3.0 WASM**，接入用户显式配置的本地 sqld 或宿主自动供给的单一共享本地 sqld；**官方 Peri 4.4.1 进程提供本地 Workspace MCP（无 OS 沙箱）**，不启动 native `peri acp`，不自动回退。
 
 **当前交付不是模拟 Agent 演示。** 创建公司通过 WASM 创建真实 Peri Session；必须先配置显式本地存储或启用单一共享 sqld 自动供给，没有模型配置时明确拒绝发送，不伪造回答或投递成功。
 
-**最终 live 验收（2026-10-31，计划 §11 字面口径）：`closure=true`。** Linux 容器内使用官方 Peri 4.4.1、sqld 0.24.32 与 bwrap 执行 Stage 2 `--mode=linux-full`，E00–E19 全部 passed；真实模型端点、真实 Session、Workspace、Git、Preview、CI/Review、重启与 IM 均实际执行，未用单测或 fixture 替代。证据：`/tmp/cf-e2e-delivery-round2.n5TgK726/`（run `91201b67`）。
+**2026-11-02 架构变更：Workspace 本地运行。** 按所有者裁定，Agent 的官方 Workspace MCP 与宿主 Git 直接以宿主用户身份运行，不再依赖 Linux / bubblewrap，也不再提供 OS 级隔离；Agent 工具可访问该用户可访问的本机文件。`COMPANY_SANDBOX` 已移除；`COMPANY_WORKSPACE=disabled` 仅作为显式关闭 Agent Workspace 的调试开关。
 
-**测试与平台边界：** 宿主 macOS 全量 `138 pass / 24 skip / 1 fail`，唯一失败是既有的 `sandbox_unavailable`（Agent Git 沙箱要求 Linux bubblewrap）。Linux 全量在此前 live 验收中为 `101 pass / 24 skip / 0 fail`。macOS 的 Workspace/File/Git/Preview/CI 仍 fail closed，不能算全业务通过。
+**测试基线（2026-11-02，macOS）：** 全量 `139 pass / 24 skip / 0 fail`；`bun run typecheck` 与 `bun run build` 通过。历史 Linux live 验收（2026-10-31，沙箱版，`closure=true`）是过去实现的证据，**不代表当前本地架构**，需要重新做 live 验收；详见 [验证记录](docs/VERIFICATION.md)。
 
-**未验证项，不能声称：** 原始 `PERI_MODEL_ID_FABLE` 请求返回 HTTP 400，供应商 `/models` 无独立 fable 模型；live 测试用项目外临时 0600 env 将 fable 回退到 opus。四档 **alias 路由**已验证，但**独立 fable 模型未验证**，不能声称四档四模型全部通过。`agentCiExecuted=true` 来自真实 Session 中 Bash 调用的 args/result 匹配，不是密码学证明；宿主独立 CI digest 是权威，恶意 Agent 理论上可用 `echo` 伪造。多数步骤的 `toolCalls` 证据为空；E13 的 canonical JSON 未保存，无法仅凭交付文件独立重算 digest；E07 的 `resolveDecision` 返回 `invalid_state`（decision 已 answered），业务终态正确。
+**未验证项，不能声称：** 独立 fable 模型仍未验证（供应商无独立 fable 模型）；四档 alias 路由可用，但不能声称四档四模型全部真实通过。历史 live 证据中的 `agentCiExecuted` 与 digest 口径仅对那轮沙箱版运行有效。
 
-**安全披露：** 上一轮 live 执行中一次宿主范围 `ps` 带完整 args，瞬时工具输出带出一个与本任务无关的宿主进程凭据。该值未写入项目或证据、未用于任何请求；扫描未发现实际 secret（模式命中仅为 request id 子串）。建议轮换所有可能出现在宿主进程列表中的无关凭据。详情见证据目录 `SECURITY-NOTICE.md`（不含具体值）。
+**历史安全披露（2026-10-31 沙箱版）：** 一次宿主范围 `ps` 带完整 args，瞬时工具输出带出一个与本任务无关的宿主进程凭据。该值未写入项目或证据、未用于任何请求；建议轮换所有可能出现在宿主进程列表中的无关凭据。详情见证据目录 `SECURITY-NOTICE.md`（不含具体值）。
 
-[验证记录](docs/VERIFICATION.md) 的前半是 2026-10-30 历史接口验收；最终事实以其“最终 live E2E 事实”章节和上述结论为准。
+[验证记录](docs/VERIFICATION.md) 的前半是 2026-10-30 历史接口验收；当前架构变更见该文顶部说明。
 
 ## 1. 启动
 
-主 Agent 使用 WASM，但工具与 Git 的 OS 隔离仍要求 **Linux 用户命名空间与 bubblewrap**。macOS/Windows 的 Workspace/Git 保持 fail closed，可在 Linux VM 内运行；WASM 并不自动提供宿主文件权限隔离。Linux 容器内已完成 live 运行验证（见上）；macOS 上只能以 `COMPANY_WORKSPACE=disabled` 使用公司/会话/聊天，Workspace/File/Git/Preview/CI 仍 fail closed，不算全业务通过。所有者自己的**「文件」视图例外**：它不经过 `sandboxCommand`，可直接浏览宿主路径（见 [USER-OVERRIDES.md](USER-OVERRIDES.md)）。
+Agent 的 Workspace MCP 与宿主 Git 现在直接本地运行，不再要求 Linux 用户命名空间或 bubblewrap，也不再提供 OS 隔离。macOS/Linux 可直接运行公司/会话/聊天、Agent Workspace、所有者文件视图、Git、Preview 与 CI；Agent 工具拥有宿主用户的文件权限。所有者自己的**「文件」视图**同样直接运行，可浏览宿主任意路径（见 [USER-OVERRIDES.md](USER-OVERRIDES.md)）。
 
-需要：Node.js 22+ / npm、系统 Git、`tar`、`bubblewrap`。Bun 1.4.4 已锁定在开发依赖中，`npm run` 会调用项目内 Bun。
+需要：Bun 1.4.4+、系统 Git、`tar`。项目以 Bun 作为唯一运行时与包管理器，不使用 npm / Node 脚本。
 
 ```bash
-# Debian/Ubuntu：如缺少系统依赖，由你在本机安装
-sudo apt-get install git bubblewrap
+# 系统 Git 与 tar 需已安装
 
-npm ci
-npm run setup:peri      # 官方发行包 + SHA256 校验，保存到 .tools/peri/
-npm run build
-npm start
+bun install
+bun run setup:peri      # 官方发行包 + SHA256 校验，保存到 .tools/peri/（macOS/Linux/Windows）
+bun run build
+bun start
 ```
 
 打开终端打印的私密 `http://127.0.0.1:3000/#access=...` 链接。访问口令仅用于本地所有者登录；浏览器完成登录后移除 URL fragment，使用 HttpOnly / SameSite cookie。不要把此链接交给 Agent 或其他人。若丢失链接，口令在 `$COMPANY_HOME/owner-token`，登录页也可手动输入。
 
-> 如果主机禁用用户命名空间，Peri 会提示 sandbox 不可用。请在允许 bubblewrap 的 Linux 主机/VM 中运行；本项目不会自动退回无隔离模式。原生 macOS 可设 `COMPANY_WORKSPACE=disabled`，使公司/固定 Session/聊天可用；File/Git/Workspace 工具仍不可用且需 Linux，宿主不会为此放开沙箱。
+> Workspace 与宿主 Git 不再提供 OS 级隔离：Agent 工具可以读写宿主用户可访问的本机文件，包括 Company 业务源文件、其他 Agent 目录与所有者口令。请只在本机可信环境运行，不要把服务暴露到非回环地址。需要调试时可用 `COMPANY_WORKSPACE=disabled` 关闭 Agent Workspace；所有者文件视图不受影响。
 
 环境变量：
 
@@ -48,7 +47,7 @@ npm start
 | `COMPANY_HOST` | `127.0.0.1`；建议保留本机监听 |
 | `COMPANY_BASE_URL` | 对应本机地址；写入 Agent 的三个 Company MCP 配置 |
 | `COMPANY_WEB_TOKEN` | 可选：覆盖本地自动生成的所有者口令 |
-| `COMPANY_WORKSPACE` | 可选：仅 `disabled` 时关闭宿主 Workspace MCP（公司/会话/聊天可用，Agent 的 Workspace/Git 工具仍 fail closed；所有者「文件」视图不受影响）；缺省保持官方 Workspace |
+| `COMPANY_WORKSPACE` | 可选：仅 `disabled` 时关闭 Agent 的宿主 Workspace MCP（公司/会话/聊天与所有者「文件」视图不受影响）；缺省启用本地官方 Workspace |
 | `PERI_BINARY` | `.tools/peri/peri`；官方 4.4.1，仅用于 Workspace/MCP，不承载 Agent ACP |
 | `COMPANY_MODEL_LIBRARY` | 可选：模型库 YAML 的绝对路径；默认 `$COMPANY_HOME/model-library.yaml`。不得位于 `agents/`、`companys/` 或 `runtime/workspace/` |
 | `OPENAI_BASE_URL` / `OPENAI_API_KEY` | 示例 provider 引用的端点与凭据环境变量**名**；实际名称由模型库的 `baseUrlEnv`/`apiKeyEnv` 指定 |
@@ -163,7 +162,7 @@ profiles:
     home/                       # 旧 native HOME 原样保留
   runtime/wasm-stores/<scope-hash>.json  # 无秘密 backend/endpoint hash/Session binding
   runtime/store-requests/<scope-hash>.json  # 缺配时的 companyId/agentId，便于补配
-  runtime/workspace/<scope-hash>/home/  # 官方 Workspace 隔离活动目录，无 sqld token
+  runtime/workspace/<scope-hash>/home/  # 官方 Workspace 本地活动目录，无 sqld token
 
 # 仅启用 COMPANY_SQLD_BINARY 时；默认根在 COMPANY_HOME 之外
 $COMPANY_SQLD_ROOT/sqld/shared/
@@ -174,26 +173,26 @@ WASM Session/消息由本地 sqld 落盘：显式模式由所有者准备端点�
 
 旧 Agent 的小写 `claude.md` 可用 `bun scripts/migrate-agent-memory.ts --dry-run` 预览，再运行一次完成迁移；脚本把 `agent.yaml` 的当前档案写入托管块、保留自由记忆区，遇到同名 `CLAUDE.md` 与 `claude.md` 共存时只报告冲突而不覆盖，也不会自动提交 Agent 仓库。
 
-恰好三个自定义 MCP：`/company_org/mcp`、`/company_tasks/mcp`、`/company_im/mcp`，使用 `@peri-code/mcpp` 的 MCP **2026-07-28** mono 路由、资源与订阅。Workspace 沿用官方实际 stdio 传输，不虚构 Company Workspace URL。AgentSystem 只在服务内部。
+恰好三个自定义 MCP：`/company_org/mcp`、`/company_tasks/mcp`、`/company_im/mcp`，使用 `@peri-code/mcpp` 的 MCP **2026-07-28** mono 路由、资源与订阅。Workspace 沿用官方实际 stdio 传输，本地直接运行（无 OS 沙箱），不虚构 Company Workspace URL。AgentSystem 只在服务内部。
 
-各 Agent 的官方 Workspace MCP 子进程在 bubblewrap 中，只见自己的活动目录、知识根、独立工具运行目录、用户授权项目根及最小系统工具。主推理进程内使用 WASM，不启动 native ACP；数据库凭据只留在宿主/SDK，既不传给 Workspace，也不写入模型/MCP 快照。身份 YAML/MCP 配置与 `.env` 只读；其他 Agent、Company 业务源文件、所有者口令对 **Agent 工具** 不可见。宿主针对可被 Agent 修改的个人仓库执行 Git 时仍使用相同隔离。**所有者自己的「文件」视图不在此隔离范围内**：按所有者裁定，它直接以宿主身份运行，可浏览、搜索和编辑本机任意路径（见 [USER-OVERRIDES.md](USER-OVERRIDES.md)）。外部 HTTP MCP 保持，任意 stdio/SSE/ACP 外部描述符在 WASM 模式明确拒绝；只有官方 Workspace 接入宿主桥，不提供通用 MCP 进程桥。网络仍用于已配置的模型/MCP 与项目工作；建议仅监听本机。
+各 Agent 的官方 Workspace MCP 子进程以宿主用户身份本地运行，不再有 bubblewrap / 命名空间隔离。Agent 工具可读取与写入宿主用户可访问的本机文件；子进程环境只传 `PATH`/`LANG`/`HOME`，避免把模型凭据直接注入，但这不构成文件权限边界。主推理进程内使用 WASM，不启动 native ACP；数据库凭据只留在宿主/SDK，不写入模型/MCP 快照。公司业务写入仍应通过业务接口；这是产品约束，不是 OS 强制。所有者自己的「文件」视图与 Agent Workspace 都是本地直接运行。外部 HTTP MCP 保持，任意 stdio/SSE/ACP 外部描述符在 WASM 模式明确拒绝；只有官方 Workspace 接入宿主桥，不提供通用 MCP 进程桥。网络仍用于已配置的模型/MCP 与项目工作；建议仅监听本机。
 
-按任务书，**生成的 Agent 个人仓库会跟踪 `.env`**。该文件对 Agent 只读，且不承载模型配置；不要在其中写入任何秘密，也不要公开推送或打包个人数据目录。此交付 ZIP 不包含任何运行数据、生成的口令或模型凭据。
+按任务书，**生成的 Agent 个人仓库会跟踪 `.env`**。该文件不承载模型配置；Agent 工具现在可写本机文件，因此不要在其中写入任何秘密，也不要公开推送或打包个人数据目录。此交付 ZIP 不包含任何运行数据、生成的口令或模型凭据。
 
 最新用户裁定已经彻底移除 Forgejo：没有依赖、配置、`forgejo_issue` 字段或外部 Issue 同步。原附件原样保留仅作历史输入，现行覆盖见 [USER-OVERRIDES.md](USER-OVERRIDES.md)。
 
 ## 5. 验证与示例
 
 ```bash
-npm run typecheck
-npm run build
-npm test                        # domain + 真实 SDK/Workspace + HTTP/MCP 集成
-npm run test:integration
-# 可选，用户已排除浏览器验收：npm run test:browser
-npm run example                  # 在隔离临时目录运行真实双 Issue 交付示例
+bun run typecheck
+bun run build
+bun test                        # domain + 真实 SDK/Workspace + HTTP/MCP 集成
+bun run test:integration
+# 可选，用户已排除浏览器验收：bun run test:browser
+bun run example                  # 在隔离临时目录运行真实双 Issue 交付示例
 ```
 
-本轮 live 验收已实际执行 `npm run typecheck` 与全量测试；`npm run example` 与浏览器套件未执行。真实 runtime 套件还需设置专用空库的 `COMPANY_TEST_SQLD_URL/COMPANY_TEST_SQLD_TOKEN`；HTTP/MCP 集成套件使用 `COMPANY_TEST_INTEGRATION_STORES_FILE`（相同 stores 格式），为生成公司固定成员及 `integrated-dev/integrated-preview` 准备显式测试端点（可共用同一回环端点）。缺少 Linux、二进制或显式测试存储时套件 SKIP，不计为通过；不能使用生产数据库。集成套件使用固定 `requestId: initialize` 与所有者身份，缺配时可从其临时根的请求文件取得真实生成 ID。Domain 测试替身只证明业务规则，不冒充 WASM/存储证据；测试代码不自动安装或启动 sqld。
+当前代码已实际执行 `bun run typecheck`、`bun run build` 与全量测试（macOS `139 pass / 24 skip / 0 fail`）；`bun run example` 与浏览器套件未执行。真实 runtime 套件还需设置专用空库的 `COMPANY_TEST_SQLD_URL/COMPANY_TEST_SQLD_TOKEN`；HTTP/MCP 集成套件使用 `COMPANY_TEST_INTEGRATION_STORES_FILE`（相同 stores 格式），为生成公司固定成员及 `integrated-dev/integrated-preview` 准备显式测试端点（可共用同一回环端点）。缺少 Peri 二进制或显式测试存储时套件 SKIP，不计为通过；不能使用生产数据库。集成套件使用固定 `requestId: initialize` 与所有者身份，缺配时可从其临时根的请求文件取得真实生成 ID。Domain 测试替身只证明业务规则，不冒充 WASM/存储证据；测试代码不自动安装或启动 sqld。
 
 `SOURCE-MANIFEST.sha256` 是历史源码快照，已过期：2026-10-31 复核有 24/62 项不匹配，且不包含 `scripts/e2e-live.ts`、`scripts/e2e-ci-runner.ts` 等文件。它不得作为当前源码完整性或 E2E 证据；需要时重新生成。
 

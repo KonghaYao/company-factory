@@ -61,7 +61,7 @@ The current default Workspace is a Rust builtin in the official Peri executable.
 - Wake executes actual `changeSessionTo` with the fixed UUID. One per-scope serialization gate prevents concurrent duplicate active instances.
 - Restart 关闭原 SDK Chat/Workspace activation，确认回收后再使用同一 Session 与新组装的模型/MCP settings。任何未确认关闭都不算重启成功。
 - Ordinary wake uses the business layer's `effectiveConfig` and the persisted resolved-provider snapshot, not newly saved configuration or reread environment variables.
-- Resolved provider settings (including credential/endpoint/per-tier model profile) and MCP descriptors are snapshotted **only** at successful provision/explicit restart in `runtime/effective-config/<agentId>.json` (mode `0600`, parent `0700`). This is host-only configuration outside all Agent mounts. Ordinary cold wake reuses it; changing server environment or the model library does not silently apply a new key/model/endpoint. The Agent-owned `.env` is **not** a model-settings input at all: it is mounted read-only in the Workspace sandbox and ignored by model resolution, so an Agent cannot redirect the host credential on a later explicit restart. Memory remains normal editable Markdown, not part of this provider snapshot.
+- Resolved provider settings (including credential/endpoint/per-tier model profile) and MCP descriptors are snapshotted **only** at successful provision/explicit restart in `runtime/effective-config/<agentId>.json` (mode `0600`, parent `0700`). This is host-only configuration. Ordinary cold wake reuses it; changing server environment or the model library does not silently apply a new key/model/endpoint. The Agent-owned `.env` is **not** a model-settings input at all and is ignored by model resolution. Agent tools now run locally without an OS sandbox, so this is a runtime rule rather than a filesystem permission boundary. Memory remains normal editable Markdown, not part of this provider snapshot.
 - Model resolution is profile → provider → model. `$COMPANY_HOME/model-library.yaml` (override: absolute `COMPANY_MODEL_LIBRARY`; never inside `agents/`, `companys/` or `runtime/workspace/`) is a strict **v2** schema: `version: 2`, `activeProfile`, and id-keyed `providers`/`profiles` maps. Each profile declares `activeAlias` and `tiers.<tier> = {provider, model | modelEnv}`; there is no top-level `models` or `bindings`. v1 files (`version: 1` or the legacy arrays) are rejected with `library_version_unsupported`, never guessed-migrated. The file must be a regular, single-link, current-owner file with mode `0600`; symlinks/hardlinks/other modes produce a non-fatal `insecure` state. Providers accept only `baseUrlEnv`/`apiKeyEnv` **names** (defaults per provider type); a literal `baseUrl` is rejected. Schema is strict, so unknown fields (including a pasted `apiKey: sk-...`), duplicate IDs and unknown profile/provider references are rejected.
 - An Agent selects a profile only through `config.modelProfile` (missing or `""` inherits the library `activeProfile`). An explicit profile that is missing or disabled is final: `configured:false` with a diagnostic, never a fallback. The active tier is `config.modelAlias ?? profile.activeAlias ?? "sonnet"`; an invalid alias throws `invalid_model_configuration`. Tier bindings resolve their own `model`/`modelEnv`; an unavailable bound model does not silently fall back. Unbound tiers fall back to the active alias, then `sonnet`, then another bound tier, so all four tiers are emitted. `config.settings` is reserved and never spread into PeriConfig. Legacy `model/models/provider/baseUrl/apiKeyEnv` are retired from the runtime; saving them through `saveAgentConfiguration` is rejected with `invalid_input` and a hint to use `config.modelProfile`.
 - PeriConfig uses `config.active_alias` and per-tier `config.profiles[tier] = {provider, model}`. Only providers actually referenced by resolved tiers are emitted. Provider endpoint/credential values are resolved from the **trusted host process environment** using the library's `baseUrlEnv`/`apiKeyEnv` names; they never enter the library file, snapshots' non-secret metadata, browser responses or logs. The `configured` gate requires the active tier's model plus its provider's base URL and credential; missing values and environment names are exposed as diagnostic codes. Missing credentials do not prevent genuine Session creation, but **send is rejected before submitting model input** with `model_not_configured`. External MCP/Workspace child processes receive only `PATH`/`LANG`/`HOME`, not model credentials.
@@ -92,23 +92,21 @@ Text editing is bounded to 1 MiB. Binary files are explicitly rejected for text 
 
 ## Filesystem and credential boundary
 
-官方 Workspace 本身不是 OS 沙箱；WASM 也不自动保护宿主文件。Agent Workspace bridge 与浏览器 Workspace 仍通过 **Linux bubblewrap** 启动，Git 隔离保持。主 Agent 不再启动 native ACP：
+按 2026-11-02 所有者裁定，Workspace 本地运行，不使用 OS 沙箱。Agent Workspace MCP 与宿主 Git 直接以宿主用户身份运行；主 Agent 仍不启动 native ACP：
 
-- Separate user/PID/IPC/UTS namespaces; isolated `/proc`; private `/tmp`; child dies with parent.
-- 只挂载此 Agent 活动目录、所属 Company 知识库、独立 Workspace 工具目录和显式授权项目根；不挂载 native sessions.db、WASM binding、有效配置快照或存储凭据文件。
-- The Company home is otherwise an empty **read-only** mount, so other company source records, Agents' tokens and Sessions are neither exposed nor writable.
-- `agent.yaml` and `.mcp.json` are read-only file mounts even though the activity directory is writable.
-- Child environment is whitelisted (`PATH`, `LANG`, isolated `HOME`); owner web tokens and unrelated host environment secrets are not inherited.
-- Project roots may not include or fall within Company data. User-specified project roots are explicit additional authority.
-- Host file-view policy independently checks canonical paths and rejects protected aliases and hard-linked file edits.
+- Agent 工具可访问宿主用户可访问的本机文件，包括 Company 业务源文件、其他 Agent 目录与所有者口令；不再声称只挂载活动目录或隔离 Company 数据。
+- 子进程环境只传 `PATH`/`LANG`/`HOME`，避免把模型凭据等无关宿主环境变量直接注入工具进程；这不是文件权限边界。
+- 所有者文件视图同样直接运行，可浏览、搜索和编辑本机任意路径。
+- 宿主针对 Agent 个人仓库执行 Git 时直接使用 `/usr/bin/git`；仓库 hooks/filters 会以宿主用户身份执行。
 - Outbound/loopback networking is retained for model providers, Company MCP and development work. Owner Web APIs therefore require their separate login secret; localhost origin alone is not authority.
+- `COMPANY_WORKSPACE=disabled` 仅关闭 Agent Workspace，不影响所有者文件视图或宿主 Git。
 
-**隔离实现要求 Linux 与可用的非特权 bubblewrap。** 缺少 bwrap 或非 Linux 保持 fail closed；macOS/Windows 无隔离后备模式。WASM 并未改变此权限边界，本轮没有运行或验证沙箱。
+**平台要求：** 不再要求 Linux 或 bubblewrap。`bun run setup:peri` 按当前平台安装官方 Peri 4.4.1，macOS/Linux/Windows 资产均可用。
 
 ## 用户自行验收与本轮边界
 
-本轮仅实施文件修改，未执行命令、HTTP 请求、安装、测试、typecheck、build、lint 或服务启动；没有真实 WASM→sqld 运行成功结论。历史 native 测试结果不适用于此切换。
+本文件的运行时边界随 2026-11-02 裁定更新；历史 native/沙箱验收结果不适用于当前 Workspace 本地实现。
 
-已更新真实 runtime/integration 测试代码并新增配置/backend 单测（均未运行）。runtime 测试要求 Linux bubblewrap、官方 Peri 与所有者预先配置的专用空 sqld：`COMPANY_TEST_SQLD_URL`、`COMPANY_TEST_SQLD_TOKEN`。HTTP/MCP integration 使用 `COMPANY_TEST_INTEGRATION_STORES_FILE`（同 stores 格式），每个生成公司固定 Agent、`integrated-dev`、`integrated-preview` 各用独立空端点；不能指向真实用户数据。测试不会自动安装/启动 sqld。缺少显式条件时 SKIP，不是通过。
+已更新真实 runtime/integration 测试代码并新增配置/backend 单测。runtime 测试要求官方 Peri 与所有者预先配置的专用空 sqld：`COMPANY_TEST_SQLD_URL`、`COMPANY_TEST_SQLD_TOKEN`。HTTP/MCP integration 使用 `COMPANY_TEST_INTEGRATION_STORES_FILE`（同 stores 格式），每个生成公司固定 Agent、`integrated-dev`、`integrated-preview` 各用独立空端点；不能指向真实用户数据。测试不会自动安装/启动 sqld。缺少显式条件时 SKIP，不是通过。
 
-测试代码覆盖同 Session create/resume/restart、backend hash/旧 Session 拒绝、配置冻结、快照不含 Workspace 工厂与 sqld token，以及既有 Workspace 文件/Git/控制面契约。标明的本地模型协议 fixture 不是 live-model 推理、真实外部供应商连通性或自主多 Issue 工作成果。用户仍需自行执行实际启动、持久恢复、工具隔离、queue/cancel/history 与模型验收。
+测试代码覆盖同 Session create/resume/restart、backend hash/旧 Session 拒绝、配置冻结、快照不含 Workspace 工厂与 sqld token，以及既有 Workspace 文件/Git/控制面契约。标明的本地模型协议 fixture 不是 live-model 推理、真实外部供应商连通性或自主多 Issue 工作成果。用户仍需自行执行实际启动、持久恢复、工具行为、queue/cancel/history 与模型验收。

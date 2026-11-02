@@ -17,10 +17,10 @@ import type { CallerContext, Issue } from "../src/domain";
 const binary =
   process.env.PERI_BINARY ?? join(process.cwd(), ".tools/peri/peri");
 const storesFile = process.env.COMPANY_TEST_INTEGRATION_STORES_FILE;
-const enabled = process.platform === "linux" && existsSync(binary) && Boolean(storesFile);
+const enabled = existsSync(binary) && Boolean(storesFile);
 if (!enabled)
   console.warn(
-    "真实 WASM 集成套件 SKIP：需要 Linux bubblewrap、官方 Peri 和 COMPANY_TEST_INTEGRATION_STORES_FILE；为每个 Agent 预配独立专用空 sqld，套件不安装或启动 sqld。Domain doubles 不是 SDK 证据。",
+    "真实 WASM 集成套件 SKIP：需要官方 Peri 和 COMPANY_TEST_INTEGRATION_STORES_FILE；为每个 Agent 预配独立专用空 sqld，套件不安装或启动 sqld。Domain doubles 不是 SDK 证据。",
   );
 (enabled ? describe : describe.skip)(
   "Real single-server / SDK WASM / per-Agent local sqld / official Workspace bridge integration",

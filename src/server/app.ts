@@ -74,7 +74,6 @@ export async function createApplication(options: ApplicationOptions = {}) {
     periBinary: options.periBinary ?? process.env.PERI_BINARY,
     storeProvider,
     storesFile,
-    privatePaths: sharedStores?.privatePaths,
     onChange: (scope) => emit({ ...scope, kind: "runtime" }),
   });
   const files = new WorkspaceViewAdapter({
@@ -256,7 +255,7 @@ export async function createApplication(options: ApplicationOptions = {}) {
       workspace:
         process.env.COMPANY_WORKSPACE === "disabled"
           ? "disabled (COMPANY_WORKSPACE=disabled)"
-          : "official Peri 4.4.1 Workspace MCP via isolated ACP bridge",
+          : "official Peri 4.4.1 Workspace MCP (local, no OS sandbox)",
     }),
   );
   app.post("/api/login", async (c) => {

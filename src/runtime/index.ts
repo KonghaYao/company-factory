@@ -70,7 +70,6 @@ export {
   sharedSqldProviderFromEnv,
 } from "./local-sqld";
 import { channelPair } from "./view-channel";
-import { sandboxCommand } from "./sandbox";
 export { WorkspaceViewAdapter } from "./workspace";
 export interface RuntimeAgent {
   agentId: string;
@@ -324,7 +323,6 @@ export class PeriRuntime {
       periBinary?: string;
       storeProvider?: StoreProvider;
       storesFile?: string;
-      privatePaths?: string[];
       /** Explicit test/deployment override; defaults to COMPANY_MODEL_LIBRARY or <root>/model-library.yaml. */
       modelLibraryPath?: string;
       onChange?: (scope: { companyId: string; agentId: string }) => void;
@@ -675,26 +673,12 @@ export class PeriRuntime {
       responsibilities: effective.responsibilities ?? input.responsibilities,
       systemPrompt: input.systemPrompt ?? effective.systemPrompt ?? "",
     };
-    // 显式降级：仅关闭宿主 Workspace MCP；File/Git 仍由 fail-closed 沙箱决定。
+    // 显式降级：仅关闭 Agent 的宿主 Workspace MCP；所有者文件视图不受影响。
     const workspaceEnabled = process.env.COMPANY_WORKSPACE !== "disabled";
     if (workspaceEnabled && !existsSync(this.binary) && this.binary.includes("/"))
       throw new RuntimeError("peri_not_installed", "官方 Peri 4.4.1 Workspace 二进制未配置；WASM 不回退 native ACP。");
-    const scope = {
-      directory: input.directory,
-      companyHome: this.options.root,
-      knowledgeDirectory: input.knowledgeDirectory,
-      runtimeDirectory,
-      projectRoots: effective.configuration.workspaceRoots,
-      privatePaths: [
-        this.options.storesFile ?? process.env.COMPANY_WASM_STORES_FILE,
-        ...(this.options.privatePaths ?? []),
-      ].filter((path): path is string => Boolean(path)),
-    };
-    // 这里只构造隔离参数；非 Linux / 缺少 bwrap 时，在创建 Session 前 fail closed。
-    if (workspaceEnabled)
-      sandboxCommand(this.binary, ["mcp-start", "workspace", "--stdio", "--workspace", input.directory], scope);
     // 绑定仍可信但当前本地 sqld 已丢失该 Session（例如库重建）时，为同一 Agent
-    // 创建新的固定 Session 并更新绑定；端点身份与 scope/cwd 校验不放宽。
+    // 创建新的固定 Session 并更新绑定；端点身份与 cwd/目录校验不放宽。
     let resumeSessionId = targetSessionId;
     if (targetSessionId && !(await store.getSession(targetSessionId))) {
       console.warn(
@@ -736,8 +720,12 @@ export class PeriRuntime {
                   type: "acp",
                   server: createWorkspaceMcpServerFactory({
                     periBinary: this.binary,
-                    scope,
-                    env: { PATH: process.env.PATH, LANG: process.env.LANG ?? "C.UTF-8" },
+                    directory: input.directory,
+                    env: {
+                      PATH: process.env.PATH,
+                      LANG: process.env.LANG ?? "C.UTF-8",
+                      HOME: process.env.HOME ?? "/tmp",
+                    },
                   }),
                 },
               }

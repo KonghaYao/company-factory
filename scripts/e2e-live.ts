@@ -49,7 +49,6 @@ import {
   resolveModel,
   type ModelLibraryState,
 } from "../src/runtime/model-library";
-import { sandboxProbe } from "../src/runtime/sandbox";
 import {
   extractAgentToolCalls,
   findAgentCiExecution,
@@ -91,7 +90,7 @@ import {
   type WorktreeObservation,
 } from "./e2e-ci-runner";
 
-type Mode = "macos-smoke" | "linux-full";
+type Mode = "macos-smoke" | "local-full";
 type StepStatus = "passed" | "failed" | "skipped" | "blocked" | "smoke-only";
 
 type Options = {
@@ -162,17 +161,17 @@ const HELP = `Company Factory live E2E orchestrator
 
 Usage:
   bun scripts/e2e-live.ts --mode=macos-smoke --root=<TEST_ROOT> [--base=http://127.0.0.1:33117] [--dry-run]
-  bun scripts/e2e-live.ts --mode=linux-full  --root=<TEST_ROOT> [--base=http://127.0.0.1:33117] [--dry-run]
+  bun scripts/e2e-live.ts --mode=local-full  --root=<TEST_ROOT> [--base=http://127.0.0.1:33117] [--dry-run]
   bun scripts/e2e-live.ts --help
 
 Modes:
-  macos-smoke  Native macOS smoke: owner login, company creation, HR group/member creation,
+  macos-smoke  Local smoke: owner login, company creation, HR group/member creation,
                real model chat, Issue triage/decision, IM, process restart and negative API
-               checks. File/Git/Workspace/Preview steps are skipped because the host sandbox
-               is fail-closed on macOS. This mode is NOT full-business acceptance.
-  linux-full   Full E2E on a Linux host/container with bubblewrap. Adds real project files,
-               worktrees, file API, Preview environment, CI/Review verification, ready_merge
-               and Agent configuration restart. Requires E2E_PROJECT_ROOT.
+               checks. File/Git/Workspace/Preview steps are skipped; this mode is NOT
+               full-business acceptance.
+  local-full   Full E2E on the local host. Adds real project files, worktrees, file API,
+               Preview environment, CI/Review verification, ready_merge and Agent
+               configuration restart. Requires E2E_PROJECT_ROOT.
 
 Required process environment for live modes:
   PERI_ENV_FILE            Path to the peri-cf .env file. The harness writes a
@@ -187,8 +186,8 @@ Required process environment for live modes:
                            Unknown PERI_MODEL_* names are rejected by name, never
                            printed with their values.
   COMPANY_SQLD_BINARY      Absolute path to the official sqld binary.
-  PERI_BINARY              Required for linux-full; optional for macos-smoke.
-  E2E_PROJECT_ROOT         Required for linux-full; must be inside --root and a Git repo.
+  PERI_BINARY              Required for local-full; optional for macos-smoke.
+  E2E_PROJECT_ROOT         Required for local-full; must be inside --root and a Git repo.
 
 Optional:
   E2E_EVIDENCE             Optional new sibling of --root whose basename starts with
@@ -285,9 +284,13 @@ function parseOptions(argv: string[]): Options {
     }
     const modeValue = take("--mode");
     if (modeValue !== undefined) {
-      if (modeValue !== "macos-smoke" && modeValue !== "linux-full")
-        throw new UsageError("--mode must be macos-smoke or linux-full");
-      mode = modeValue;
+      if (
+        modeValue !== "macos-smoke" &&
+        modeValue !== "local-full" &&
+        modeValue !== "linux-full"
+      )
+        throw new UsageError("--mode must be macos-smoke or local-full");
+      mode = modeValue === "linux-full" ? "local-full" : modeValue;
       continue;
     }
     const baseValue = take("--base");
@@ -303,7 +306,7 @@ function parseOptions(argv: string[]): Options {
     throw new UsageError(`Unknown argument: ${arg}`);
   }
   if (!help && !mode)
-    throw new UsageError("--mode is required (macos-smoke or linux-full)");
+    throw new UsageError("--mode is required (macos-smoke or local-full)");
   if (!help && !root) throw new UsageError("--root is required");
   return { mode: mode ?? "macos-smoke", base, root, help, dryRun };
 }
@@ -823,7 +826,7 @@ function printDryRun(options: Options): number {
     if (ciRunner !== "docker" && ciRunner !== "bwrap")
       checks.push("E2E_CI_RUNNER must be docker or bwrap");
     const ciProbe =
-      options.mode === "linux-full" && (ciRunner === "docker" || ciRunner === "bwrap")
+      options.mode === "local-full" && (ciRunner === "docker" || ciRunner === "bwrap")
         ? probeCiBackendForDryRun(ciRunner)
         : undefined;
     if (ciProbe && !ciProbe.ok) checks.push(ciProbe.detail);
@@ -832,9 +835,9 @@ function printDryRun(options: Options): number {
     if (missing.length) checks.push(`model env missing: ${missing.join(", ")}`);
     if (rootProblem) checks.push(rootProblem);
     if (!sqldBinary) checks.push("COMPANY_SQLD_BINARY missing");
-    if (options.mode === "linux-full" && !periBinary)
-      checks.push("PERI_BINARY missing (required for linux-full)");
-    if (options.mode === "linux-full") {
+    if (options.mode === "local-full" && !periBinary)
+      checks.push("PERI_BINARY missing (required for local-full)");
+    if (options.mode === "local-full") {
       if (!projectRoot) checks.push("E2E_PROJECT_ROOT missing");
       else if (!isInside(root, canonicalPath(projectRoot)))
         checks.push("E2E_PROJECT_ROOT must be inside --root");
@@ -859,7 +862,7 @@ function printDryRun(options: Options): number {
     );
     console.log(
       `ci backend probe: ${
-        options.mode === "linux-full"
+        options.mode === "local-full"
           ? ciProbe?.detail ?? "not requested (invalid E2E_CI_RUNNER)"
           : "not_applicable (macos-smoke does not run CI)"
       }`,
@@ -2003,8 +2006,8 @@ function prepareRun(options: Options): RunState {
   if (!isAbsolute(sqldBinary) || !existsSync(sqldBinary))
     throw new UsageError("COMPANY_SQLD_BINARY must be an existing absolute path");
   const periBinary = process.env.PERI_BINARY;
-  if (options.mode === "linux-full") {
-    if (!periBinary) throw new UsageError("PERI_BINARY is required for linux-full");
+  if (options.mode === "local-full") {
+    if (!periBinary) throw new UsageError("PERI_BINARY is required for local-full");
     if (!isAbsolute(periBinary) || !existsSync(periBinary))
       throw new UsageError("PERI_BINARY must be an existing absolute path");
   }
@@ -2016,9 +2019,9 @@ function prepareRun(options: Options): RunState {
     throw new UsageError(`PERI_ENV_FILE is missing required model names: ${missing.join(", ")}`);
 
   let projectRoot: string | undefined;
-  if (options.mode === "linux-full") {
+  if (options.mode === "local-full") {
     if (!process.env.E2E_PROJECT_ROOT)
-      throw new UsageError("E2E_PROJECT_ROOT is required for linux-full");
+      throw new UsageError("E2E_PROJECT_ROOT is required for local-full");
     projectRoot = canonicalPath(process.env.E2E_PROJECT_ROOT);
     if (!isInside(root, projectRoot))
       throw new UsageError("E2E_PROJECT_ROOT must be inside --root");
@@ -2829,30 +2832,16 @@ async function stepE00(run: RunState, runner: Runner) {
         "E2E requires host-provisioned shared sqld (COMPANY_SQLD_BINARY)",
       );
     const workspace = String(health.workspace ?? "");
-    if (run.options.mode === "linux-full" && !workspace.includes("official Peri"))
-      throw new StepError("workspace_disabled", "linux-full requires official Peri Workspace");
+    if (run.options.mode === "local-full" && !workspace.includes("official Peri"))
+      throw new StepError("workspace_disabled", "local-full requires official Peri Workspace");
     if (run.options.mode === "macos-smoke" && !workspace.includes("disabled"))
       throw new StepError("workspace_not_disabled", "macos-smoke requires COMPANY_WORKSPACE=disabled");
 
-    // Fail fast before any real model turn: the Linux Workspace sandbox, the
-    // official Peri build and the shared sqld are all version-sensitive.
-    let bwrapVersion = "not_required";
-    if (run.options.mode === "linux-full") {
-      const probe = sandboxProbe();
-      if (!probe.available)
-        throw new StepError(
-          "bwrap_unavailable",
-          `bubblewrap probe failed: ${clamp(redact(String(probe.error ?? ""), run.secrets), 300)}`,
-        );
-      bwrapVersion = versionOf(
-        process.env.COMPANY_BWRAP ?? "/usr/bin/bwrap",
-        ["--version"],
-      );
-      if (!bwrapVersion || bwrapVersion === "unavailable")
-        throw new StepError("bwrap_version_unavailable", "bubblewrap --version is unavailable");
-    }
+    // Fail fast before any real model turn: the official Peri build and the
+    // shared sqld are version-sensitive. Workspace runs locally without a sandbox.
+    const bwrapVersion = "not_required";
     const periVersion =
-      run.options.mode === "linux-full"
+      run.options.mode === "local-full"
         ? assertBinaryVersion("peri", process.env.PERI_BINARY!, EXPECTED_PERI_VERSION)
         : process.env.PERI_BINARY
           ? assertBinaryVersion("peri", process.env.PERI_BINARY, EXPECTED_PERI_VERSION)
@@ -2863,7 +2852,7 @@ async function stepE00(run: RunState, runner: Runner) {
       EXPECTED_SQLD_VERSION,
     );
     let ciBackend: CiRunnerBackend | "not_applicable" = "not_applicable";
-    if (run.options.mode === "linux-full") {
+    if (run.options.mode === "local-full") {
       ciBackend = resolveCiBackend(run);
       run.ciBackend = ciBackend;
     }
@@ -2921,7 +2910,7 @@ async function stepE00(run: RunState, runner: Runner) {
       httpStatus: run.api.lastStatus,
       checks: {
         sharedSqld: true,
-        workspace: run.options.mode === "linux-full" ? "official" : "disabled",
+        workspace: run.options.mode === "local-full" ? "official" : "disabled",
         bwrapVersion,
         periVersion,
         sqldVersion,
@@ -3945,7 +3934,7 @@ function probeCiBackendForDryRun(requested: string): {
 }
 
 function resolveCiBackend(run: RunState): CiRunnerBackend {
-  if (run.options.mode !== "linux-full")
+  if (run.options.mode !== "local-full")
     throw new StepError("ci_not_applicable", "CI/Review is skipped in macos-smoke");
   const requested = process.env.E2E_CI_RUNNER?.trim() || "docker";
   const dockerBinary = ciDockerBinary();
@@ -5708,7 +5697,7 @@ function ciIsolationStatus(run: RunState): {
   reason: string;
   containerCheck: string;
 } {
-  if (run.options.mode !== "linux-full")
+  if (run.options.mode !== "local-full")
     return { verified: true, reason: "not_applicable", containerCheck: "not_applicable" };
   let containerCheck = "not_used";
   for (const mode of ["ci", "review"] as const) {
@@ -5910,7 +5899,7 @@ async function cleanupRun(run: RunState): Promise<Evidence> {
     : ciStatus.reason;
   checks.ciRunnerContainer = ciStatus.containerCheck;
   const ciStagingVerified =
-    run.options.mode !== "linux-full" ||
+    run.options.mode !== "local-full" ||
     (Object.keys(run.ciProofs).length === 2 && ciDirCountBefore >= 2);
   checks.ciStagingVerified = ciStagingVerified;
   const previewProcessCheck = run.previewPort
@@ -5926,7 +5915,7 @@ async function cleanupRun(run: RunState): Promise<Evidence> {
       ? true
       : previewProcessCheck.startsWith("supported:");
   checks.previewProcessVerified = previewProcessVerified;
-  const agentCiExecutionRequired = run.options.mode === "linux-full";
+  const agentCiExecutionRequired = run.options.mode === "local-full";
   const agentCiExecutionVerified =
     !agentCiExecutionRequired ||
     Boolean(run.agentCiExecutions.ci?.ok && run.agentCiExecutions.review?.ok);
@@ -6168,11 +6157,11 @@ async function writeEvidence(
 ) {
   const steps = run.steps.map((evidence) => cleanEvidence(evidence, run.secrets));
   const agentCiExecuted =
-    run.options.mode === "linux-full"
+    run.options.mode === "local-full"
       ? Boolean(run.agentCiExecutions.ci?.ok && run.agentCiExecutions.review?.ok)
       : null;
   const closure =
-    run.options.mode === "linux-full" &&
+    run.options.mode === "local-full" &&
     agentCiExecuted === true &&
     steps.length > 0 &&
     steps.every((evidence) => evidence.status === "passed");
@@ -6236,9 +6225,9 @@ async function writeEvidence(
       agentCiExecuted === null ? "not_applicable" : agentCiExecuted ? "verified" : "unproven"
     }`,
     `- Boundary: ${
-      run.options.mode === "linux-full"
+      run.options.mode === "local-full"
         ? "Linux full-business run; ready_merge is terminal and no merge/deploy was executed."
-        : "Native macOS smoke only. File/Git/Workspace/Preview/verification steps are skipped and this is NOT full-business acceptance."
+        : "Smoke mode only. File/Git/Workspace/Preview/verification steps are skipped and this is NOT full-business acceptance."
     }`,
     "",
     "| Step | Status | Actor | Operation | Error |",
@@ -6265,7 +6254,7 @@ async function writeEvidence(
     `docker=${versionOf("docker", ["--version"])}`,
     `ci_runner=${run.ciBackend ?? "not_selected"}`,
     `agent_ci_executed=${
-      run.options.mode === "linux-full"
+      run.options.mode === "local-full"
         ? Boolean(run.agentCiExecutions.ci?.ok && run.agentCiExecutions.review?.ok)
         : "not_applicable"
     }`,
@@ -6532,7 +6521,7 @@ async function main(): Promise<number> {
     await stepE05(run, runner);
     await stepE06(run, runner);
     await stepE07(run, runner);
-    if (options.mode === "linux-full") {
+    if (options.mode === "local-full") {
       await stepE08(run, runner);
       await stepE09(run, runner);
       await stepE10(run, runner);
@@ -6541,18 +6530,18 @@ async function main(): Promise<number> {
       await stepE13(run, runner);
       await stepE14(run, runner);
     } else {
-      skipStep(run, "E08", "dev", "real plan/code/worktree", "Requires Linux Workspace and Git isolation");
-      skipStep(run, "E09", "owner", "files/Workspace API", "Requires Linux Workspace");
-      skipStep(run, "E10", "preview", "real Preview environment", "Requires Linux Workspace");
-      skipStep(run, "E11", "owner", "acceptPreview", "Requires the real Linux Preview batch");
-      skipStep(run, "E12", "reviewer", "recordVerification ci", "Requires the real Linux worktree");
-      skipStep(run, "E13", "reviewer", "recordVerification review", "Requires the real Linux worktree");
-      skipStep(run, "E14", "owner", "ready_merge", "Requires the real Linux Preview/verification chain");
+      skipStep(run, "E08", "dev", "real plan/code/worktree", "Skipped in macos-smoke; run local-full");
+      skipStep(run, "E09", "owner", "files/Workspace API", "Skipped in macos-smoke; run local-full");
+      skipStep(run, "E10", "preview", "real Preview environment", "Skipped in macos-smoke; run local-full");
+      skipStep(run, "E11", "owner", "acceptPreview", "Skipped in macos-smoke; run local-full");
+      skipStep(run, "E12", "reviewer", "recordVerification ci", "Skipped in macos-smoke; run local-full");
+      skipStep(run, "E13", "reviewer", "recordVerification review", "Skipped in macos-smoke; run local-full");
+      skipStep(run, "E14", "owner", "ready_merge", "Skipped in macos-smoke; run local-full");
     }
     await stepE15(run, runner);
     await stepE16(run, runner);
-    if (options.mode === "linux-full") await stepE17(run, runner);
-    else skipStep(run, "E17", "owner+dev", "Agent explicit restart", "Agent Git commit is fail-closed on macOS");
+    if (options.mode === "local-full") await stepE17(run, runner);
+    else skipStep(run, "E17", "owner+dev", "Agent explicit restart", "Skipped in macos-smoke; run local-full");
     await stepE18(run, runner);
   } finally {
     let cleanup: Evidence;
@@ -6593,7 +6582,7 @@ async function main(): Promise<number> {
     console.log(`  ${evidence.status.padEnd(9)} ${evidence.step} ${evidence.operation}`);
   console.log(`Evidence: ${evidencePath || run.evidenceDir}`);
   if (evidenceFailed || failed) return 1;
-  if (options.mode === "linux-full" && skipped > 0) return 1;
+  if (options.mode === "local-full" && skipped > 0) return 1;
   return 0;
 }
 

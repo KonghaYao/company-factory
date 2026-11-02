@@ -5,7 +5,6 @@ import type {
   AcpMcpServerInstanceFactory,
   AcpMcpTransport,
 } from "@peri-code/sdk";
-import { sandboxCommand, type SandboxScope } from "./sandbox";
 
 const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 const MAX_QUEUED_BYTES = 2 * MAX_FRAME_BYTES;
@@ -19,8 +18,8 @@ type RpcFrame = Record<string, unknown> & {
 
 export interface WorkspaceMcpServerOptions {
   periBinary: string;
-  scope: SandboxScope;
-  env?: { PATH?: string; LANG?: string };
+  directory: string;
+  env?: { PATH?: string; LANG?: string; HOME?: string };
 }
 
 function isRpcId(value: unknown): value is RpcId {
@@ -84,31 +83,26 @@ class WorkspaceMcpServer implements AcpMcpServerInstance {
     this.transport = transport;
     transport.onmessage = this.onMessage;
     transport.onclose = this.onTransportClose;
-    let command: ReturnType<typeof sandboxCommand>;
     try {
-      command = sandboxCommand(this.options.periBinary, [
-        "mcp-start", "workspace", "--stdio", "--workspace", this.options.scope.directory,
-      ], this.options.scope);
-    } catch (error) {
-      await this.close();
-      const forbidden = (error as { code?: unknown } | null)?.code === "forbidden";
-      throw Object.assign(new Error(forbidden
-        ? "Workspace MCP 沙箱范围被拒绝。"
-        : "Workspace MCP 沙箱不可用；必须使用 Linux bubblewrap，拒绝无沙箱启动。"), {
-        code: forbidden ? "forbidden" : "sandbox_unavailable",
-        status: forbidden ? 403 : 503,
-      });
-    }
-    try {
-      const child = spawn(command.command, command.args, {
-        cwd: this.options.scope.directory,
-        env: {
-          PATH: this.options.env?.PATH ?? process.env.PATH,
-          LANG: this.options.env?.LANG ?? process.env.LANG ?? "C.UTF-8",
-          HOME: "/tmp",
+      const child = spawn(
+        this.options.periBinary,
+        [
+          "mcp-start",
+          "workspace",
+          "--stdio",
+          "--workspace",
+          this.options.directory,
+        ],
+        {
+          cwd: this.options.directory,
+          env: {
+            PATH: this.options.env?.PATH ?? process.env.PATH,
+            LANG: this.options.env?.LANG ?? process.env.LANG ?? "C.UTF-8",
+            HOME: this.options.env?.HOME ?? process.env.HOME ?? "/tmp",
+          },
+          stdio: ["pipe", "pipe", "pipe"],
         },
-        stdio: ["pipe", "pipe", "pipe"],
-      });
+      );
       this.child = child;
       const spawned = once(child, "spawn");
       void spawned.catch(() => {});
@@ -351,17 +345,12 @@ export function snapshotWorkspaceMcpServerOptions(
 ): WorkspaceMcpServerOptions {
   return {
     periBinary: options.periBinary,
-    scope: {
-      directory: options.scope.directory,
-      companyHome: options.scope.companyHome,
-      knowledgeDirectory: options.scope.knowledgeDirectory,
-      runtimeDirectory: options.scope.runtimeDirectory,
-      projectRoots: options.scope.projectRoots?.slice(),
-      // 私密存储路径必须随快照进入后续 sandboxCommand 检查；漏掉它会让独立使用
-      // 工厂时失去 fail-closed 防御。
-      privatePaths: options.scope.privatePaths?.slice(),
+    directory: options.directory,
+    env: options.env && {
+      PATH: options.env.PATH,
+      LANG: options.env.LANG,
+      HOME: options.env.HOME,
     },
-    env: options.env && { PATH: options.env.PATH, LANG: options.env.LANG },
   };
 }
 

@@ -323,11 +323,6 @@ export class SharedSqldProvider implements StoreProvider {
     );
   }
 
-  /** 仅交给宿主内的 Workspace/沙箱做可见性检查；不进入 health 或 HTTP 响应。 */
-  get privatePaths(): string[] {
-    return [this.root];
-  }
-
   async resolve(_scope: Readonly<StoreScope>): Promise<WasmStoreConfiguration> {
     const running = await this.ensure();
     if (this.closed)
