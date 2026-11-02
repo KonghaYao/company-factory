@@ -2,7 +2,8 @@ import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Check } from "lucide-react";
 import type { Issue, Scope } from "../../../lib/types";
-import { action, requestId } from "../../../lib/api";
+import { action } from "../../../lib/api";
+import { uuid } from "../../../lib/uuid";
 import { statusLabel, statusTone } from "../../../lib/format";
 import { Badge, Button, ErrorBox } from "../../../ui/primitives";
 
@@ -25,7 +26,7 @@ export function DecisionCard({
         issueId: String(issue.id),
         questionId: item.id,
         answer: text,
-        requestId: requestId(),
+        requestId: uuid(),
       }),
     onSuccess: (_result, text) => {
       setAnswer((current) => (current === text ? "" : current));

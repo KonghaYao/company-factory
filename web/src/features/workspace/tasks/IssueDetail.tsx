@@ -11,7 +11,8 @@ import {
   Pencil,
 } from "lucide-react";
 import type { Agent, Comment, Issue, Preview, Scope } from "../../../lib/types";
-import { action, list, requestId } from "../../../lib/api";
+import { action, list } from "../../../lib/api";
+import { uuid } from "../../../lib/uuid";
 import { shortDate, statusLabel, statusTone } from "../../../lib/format";
 import {
   Avatar,
@@ -93,7 +94,7 @@ export function IssueDetail({
         issueId: String(issue.id),
         version: capture.version,
         patch: capture.patch,
-        requestId: requestId(),
+        requestId: uuid(),
       }),
     onSuccess: (result, capture) => {
       if (JSON.stringify(editRef.current) === JSON.stringify(capture.patch))
@@ -107,7 +108,7 @@ export function IssueDetail({
       action(scope.companyId, "company_tasks", "addComment", {
         issueId: String(issue.id),
         body: text,
-        requestId: requestId(),
+        requestId: uuid(),
       }),
     onSuccess: (_data, text) => {
       setComment((current) => (current === text ? "" : current));
@@ -121,7 +122,7 @@ export function IssueDetail({
         commentId: editComment?.id,
         version: editComment?.version,
         body: editText,
-        requestId: requestId(),
+        requestId: uuid(),
       }),
     onSuccess: () => {
       setEditComment(null);

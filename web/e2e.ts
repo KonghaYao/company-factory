@@ -4,6 +4,7 @@ import { mkdtemp, readFile, appendFile, mkdir, rm, writeFile } from "node:fs/pro
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createApplication } from "../src/server/app";
+import { uuid } from "./src/lib/uuid";
 
 const root = await mkdtemp(join(tmpdir(), "company-browser-"));
 await writeFile(
@@ -201,7 +202,7 @@ try {
       issueId: "1",
       version: issue.version,
       question: "本期是否支持部分退款？",
-      requestId: crypto.randomUUID(),
+      requestId: uuid(),
     },
   );
   await expect(page.getByTestId("decision-answer-1-Q1")).toBeVisible();

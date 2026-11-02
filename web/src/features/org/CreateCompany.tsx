@@ -1,7 +1,8 @@
 import { useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import type { Company } from "../../lib/types";
-import { post, requestId } from "../../lib/api";
+import { post } from "../../lib/api";
+import { uuid } from "../../lib/uuid";
 import { Button, ErrorBox, Field, Sheet } from "../../ui/primitives";
 
 export function CreateCompany({
@@ -19,7 +20,7 @@ export function CreateCompany({
       const input = { name, goal };
       const payload = JSON.stringify(input);
       if (submission.current?.payload !== payload)
-        submission.current = { payload, requestId: requestId() };
+        submission.current = { payload, requestId: uuid() };
       const { requestId: id } = submission.current!;
       return post<{ company: Company }>("/api/action", {
         module: "company_org",

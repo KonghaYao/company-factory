@@ -2,7 +2,8 @@ import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Check, ExternalLink, GitBranch } from "lucide-react";
 import type { Issue, Preview, Scope } from "../../../lib/types";
-import { action, requestId } from "../../../lib/api";
+import { action } from "../../../lib/api";
+import { uuid } from "../../../lib/uuid";
 import { Button, ErrorBox } from "../../../ui/primitives";
 import { Markdown } from "../../../ui/Markdown";
 
@@ -34,7 +35,7 @@ export function PreviewCard({
         evidence,
         passed: true,
         version: preview.version,
-        requestId: requestId(),
+        requestId: uuid(),
       }),
     onSuccess: () => {
       setEvidence("");

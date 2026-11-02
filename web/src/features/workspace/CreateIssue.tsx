@@ -1,7 +1,8 @@
 import { useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import type { Issue } from "../../lib/types";
-import { action, requestId } from "../../lib/api";
+import { action } from "../../lib/api";
+import { uuid } from "../../lib/uuid";
 import { Button, ErrorBox, Field, Sheet } from "../../ui/primitives";
 
 export function CreateIssue({
@@ -21,7 +22,7 @@ export function CreateIssue({
       const input = { title, body, summary: title };
       const payload = JSON.stringify(input);
       if (submission.current?.payload !== payload)
-        submission.current = { payload, requestId: requestId() };
+        submission.current = { payload, requestId: uuid() };
       return action(companyId, "company_tasks", "createIssue", {
         ...input,
         requestId: submission.current.requestId,

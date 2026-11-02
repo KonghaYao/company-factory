@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Company, Group } from "../../lib/types";
-import { action, requestId } from "../../lib/api";
+import { action } from "../../lib/api";
+import { uuid } from "../../lib/uuid";
 import {
   Button,
   ErrorBox,
@@ -46,7 +47,7 @@ export function OrganizationSheet({
               name,
               description,
               responsibilities: description,
-              requestId: requestId(),
+              requestId: uuid(),
             }
           : {
               id,
@@ -55,7 +56,7 @@ export function OrganizationSheet({
               groupId,
               role,
               responsibilities: description,
-              requestId: requestId(),
+              requestId: uuid(),
             },
       ),
     onSuccess: () => {

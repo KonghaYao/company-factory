@@ -3,7 +3,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RotateCcw, Save } from "lucide-react";
 import type { Agent, Runtime, Scope } from "../../lib/types";
 import { agentId } from "../../lib/types";
-import { action, api, post, requestId, scoped } from "../../lib/api";
+import { action, api, post, scoped } from "../../lib/api";
+import { uuid } from "../../lib/uuid";
 import {
   appliedTierRows,
   libraryProfile,
@@ -348,7 +349,7 @@ export function AgentEditor({
       };
       const payload = JSON.stringify(input);
       if (submission.current?.payload !== payload)
-        submission.current = { payload, requestId: requestId() };
+        submission.current = { payload, requestId: uuid() };
       const { requestId: id } = submission.current!;
       return action(companyId, "company_org", "updateMember", {
         ...input,
