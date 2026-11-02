@@ -13,6 +13,17 @@ export interface ModeTransportOptions {
   warn?: (message: string) => void;
 }
 
+/** 未建立/已关闭会话时拒绝 direct prompt；不向 queue 回退。 */
+export class ModeTransportNotReadyError extends Error {
+  readonly code = "not_ready";
+  readonly disposition = "not_sent";
+
+  constructor() {
+    super("Session is not loaded; prompt was not sent.");
+    this.name = "ModeTransportNotReadyError";
+  }
+}
+
 const isSessionEstablishment = (method: string) =>
   method === "session/new" || method === "session/load";
 
@@ -62,6 +73,8 @@ function diagnostic(record: Record<string, unknown>): string {
 export class ModeTransport implements Transport {
   private readonly modeId: string;
   private readonly warn: (message: string) => void;
+  /** 当前 activation 已加载的 Session；prompt/cancel 只使用该身份。 */
+  private loadedSessionId: string | null = null;
 
   constructor(
     private readonly inner: Transport,
@@ -71,8 +84,19 @@ export class ModeTransport implements Transport {
     this.warn = options.warn ?? ((message) => console.warn(message));
   }
 
+  /** 供宿主诊断与 direct prompt 使用；不是 ACP 公共字段。 */
+  get sessionId(): string | null {
+    return this.loadedSessionId;
+  }
+
   async request<T = unknown>(method: string, params?: unknown): Promise<T> {
     const result = await this.inner.request<T>(method, params);
+    if (method === "session/close") {
+      const closed = sessionIdOf(result, params);
+      if (!closed || closed === this.loadedSessionId)
+        this.loadedSessionId = null;
+      return result;
+    }
     if (!isSessionEstablishment(method)) return result;
     const sessionId = sessionIdOf(result, params);
     if (!sessionId) {
@@ -85,6 +109,8 @@ export class ModeTransport implements Transport {
       );
       return result;
     }
+    // 记录本次 activation 的身份；session/new 与 session/load 都以此为准。
+    this.loadedSessionId = sessionId;
     try {
       await this.inner.request("session/set_mode", {
         sessionId,
@@ -111,6 +137,36 @@ export class ModeTransport implements Transport {
       );
     }
     return result;
+  }
+
+  /**
+   * ACP 正常 prompt：整轮 RPC，不走 `session/input/*` queue。
+   *
+   * 参数依据 Peri `origin/main` 的 `peri-acp/src/dispatch/prompt.rs`：
+   * `session/prompt` 的 wire 形态是 `{ sessionId, prompt: ContentBlock[] }`，
+   * text block 为 `{"type":"text","text":...}`。结果由 Peri 返回
+   * `PromptResponse`（含 stopReason）；宿主只把受理与事件投影分开。
+   */
+  async prompt(text: string): Promise<unknown> {
+    const sessionId = this.loadedSessionId;
+    if (!sessionId) throw new ModeTransportNotReadyError();
+    return this.inner.request("session/prompt", {
+      sessionId,
+      prompt: [{ type: "text", text }],
+    });
+  }
+
+  /**
+   * 轮次级取消：不带 requestId/generation。
+   *
+   * Peri `origin/main` 的 `session/cancel` 在带 requestId/generation 时只取消
+   * 对应 input attempt；direct `session/prompt` 不属于 mailbox attempt，targeted
+   * cancel 无法命中，因此这里固定发送非 targeted 形式。
+   */
+  async cancel(): Promise<void> {
+    const sessionId = this.loadedSessionId;
+    if (!sessionId) throw new ModeTransportNotReadyError();
+    await this.inner.notify("session/cancel", { sessionId });
   }
 
   sendRequest<T = unknown>(method: string, params?: unknown) {

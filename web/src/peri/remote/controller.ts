@@ -16,7 +16,7 @@ import { ChatHandleTable, type ChatHandleRecord } from "./handles";
 import {
   bindingTargetOf, deriveLiveSync, deriveLoadState, derivePhase, describeActionFailure,
   isCancelPending, messageOf, rawErrorOf,
-  type ChatRecovery, type ChatSendOutcome, type ChatView,
+  type ActionFailure, type ChatRecovery, type ChatSendOutcome, type ChatView,
 } from "./view-state";
 
 export type {
@@ -78,8 +78,11 @@ export class ChatController {
   private dismissedError = "";
   private uncertain = false;
   private recovery: ChatRecovery = "none";
+  private lastFailure: ActionFailure | null = null;
   private sending = false;
   private sendInFlight: Promise<unknown> | undefined;
+  /** 最近一次已被 202 受理的原文；仅内存保存，供异步失败后手动恢复草稿。 */
+  private lastSubmitted: { text: string; requestId: string; chatId: string } | null = null;
   /** 取消意图只对发起时的 running turn 有效；turn 结算或换代后自动失效。 */
   private cancelRequested = false;
   private cancelTurnId: string | null = null;
@@ -132,6 +135,7 @@ export class ChatController {
     this.actionError = "";
     this.connectionError = "";
     this.uncertain = false;
+    this.lastFailure = null;
     this.recovery = "none";
     this.clearCancel();
     this.update({
@@ -144,7 +148,10 @@ export class ChatController {
       return await this.openExisting(target, token);
     } catch (error) {
       if (token !== this.selection || this.disposed) return false;
-      this.actionError = messageOf(error);
+      const failure = describeActionFailure(error);
+      if (failure.uncertain) this.uncertain = true;
+      this.lastFailure = { ...failure, recovery: "reload", blocked: true };
+      this.actionError = failure.message;
       this.recovery = "reload";
       this.update({
         phase: "idle", loadState: "failed", historyReady: false,
@@ -171,6 +178,7 @@ export class ChatController {
     const selected = this.view.selected;
     this.handles.delete(selected.id);
     this.uncertain = false;
+    this.lastFailure = null;
     this.recovery = "none";
     this.actionError = "";
     this.connectionError = "";
@@ -183,15 +191,16 @@ export class ChatController {
   }
 
   /**
-   * 关闭未确认时的逃生入口：显式关闭当前句柄（`actions.close`）后新建会话。
+   * 关闭未确认时的逃生入口：显式关闭当前句柄（`actions.close`）后重开原会话。
+   * `force=true` 对应 `DELETE ?force=1`，用于持久化/关闭状态未确认时放弃旧 runtime。
    * 关闭失败保留当前连接与错误，`close_incomplete` 原样上报，不假装已关闭。
    */
-  async rebuildChat(): Promise<boolean> {
+  async rebuildChat(force = false): Promise<boolean> {
     if (this.disposed) return false;
     const address = this.active?.address ?? this.view.selected?.id ?? null;
     if (address) {
       try {
-        await this.deps.actions.close(address);
+        await this.deps.actions.close(address, force ? { force: true } : {});
       } catch (error) {
         this.failAction(error);
         return false;
@@ -202,6 +211,7 @@ export class ChatController {
     this.releaseActive();
     this.selection += 1;
     this.uncertain = false;
+    this.lastFailure = null;
     this.recovery = "none";
     this.actionError = "";
     this.connectionError = "";
@@ -253,23 +263,40 @@ export class ChatController {
   }
 
   /**
-   * 发送输入：202 只代表入队。等副本确认投递后才算送达；
-   * 撤回/连接释放时返回未送达并保留可重试的可见错误，不静默丢输入。
+   * 发送输入：direct prompt 的 202 就是整轮 RPC 的受理回执，立即结算。
+   * 旧 queue 回执仍等待副本投递事实；撤回/连接释放时返回未送达并保留可重试的可见错误。
    */
   async send(content: string): Promise<ChatSendOutcome> {
     const sent = await this.dispatchSend(content);
     if (!sent) {
+      const failure = this.lastFailure;
+      const disposition = failure?.disposition
+        ?? (this.uncertain ? "unknown" : "not_sent");
+      // 阻断只跟随可见恢复动作：没有 reload/rebuild 入口时，未知结果也不拦输入。
+      const blocked = failure?.blocked ?? this.recovery !== "none";
       return {
         delivered: false,
         sessionId: null,
         message: this.actionError || DELIVERY_UNCONFIRMED,
+        disposition,
+        ...(blocked ? { blocked: true } : {}),
       };
+    }
+    if (sent.mode === "prompt") {
+      // 202 只表示 admission 已受理；执行结果由 runtime.promptFailure 异步投影。
+      this.actionError = "";
+      this.uncertain = false;
+      this.recovery = "none";
+      this.lastFailure = null;
+      this.refresh();
+      return { delivered: true, sessionId: sent.sessionId };
     }
     try {
       await sent.receipt;
       this.actionError = "";
       this.uncertain = false;
       this.recovery = "none";
+      this.lastFailure = null;
       this.refresh();
       return { delivered: true, sessionId: sent.sessionId };
     } catch (error) {
@@ -284,17 +311,27 @@ export class ChatController {
         sessionId: sent.sessionId,
         message: this.actionError || message,
         disposition,
+        ...(this.lastFailure?.blocked ? { blocked: true } : {}),
       };
     }
   }
 
   /**
-   * 返回远程发送回执与目标会话。回执本身是 thenable（等待投递），
-   * 因此用包装对象跨 async 边界，避免 `await` 把回执摊平成 `void`。
+   * 返回远程发送回执与目标会话。
+   *
+   * prompt 模式在 HTTP 202 后立即返回，不创建 DeliveryTracker；只有旧 queue
+   * 回执才等待副本投递事实。因此用包装对象跨 async 边界，避免 `await` 摊平。
    */
-  async dispatchSend(content: string): Promise<{ receipt: RemoteSendReceipt; sessionId: string } | null> {
+  async dispatchSend(content: string): Promise<{
+    receipt: RemoteSendReceipt;
+    sessionId: string;
+    mode: "prompt" | "queue";
+  } | null> {
     const text = content.trim();
-    if (this.disposed || !text || this.sending || this.uncertain || this.cancelPending()) return null;
+    // 只有可见恢复动作才阻断新输入；`uncertain` 本身不再拦截（否则用户会卡在
+    // 没有恢复入口的错误上），失败也不会自动重发。
+    if (this.disposed || !text || this.sending || this.recovery !== "none"
+      || this.cancelPending()) return null;
     if (this.view.loadState !== "ready" && this.active) return null;
     if (!this.active) {
       if (!await this.openChat(null)) return null;
@@ -311,16 +348,31 @@ export class ChatController {
     this.sendInFlight = issued.catch(() => undefined);
     try {
       const receipt = await issued;
-      if (!receipt.inputId) throw new RemoteActionError("invalid_receipt", "发送回执缺少 inputId。", "unknown");
-      const delivery = active.delivery.wait(receipt.inputId);
+      // 服务端已总是返回 mode；缺失时按新的 prompt 主路径处理，不能静默回退到 legacy queue。
+      const mode = receipt.mode ?? "prompt";
+      if (mode === "prompt" && receipt.accepted === false)
+        throw new RemoteActionError("prompt_not_admitted", "输入未被受理。", "not_sent");
+      if (mode === "queue" && !receipt.inputId)
+        throw new RemoteActionError("invalid_receipt", "发送回执缺少 inputId。", "unknown");
+      // prompt 的新 admission 已清空服务端旧 failure；本地也记录本次原文，
+      // 供异步 promptFailure 到达后由用户手动恢复草稿（绝不自动恢复/重发）。
+      this.lastSubmitted = {
+        text,
+        requestId: receipt.requestId,
+        chatId: receipt.sessionId || active.chat.id,
+      };
+      const delivery = mode === "prompt"
+        ? Promise.resolve()
+        : active.delivery.wait(receipt.inputId!);
       const remote = new RemoteSendReceipt(
         receipt.requestId,
-        receipt.inputId,
+        receipt.inputId ?? receipt.requestId,
         { chatId: receipt.chatId, sessionId: receipt.sessionId, bindingRevision: receipt.bindingRevision },
         Promise.resolve(),
         delivery,
+        mode,
       );
-      return { receipt: remote, sessionId: receipt.sessionId };
+      return { receipt: remote, sessionId: receipt.sessionId, mode };
     } catch (error) {
       this.failAction(error);
       return null;
@@ -331,15 +383,34 @@ export class ChatController {
   }
 
   /**
+   * 异步 promptFailure 到达后的草稿恢复入口：只返回内存中的原文，不写入草稿、
+   * 不触发发送。requestId 不匹配（例如旧失败）时不提供恢复。
+   */
+  recoverableDraft(requestId?: string): string | null {
+    const submitted = this.lastSubmitted;
+    if (!submitted) return null;
+    if (this.currentChatId() !== submitted.chatId) return null;
+    if (requestId && submitted.requestId && requestId !== submitted.requestId) return null;
+    return submitted.text;
+  }
+
+  /**
    * 请求取消：`requested` 只表示通知已写出，不是停止确认。
    * 任务是否结束继续由副本的 `running` 决定。
+   *
+   * `promptInFlight` 来自运行时快照：direct prompt 受理后、副本尚未投影
+   * `running` 的窗口内也必须允许发送 session/cancel。
    */
-  async stop(): Promise<boolean> {
+  async stop(options: { promptInFlight?: boolean } = {}): Promise<boolean> {
     if (this.disposed) return false;
     const active = this.active;
     const target = active ? this.bindingTarget(active) : null;
     if (!active || !target) return true;
-    if (!this.view.state?.running && !this.view.state?.executionBlocked) return true;
+    if (
+      !options.promptInFlight
+      && !this.view.state?.running
+      && !this.view.state?.executionBlocked
+    ) return true;
     if (this.cancelPending()) return true;
     this.cancelRequested = true;
     this.cancelTurnId = this.view.state?.activeTurn.turnId ?? null;
@@ -729,6 +800,7 @@ export class ChatController {
 
   private failAction(error: unknown): void {
     const failure = describeActionFailure(error);
+    this.lastFailure = failure;
     if (failure.uncertain) this.uncertain = true;
     this.recovery = failure.recovery;
     this.actionError = failure.message;

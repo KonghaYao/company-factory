@@ -3,7 +3,6 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { upgradeWebSocket } from "@hono/bun";
 import {
   ChatCloseIncompleteError,
-  ChatUserAction,
   parseChatUserAction,
   type ChatBindingTarget,
   type ChatService,
@@ -14,13 +13,15 @@ import {
 } from "@peri-code/sdk";
 import type { AgentRecord, CallerContext } from "../../domain";
 import { RuntimeError, type PeriRuntime, type RuntimeAgent } from "../../runtime";
+import { redactPublicMessage } from "../../runtime/redaction";
 import {
   extractRpcErrorMetadata,
   type RpcErrorMetadata,
 } from "../../runtime/diagnostic-events";
 import type { DiagnosticsSink } from "../../runtime/diagnostics";
-import { chatNotFound, closeIncomplete, mapChatActionError, mapPayloadError } from "./errors";
+import { chatNotFound, closeIncomplete, mapChatActionError, mapPayloadError, runtimeErrorBody, runtimeUnavailable } from "./errors";
 import { logError } from "./logging";
+import { promptErrorDefinition } from "../../runtime/prompt-errors";
 import {
   SYNC_PATH,
   syncEvents,
@@ -39,8 +40,12 @@ export interface PeriChatApiDeps {
   runtime: PeriRuntime;
   /** 解析 companyId+agentId 的调用者；鉴权失败必须抛错，不能降级为匿名。 */
   scope(c: Context): Promise<ChatScope>;
-  /** DELETE = 重启同一 Session（运行中由路由前置拒绝）。 */
-  restart(caller: CallerContext, agentId: string): Promise<unknown>;
+  /** DELETE = 重启同一 Session（运行中由路由前置拒绝）；force 允许放弃未确认关闭。 */
+  restart(
+    caller: CallerContext,
+    agentId: string,
+    options?: { force?: boolean },
+  ): Promise<unknown>;
   /** Optional structured diagnostics; raw RpcError objects never go to stderr. */
   diagnostics?: DiagnosticsSink;
 }
@@ -51,7 +56,8 @@ interface ActionTarget {
 }
 
 const MAX_ACTION_BODY_BYTES = 256 * 1024;
-const INVALID_ACTION = "Action body is not a valid ChatUserAction envelope";
+const INVALID_ACTION = "动作请求体不是合法的 ChatUserAction 信封";
+const BINDING_CONFLICT = promptErrorDefinition("binding_conflict")!;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -81,6 +87,7 @@ function invalidAction(c: Context, message: string, requestId?: string) {
     code: "invalid_action",
     message,
     disposition: "rejected" as const,
+    recovery: "none" as const,
     ...(requestId ? { requestId } : {}),
   }, 400);
 }
@@ -90,28 +97,18 @@ function companyError(
   context: { chatId?: string; requestId?: string },
 ): { status: ContentfulStatusCode; body: object } {
   if (error instanceof RuntimeError)
-    return {
-      status: error.status as ContentfulStatusCode,
-      body: {
-        ok: false as const,
-        code: error.code,
-        message: error.message,
-        disposition: "rejected" as const,
-        ...(context.requestId ? { requestId: context.requestId } : {}),
-        ...(context.chatId ? { chatId: context.chatId } : {}),
-      },
-    };
+    return runtimeErrorBody(error, context);
   return mapChatActionError(error, context);
 }
 /** `target` 是连接所属绑定；空句柄用 `sessionId:null` + `bindingRevision:0`。 */
 function parseTarget(value: unknown): ActionTarget | string {
-  if (!isRecord(value)) return "target must be an object";
+  if (!isRecord(value)) return "动作目标必须是对象";
   const sessionId = value.sessionId;
   if (sessionId !== null && (typeof sessionId !== "string" || sessionId.length === 0))
-    return "target.sessionId must be a non-empty string or null";
+    return "target.sessionId 必须是非空字符串或 null";
   const revision = value.bindingRevision;
   if (typeof revision !== "number" || !Number.isSafeInteger(revision) || revision < 0)
-    return "target.bindingRevision must be a non-negative safe integer";
+    return "target.bindingRevision 必须是非负安全整数";
   return { sessionId, bindingRevision: revision };
 }
 
@@ -120,10 +117,10 @@ async function readActionBody(
 ): Promise<{ ok: true; value: unknown } | { ok: false; response: Response }> {
   const length = Number(c.req.header("content-length") ?? "0");
   if (Number.isFinite(length) && length > MAX_ACTION_BODY_BYTES)
-    return { ok: false, response: invalidAction(c, "Action body exceeds 256 KiB") };
+    return { ok: false, response: invalidAction(c, "动作请求体超过 256 KiB") };
   const text = await c.req.text();
   if (new TextEncoder().encode(text).byteLength > MAX_ACTION_BODY_BYTES)
-    return { ok: false, response: invalidAction(c, "Action body exceeds 256 KiB") };
+    return { ok: false, response: invalidAction(c, "动作请求体超过 256 KiB") };
   try {
     return { ok: true, value: JSON.parse(text) };
   } catch {
@@ -161,20 +158,25 @@ async function executeAction(
     case "send": {
       // 与 REST send 相同：只做模型配置前置，不向用户正文注入角色/配置。
       const text = deps.runtime.validateSendText(scope.input, action.payload.text);
-      const receipt = chat.execute(
-        ChatUserAction.send({
-          text,
-          requestId: action.requestId,
-        }),
-      );
-      await receipt.accepted;
-      // 与 REST send 相同的 stranded 修复；后台执行，不拖慢 202。
-      void deps.runtime
-        .recoverChatInput(scope.input, receipt.inputId)
-        .catch(() => {});
+      // 用户输入主路径：direct session/prompt，仅等待 bounded admission，
+      // 不等待整轮投递，也不做 queue stranded recovery。
+      const receipt = await deps.runtime.send(scope.input, {
+        text,
+        requestId: action.requestId,
+      });
       return {
-        target: receipt.target,
-        details: { inputId: receipt.inputId, accepted: true },
+        target:
+          chat.binding ??
+          {
+            chatId: chat.id,
+            sessionId: receipt.sessionId ?? fallback.sessionId ?? "",
+            bindingRevision: chat.bindingRevision,
+          },
+        details: {
+          mode: "prompt" as const,
+          inputId: receipt.inputId,
+          accepted: true,
+        },
       };
     }
     case "change_session": {
@@ -189,7 +191,10 @@ async function executeAction(
       };
     }
     case "cancel": {
-      const result = await chat.execute(action);
+      // 用户 stop 必须同时覆盖 direct prompt：runtime.stop 在 promptInFlight
+      // 时直接发非 targeted session/cancel，避免 SDK 的 runningValue 竞态或
+      // targeted cancel 只命中 mailbox attempt。
+      const result = await deps.runtime.stop(scope.input);
       return {
         target: bindingTarget(chat, fallback),
         details: { status: result.status },
@@ -261,7 +266,7 @@ export function createPeriChatApi(deps: PeriChatApiDeps): Hono<SyncEnv> {
     c.json({
       ok: false,
       code: "invalid_request",
-      message: "Projects are not part of the Company workspace",
+      message: "Company 工作区不支持 Projects。",
     }, 400),
   );
 
@@ -285,18 +290,18 @@ export function createPeriChatApi(deps: PeriChatApiDeps): Hono<SyncEnv> {
       try {
         parsed = JSON.parse(body);
       } catch {
-        return c.json({ ok: false, code: "invalid_request", message: "Body is not valid JSON" }, 400);
+        return c.json({ ok: false, code: "invalid_request", message: "请求体不是合法 JSON" }, 400);
       }
     }
     if (!isRecord(parsed))
-      return c.json({ ok: false, code: "invalid_request", message: "Body must be an object" }, 400);
+      return c.json({ ok: false, code: "invalid_request", message: "请求体必须是对象" }, 400);
     if (parsed.path !== undefined)
-      return c.json({ ok: false, code: "invalid_request", message: "path is not supported" }, 400);
+      return c.json({ ok: false, code: "invalid_request", message: "不支持 path 参数" }, 400);
     if (parsed.projectId !== undefined)
-      return c.json({ ok: false, code: "invalid_request", message: "projectId is not supported" }, 400);
+      return c.json({ ok: false, code: "invalid_request", message: "不支持 projectId 参数" }, 400);
     const sessionId = parsed.sessionId;
     if (sessionId !== undefined && (typeof sessionId !== "string" || sessionId.length === 0))
-      return c.json({ ok: false, code: "invalid_request", message: "sessionId must be a non-empty string" }, 400);
+      return c.json({ ok: false, code: "invalid_request", message: "sessionId 必须是非空字符串" }, 400);
 
     // 鉴权失败必须原样返回，不能被 Action 错误映射折叠。
     const scope = await deps.scope(c);
@@ -307,8 +312,9 @@ export function createPeriChatApi(deps: PeriChatApiDeps): Hono<SyncEnv> {
           return c.json({
             ok: false,
             code: "binding_conflict",
-            message: "This Agent has one fixed Session; the requested Session is not it.",
+            message: BINDING_CONFLICT.message,
             disposition: "rejected",
+            recovery: BINDING_CONFLICT.recovery,
           }, 409);
       }
       const chat = await deps.runtime.wakeChat(scope.input);
@@ -330,8 +336,14 @@ export function createPeriChatApi(deps: PeriChatApiDeps): Hono<SyncEnv> {
   api.post("/api/chats/:chatId/actions", async (c) => {
     const scope = await deps.scope(c);
     const chatId = c.req.param("chatId");
+    // 与 DELETE 一致：真正不存在 → 410；已登记但 activation/cleanup 未确认 → 503。
+    const state = deps.runtime.scopeChatState(scope.input, chatId);
+    if (state === "not_found")
+      return c.json(chatNotFound(chatId).body, 410);
+    if (state === "unavailable")
+      return c.json(runtimeUnavailable(chatId).body, 503);
     const chat = deps.runtime.chatForScope(scope.input, chatId);
-    if (!chat) return c.json(chatNotFound(chatId).body, 410);
+    if (!chat) return c.json(runtimeUnavailable(chatId).body, 503);
 
     const body = await readActionBody(c);
     if (!body.ok) return body.response;
@@ -381,8 +393,9 @@ export function createPeriChatApi(deps: PeriChatApiDeps): Hono<SyncEnv> {
       return c.json({
         ok: false,
         code: "binding_conflict",
-        message: "Action target does not match the current binding",
+        message: BINDING_CONFLICT.message,
         disposition: "rejected",
+        recovery: BINDING_CONFLICT.recovery,
         requestId: action.requestId,
         chatId: chat.id,
       }, 409);
@@ -423,27 +436,70 @@ export function createPeriChatApi(deps: PeriChatApiDeps): Hono<SyncEnv> {
   api.delete("/api/chats/:chatId", async (c) => {
     const scope = await deps.scope(c);
     const requestedId = c.req.param("chatId");
+    const force = ["1", "true", "yes"].includes(
+      String(c.req.query("force") ?? "").toLowerCase(),
+    );
+    const state = deps.runtime.scopeChatState(scope.input, requestedId);
+    if (state === "not_found")
+      return c.json(chatNotFound(requestedId).body, 410);
+    // cleanup/activation 未确认：默认 503；显式 force 才允许放弃旧 handle。
+    if (state === "unavailable" && !force)
+      return c.json(runtimeUnavailable(requestedId).body, 503);
     const chat = deps.runtime.chatForScope(scope.input, requestedId);
-    if (!chat) return c.json(chatNotFound(requestedId).body, 410);
-    if (deps.runtime.chatRunning(scope.input))
-      return c.json({
-        ok: false,
-        code: "busy",
-        message: "会话正在运行，停止后才能重启。",
-        disposition: "rejected",
-        chatId: chat.id,
-      }, 409);
+    const chatId = chat?.id ?? requestedId;
+    if (deps.runtime.chatRunning(scope.input)) {
+      // 非 force 不允许打断运行中的会话；force 是用户显式放弃旧 handle：
+      // 先请求取消当前轮，降低旧 runtime 继续产出的风险，再走 restart(force)。
+      if (!force)
+        return c.json({
+          ok: false,
+          code: "busy",
+          message: "会话正在运行，停止后才能重启。",
+          disposition: "rejected",
+          recovery: "none",
+          chatId,
+        }, 409);
+      try {
+        await deps.runtime.stop(scope.input);
+      } catch (error) {
+        // 取消失败不阻断 force：restart 会先尝试 close，close 未确认才放弃。
+        logError("[peri] Chat force-stop before restart failed", error, { chatId });
+      }
+    }
     try {
       // 公司语义：DELETE = 重启同一 Session；持久绑定不变。
-      await deps.restart(scope.caller, scope.agent.agentId);
+      // force 仅用于 close/persistence 未确认时显式放弃旧 runtime。
+      await deps.restart(scope.caller, scope.agent.agentId, { force });
       return c.body(null, 204);
     } catch (error) {
       if (error instanceof ChatCloseIncompleteError) {
-        const mapped = closeIncomplete(error, chat.id);
+        const mapped = closeIncomplete(error, chatId);
         return c.json(mapped.body, mapped.status);
       }
-      const mapped = companyError(error, { chatId: chat.id });
-      logError("[peri] Chat restart failed", error, { chatId: chat.id });
+      const mapped = companyError(error, { chatId });
+      if (
+        error instanceof RuntimeError &&
+        (error.code === "close_incomplete" ||
+          error.code === "wasm_cleanup_unconfirmed")
+      ) {
+        const details = error.details ?? {};
+        return c.json({
+          ok: false as const,
+          code: "close_incomplete",
+          message: "运行时关闭未获确认；请重试重启，或显式使用 force 放弃旧 handle。",
+          disposition: "unknown" as const,
+          recovery: "rebuild" as const,
+          uncertain: true,
+          incomplete: true,
+          errors: Array.isArray(details.errors)
+            ? details.errors.map((item) =>
+                redactPublicMessage(String(item)),
+              )
+            : [],
+          chatId,
+        }, 503);
+      }
+      logError("[peri] Chat restart failed", error, { chatId });
       return c.json(mapped.body, mapped.status);
     }
   });
@@ -458,21 +514,21 @@ export function createPeriChatApi(deps: PeriChatApiDeps): Hono<SyncEnv> {
     try {
       refId = decodeURIComponent(c.req.param("refId"));
     } catch {
-      return c.json({ ok: false, code: "invalid_payload_ref", message: "Invalid payload id" }, 400);
+      return c.json({ ok: false, code: "invalid_payload_ref", message: "载荷标识不合法" }, 400);
     }
     const rawBytes = c.req.query("bytes");
     if (!rawBytes || !/^\d+$/.test(rawBytes))
       return c.json({
         ok: false,
         code: "invalid_payload_ref",
-        message: "bytes must be a non-negative integer",
+        message: "bytes 必须是非负整数",
       }, 400);
     const bytes = Number(rawBytes);
     if (!Number.isSafeInteger(bytes) || bytes < 0)
       return c.json({
         ok: false,
         code: "invalid_payload_ref",
-        message: "bytes must be a non-negative safe integer",
+        message: "bytes 必须是非负安全整数",
       }, 400);
 
     try {

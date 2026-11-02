@@ -17,7 +17,20 @@ import { mkdir, readFile, stat, writeFile, rename } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
-import { InputReceiptCache, InputReceiptCacheError } from "./input-receipts";
+import { InputReceiptCache, InputReceiptCacheError, PROMPT_ADMIT_WINDOW_MS, withinAdmissionWindow } from "./input-receipts";
+import type { ModeTransport } from "./mode-transport";
+import {
+  PROMPT_ERROR_CODES,
+  classifyAgentExecutionFailure,
+  classifyPromptError,
+  isAdmissionPromptError,
+  isPersistencePromptError,
+  promptErrorDefinition,
+  type ClassifiedPromptError,
+  type PromptDisposition,
+  type PromptFailureRecord,
+  type PromptRecovery,
+} from "./prompt-errors";
 import { ProcessOwnershipStore } from "./session-store";
 import {
   FileStoreProvider,
@@ -32,6 +45,17 @@ import { agentExecutionFailureFromNotice } from "./diagnostic-events";
 import type { DiagnosticsSink } from "./diagnostics";
 import { redactRuntimeMessage } from "./redaction";
 export { redactRuntimeMessage } from "./redaction";
+export { PROMPT_ADMIT_WINDOW_MS };
+export {
+  PROMPT_ERROR_CODES,
+  classifyAgentExecutionFailure,
+  classifyPromptError,
+  promptErrorDefinition,
+  type ClassifiedPromptError,
+  type PromptDisposition,
+  type PromptFailureRecord,
+  type PromptRecovery,
+};
 import { createWorkspaceMcpServerFactory } from "./workspace";
 import {
   ModelConfigurationError,
@@ -173,9 +197,14 @@ interface BoundAgent {
   error?: string;
   nextCursor: string | null;
   replacesSessionId?: string;
+  /** direct prompt 整轮 RPC 的进行中 admission。 */
+  promptInFlight: Map<string, { startedAt: string }>;
+  /** 最近一次 prompt/notice 失败；新 admission 时清空。 */
+  promptFailure?: PromptFailureRecord;
 }
 interface InputAdmission {
-  accepted: boolean;
+  accepted: true;
+  mode: "prompt";
   inputId: string;
   requestId: string;
   sessionId: string | null;
@@ -303,6 +332,8 @@ export class PeriRuntime {
     { chat: ChatService; source: ChatFactSource & { readonly id: string } }
   >();
   private agents = new Map<string, BoundAgent>();
+  /** chatId → 当前 activation 的 direct prompt transport（由 wasm 模块回调登记）。 */
+  private promptTransports = new Map<string, ModeTransport>();
   private provisioned = new Map<
     string,
     { input: RuntimeAgent; sessionId: string }
@@ -367,11 +398,19 @@ export class PeriRuntime {
           throw new RuntimeError("wasm_cleanup_unconfirmed", "此前 Manager 或网络端口关闭未获确认；拒绝启动新 activation。");
         this.managers.delete(this.key(input));
       }
-      const modules = createAgentWasmModules({
-        companyId: input.companyId,
-        agentId: input.agentId,
-        diagnostics: this.options.diagnostics,
-      });
+      const modules = createAgentWasmModules(
+        {
+          companyId: input.companyId,
+          agentId: input.agentId,
+          diagnostics: this.options.diagnostics,
+        },
+        {
+          onTransport: (chatId, transport) => {
+            // 同 chat 的重新 activation 覆盖旧 transport；旧对象随关闭释放。
+            this.promptTransports.set(chatId, transport);
+          },
+        },
+      );
       const manager = new ChatManager({
         store: { storage: store.storage.storageConfig, machineId: this.machineId },
         database: store,
@@ -389,6 +428,7 @@ export class PeriRuntime {
               return modules.startTransport({
                 configJson: JSON.stringify(agentConfig),
                 signal: transportOptions?.signal,
+                chatId: transportOptions?.chatId,
               });
             },
           },
@@ -745,6 +785,7 @@ export class PeriRuntime {
       modelMeta,
       nextCursor: null,
       replacesSessionId: store.replacesSessionId,
+      promptInFlight: new Map(),
     };
     const observe = (envelope: any) => {
       if (envelope.fact?.kind === "history-page")
@@ -760,6 +801,9 @@ export class PeriRuntime {
         // payloads never reach the diagnostics sink.
         const failure = agentExecutionFailureFromNotice(envelope.fact);
         if (failure) {
+          // AgentExecutionFailed 是同一轮失败的另一条事实；只保留一个投影，
+          // 持久化文案优先，且不覆盖尚未解决的 admission 拒绝。
+          this.recordNoticePromptFailure(bound, failure.message);
           const diagnostics = this.options.diagnostics;
           if (diagnostics) {
             const sessionId =
@@ -884,6 +928,7 @@ export class PeriRuntime {
       throw new RuntimeError("wasm_cleanup_unconfirmed", bound.error);
     }
     this.viewSources.delete(bound.chat.id);
+    this.promptTransports.delete(bound.chat.id);
   }
   async provision(input: RuntimeAgent) {
     return this.serialized(input, async () => {
@@ -932,7 +977,7 @@ export class PeriRuntime {
       );
     });
   }
-  async restart(input: RuntimeAgent) {
+  async restart(input: RuntimeAgent, options: { force?: boolean } = {}) {
     return this.serialized(input, async () => {
       const existing = this.agents.get(this.key(input));
       const sessionId = existing?.chat.sessionId ?? input.sessionId;
@@ -941,11 +986,57 @@ export class PeriRuntime {
           "missing_session",
           "Cannot restart without a fixed Session binding.",
         );
+      let forcedCloseFailure: unknown;
       if (existing) {
-        await this.closeBound(existing);
-        this.agents.delete(this.key(input));
+        try {
+          await this.closeBound(existing);
+        } catch (error) {
+          if (!options.force) throw error;
+          // 显式 force：关闭未确认时允许放弃旧 handle，但绝不假装清理成功。
+          // 旧 Manager 从注册表移除，避免新 activation 再次尝试同一关闭。
+          forcedCloseFailure = error;
+          this.promptTransports.delete(existing.chat.id);
+          this.managers.delete(this.key(input));
+          this.agents.delete(this.key(input));
+          const [view, replica] = await Promise.allSettled([
+            this.views.dispose(existing.chat.id),
+            existing.replica.dispose(),
+          ]);
+          if (view.status === "rejected" || replica.status === "rejected")
+            console.warn(
+              "[runtime] force restart left view/replica cleanup unconfirmed",
+            );
+          this.viewSources.delete(existing.chat.id);
+        }
+        if (!forcedCloseFailure) {
+          this.promptTransports.delete(existing.chat.id);
+          this.agents.delete(this.key(input));
+        }
       }
-      await this.bind(input, sessionId, true);
+      try {
+        await this.bind(input, sessionId, true);
+      } catch (error) {
+        if (forcedCloseFailure !== undefined) {
+          const failure =
+            error instanceof Error ? error.message : String(error);
+          throw new RuntimeError(
+            "close_incomplete",
+            "强制重建未完成；上一个运行时的关闭仍未确认。",
+            503,
+            {
+              disposition: "unknown",
+              recovery: "rebuild",
+              uncertain: true,
+              errors: [
+                summarizeCloseFailure(forcedCloseFailure),
+                summarizeCloseFailure(failure),
+              ],
+            },
+            { cause: error },
+          );
+        }
+        throw error;
+      }
       return this.snapshot(input);
     });
   }
@@ -998,9 +1089,31 @@ export class PeriRuntime {
       ? bound.chat
       : undefined;
   }
-  /** DELETE 句柄前判定：运行中的会话不允许“重启”。 */
+  /** DELETE 句柄前判定：运行中的会话（含 direct prompt admission）不允许“重启”。 */
   chatRunning(input: { companyId: string; agentId: string }) {
-    return Boolean(this.agents.get(this.key(input))?.replica.read().running);
+    const bound = this.agents.get(this.key(input));
+    return Boolean(
+      bound?.replica.read().running ||
+      (bound?.promptInFlight.size ?? 0) > 0,
+    );
+  }
+  /**
+   * 句柄三态：ready / not_found / unavailable。
+   *
+   * `chatForScope` 对 cleanup 未确认的句柄返回 undefined；HTTP 层必须能区分
+   * “从来没登记”与“运行时/清理未确认”，不能一律 410。
+   */
+  scopeChatState(
+    input: { companyId: string; agentId: string },
+    address?: string,
+  ): "ready" | "not_found" | "unavailable" {
+    const bound = this.agents.get(this.key(input));
+    if (!bound) return "not_found";
+    if (bound.error) return "unavailable";
+    if (!address) return "ready";
+    return bound.chat.id === address || bound.chat.sessionId === address
+      ? "ready"
+      : "not_found";
   }
   /** 已持久化的固定 Session；只读，不 wake。 */
   boundSession(input: { companyId: string; agentId: string }) {
@@ -1047,6 +1160,74 @@ export class PeriRuntime {
       return { createdAt: epoch, updatedAt: epoch };
     }
   }
+  /** 分类后的 prompt 错误 → HTTP 可映射的 RuntimeError；原文只保留为 cause。 */
+  private promptRuntimeError(error: unknown, requestId?: string): RuntimeError {
+    const classified = classifyPromptError(error);
+    return new RuntimeError(
+      classified.code,
+      classified.message,
+      classified.status,
+      {
+        disposition: classified.disposition,
+        recovery: classified.recovery,
+        uncertain: classified.uncertain,
+        ...(requestId ? { requestId } : {}),
+      },
+      { cause: error },
+    );
+  }
+  /**
+   * 单一 promptFailure 槽位。
+   *
+   * - 持久化失败优先于通用执行/传输失败；
+   * - admission 拒绝不能被后到的执行 notice 改写；
+   * - 同一轮的多条事实只保留一条，避免 snapshot 重复。
+   */
+  private recordPromptFailure(
+    bound: BoundAgent,
+    failure: ClassifiedPromptError,
+    requestId?: string,
+  ) {
+    const previous = bound.promptFailure;
+    if (previous) {
+      if (
+        isPersistencePromptError(previous.code) &&
+        !isPersistencePromptError(failure.code)
+      )
+        return;
+      if (
+        isAdmissionPromptError(previous.code) &&
+        !isPersistencePromptError(failure.code)
+      )
+        return;
+      if (previous.code === failure.code) {
+        if (!previous.requestId && requestId) {
+          bound.promptFailure = { ...previous, requestId };
+          this.options?.onChange?.(bound.input);
+        }
+        return;
+      }
+    }
+    bound.promptFailure = {
+      ...(requestId ? { requestId } : {}),
+      code: failure.code,
+      message: failure.message,
+      disposition: failure.disposition,
+      recovery: failure.recovery,
+      at: new Date().toISOString(),
+    };
+    // 失败没有新的 Yjs 消息可依赖；显式通知宿主刷新 runtime snapshot。
+    this.options?.onChange?.(bound.input);
+  }
+  private recordNoticePromptFailure(bound: BoundAgent, message: string) {
+    this.recordPromptFailure(
+      bound,
+      classifyAgentExecutionFailure(message),
+    );
+  }
+  private promptTransport(bound: BoundAgent): ModeTransport | undefined {
+    return this.promptTransports.get(bound.chat.id);
+  }
   /** 与 REST send 相同的模型配置前置；不注入角色/配置正文。 */
   validateSendText(input: RuntimeAgent, text: string) {
     const bound = this.agents.get(this.key(input));
@@ -1092,9 +1273,14 @@ export class PeriRuntime {
       // 旧派生字段：仅为兼容既有前端保留；恢复判断请用下方契约事实。
       busy: Boolean(
         view?.running ||
+        (bound?.promptInFlight.size ?? 0) > 0 ||
         view?.tasks.some((t) => ["running", "in_progress"].includes(t.status)),
       ),
       status: view?.activeTurnStatus ?? "idle",
+      /** direct prompt 的进行中 admission 数；整轮 RPC 仍由事件投影完成态。 */
+      promptInFlight: bound?.promptInFlight.size ?? 0,
+      /** 异步失败投影；只含固定中文文案与稳定分类，不含上游原文。 */
+      promptFailure: bound?.promptFailure ?? null,
       // 契约事实（只读）：区分运行中/被阻止/已关闭/未同步，并保留 turn 停止原因。
       running: Boolean(view?.running),
       executionBlocked: Boolean(view?.executionBlocked),
@@ -1154,7 +1340,8 @@ export class PeriRuntime {
         stop: Boolean(bound),
         commands: view?.session.availableCommands ?? [],
         skills: [],
-        queue: Boolean(view?.inputQueue),
+        // 用户输入主路径是 ACP session/prompt；queue 仅为 legacy/诊断保留。
+        queue: false,
         attachments: false,
       },
       queue: view?.inputQueue?.items ?? [],
@@ -1213,6 +1400,14 @@ export class PeriRuntime {
       createdAt: entry.createdAt,
     }));
   }
+  /**
+   * 用户输入主路径：ACP `session/prompt` 整轮 RPC。
+   *
+   * 受理语义：
+   * - 按 requestId 去重；同文本复用同一 admission，不重复 prompt；
+   * - 750ms 内同步 reject → 分类后的 HTTP 错误；
+   * - 窗口外仍返回 202，执行失败只投影到 `promptFailure`，绝不自动重发。
+   */
   async send(
     input: RuntimeAgent,
     payload: {
@@ -1221,7 +1416,7 @@ export class PeriRuntime {
       issueId?: string;
       references?: unknown[];
     },
-  ) {
+  ): Promise<InputAdmission> {
     const text = composeUserSendText(payload);
     const requestId = payload.requestId ?? randomUUID();
     const key = `${this.key(input)}/${requestId}`;
@@ -1234,7 +1429,7 @@ export class PeriRuntime {
           this.validateSendText(input, text);
         } catch (error) {
           // Activation/configuration can have its own uncertainty, but this
-          // input has not reached chat.execute yet and may safely be retried.
+          // prompt has not reached the transport and may safely be retried.
           const failure = (error ?? {}) as { code?: string; message?: string; status?: number; details?: Record<string, unknown> };
           throw new RuntimeError(
             failure.code ?? "not_ready",
@@ -1244,22 +1439,70 @@ export class PeriRuntime {
             { cause: error },
           );
         }
-        return this.executeControl(async () => {
-          const receipt = bound.chat.execute(ChatUserAction.send({ text, requestId }));
-          await receipt.accepted;
-          // Queue recovery is best-effort after known admission. A replica or
-          // recovery failure cannot turn an accepted input into a retryable one.
-          await this.recoverStrandedInput(bound, receipt.inputId).catch(() => {});
-          return {
-            accepted: true,
-            inputId: receipt.inputId,
-            requestId: receipt.requestId,
-            sessionId: bound.chat.sessionId,
-          };
-        }, {
-          code: "send_failed",
-          message: "输入提交未获 SDK 确认；可能已入队，请先刷新会话与队列，不要自动重试。",
+        const transport = this.promptTransport(bound);
+        if (!transport) {
+          throw new RuntimeError(
+            "not_ready",
+            "会话 transport 尚未加载，消息未发送。",
+            409,
+            { disposition: "not_sent", recovery: "none", uncertain: false },
+          );
+        }
+        // 需要重建的失败未解决前拒绝新 admission：否则一次新发送会清空
+        // promptFailure，把“必须先重启”的约束静默抹掉（UI 轮询还有时间窗）。
+        const pendingFailure = bound.promptFailure;
+        if (pendingFailure?.recovery === "rebuild") {
+          const definition = promptErrorDefinition(pendingFailure.code);
+          throw new RuntimeError(
+            pendingFailure.code,
+            pendingFailure.message,
+            definition?.status ?? 503,
+            {
+              // 本次输入确定没有到达 transport；不能用旧失败的 unknown 污染
+              // receipt 缓存（unknown 会永久占用容量并毒化同一 requestId）。
+              disposition: "rejected",
+              recovery: "rebuild",
+              uncertain:
+                definition?.uncertain ?? pendingFailure.disposition === "unknown",
+            },
+          );
+        }
+        // 新 admission 清空旧 failure；同一 requestId 的重放不会走到这里。
+        bound.promptFailure = undefined;
+        this.options?.onChange?.(input);
+        bound.promptInFlight.set(requestId, {
+          startedAt: new Date().toISOString(),
         });
+        const work = Promise.resolve().then(() => transport.prompt(text));
+        void work.then(
+          () => {
+            bound.promptInFlight.delete(requestId);
+          },
+          (error) => {
+            bound.promptInFlight.delete(requestId);
+            this.recordPromptFailure(
+              bound,
+              classifyPromptError(error),
+              requestId,
+            );
+          },
+        );
+        const outcome = await withinAdmissionWindow(
+          work,
+          PROMPT_ADMIT_WINDOW_MS,
+        );
+        if (outcome.state === "rejected") {
+          bound.promptInFlight.delete(requestId);
+          throw this.promptRuntimeError(outcome.error, requestId);
+        }
+        // 窗口内成功或窗口先到都返回 202；完成态只由事件投影体现。
+        return {
+          accepted: true as const,
+          mode: "prompt" as const,
+          inputId: requestId,
+          requestId,
+          sessionId: bound.chat.sessionId,
+        };
       });
     } catch (error) {
       if (error instanceof InputReceiptCacheError)
@@ -1270,10 +1513,8 @@ export class PeriRuntime {
     }
   }
   /**
-   * peri 的输入邮箱在“排队输入于 idle 边界被交接”后可能残留已取消的 active
-   * attempt：之后的空闲输入会被提升为待投递却不再交接，用户看到的就是 prompt
-   * 永远停在队列里。这里只在运行侧反复确认完全空闲、队列里只有这一条输入、
-   * 且没有待回答交互时，补一次官方 force_send；正常排队（有轮次在跑）直接跳过。
+   * LEGACY：旧 queue 用户入口的 stranded 修复。用户 send 已切到 direct prompt，
+   * 不再调用此方法；queue 方法保留供回滚/诊断。
    */
   private async recoverStrandedInput(bound: BoundAgent, inputId: string) {
     for (let attempt = 0; attempt < 8; attempt++) {
@@ -1288,8 +1529,7 @@ export class PeriRuntime {
   }
 
   /**
-   * actions send 受理后与 REST send 共用：修复官方输入邮箱的 stranded 输入。
-   * 不阻塞 HTTP 202，失败留给队列 UI 的“立即投递”重试。
+   * LEGACY：仅保留给旧 queue 路径/回滚。用户 send 不再调用，也不自动 forceSend。
    */
   async recoverChatInput(input: RuntimeAgent, inputId: string) {
     const bound = this.agents.get(this.key(input));
@@ -1321,6 +1561,7 @@ export class PeriRuntime {
         text: `[Company IM ${message.threadId}/${message.messageId}]\n${message.text}`,
         requestId: message.messageId,
       });
+      // "delivered" 表示 direct prompt admission；整轮完成态由事件投影体现。
       return {
         status: "delivered" as const,
         inputId: receipt.inputId,
@@ -1329,7 +1570,9 @@ export class PeriRuntime {
     } catch (e) {
       return {
         status: "failed" as const,
-        error: e instanceof Error ? e.message : String(e),
+        error: redactRuntimeMessage(
+          e instanceof Error ? e.message : String(e),
+        ),
       };
     }
   }
@@ -1345,6 +1588,22 @@ export class PeriRuntime {
   }
   async stop(input: RuntimeAgent) {
     const bound = await this.wake(input);
+    const transport = this.promptTransport(bound);
+    if (bound.promptInFlight.size > 0 && transport) {
+      // direct prompt 是 local RPC，不是 mailbox attempt；必须发送非 targeted
+      // session/cancel。ModeTransport.cancel 只带 sessionId。
+      return this.executeControl(
+        async () => {
+          await transport.cancel();
+          return { requestId: randomUUID(), status: "requested" as const };
+        },
+        {
+          code: "cancel_failed",
+          message:
+            "停止请求未获 SDK 确认；请刷新运行时状态后再决定是否重试。",
+        },
+      );
+    }
     return this.executeControl(
       () => bound.chat.execute(ChatUserAction.cancel()),
       {
@@ -1354,6 +1613,7 @@ export class PeriRuntime {
       },
     );
   }
+  /** LEGACY：旧 queue 撤回；用户入口已停止调用，保留供回滚/诊断。 */
   async takeBack(input: RuntimeAgent, inputId: string) {
     const bound = await this.wake(input);
     return this.executeControl(
@@ -1365,6 +1625,7 @@ export class PeriRuntime {
       },
     );
   }
+  /** LEGACY：旧 queue 立即投递；用户入口已停止调用，保留供回滚/诊断。 */
   async forceSend(input: RuntimeAgent, inputId: string) {
     const bound = await this.wake(input);
     return this.executeControl(
@@ -1409,6 +1670,7 @@ export class PeriRuntime {
         throw new RuntimeError("wasm_cleanup_unconfirmed", "部分 WASM、Workspace 或 view 关闭未获确认；保留 handle，可重试 shutdown。");
       this.agents.clear();
       this.provisioned.clear();
+      this.promptTransports.clear();
       this.deliveries.clear();
       this.database.clear();
     })();

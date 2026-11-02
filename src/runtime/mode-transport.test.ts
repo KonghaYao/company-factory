@@ -4,12 +4,13 @@ import type {
   ReverseRequestHandler,
   Transport,
 } from "@peri-code/sdk";
-import { AGENT_MODE_ID, ModeTransport } from "./mode-transport";
+import { AGENT_MODE_ID, ModeTransport, ModeTransportNotReadyError } from "./mode-transport";
 
 type Call = { method: string; params?: unknown };
 
 class FakeTransport implements Transport {
   readonly calls: Call[] = [];
+  readonly notifications: Call[] = [];
   readonly failures = new Map<string, Error>();
   readonly responses = new Map<string, unknown>();
   closed = false;
@@ -25,7 +26,9 @@ class FakeTransport implements Transport {
     return Promise.resolve({ response: this.request<T>(method, params) });
   }
 
-  async notify(): Promise<void> {}
+  async notify(method: string, params?: unknown): Promise<void> {
+    this.notifications.push({ method, params });
+  }
 
   subscribe(): () => void {
     return () => {};
@@ -133,5 +136,85 @@ describe("ModeTransport", () => {
     await transport.notify("session/cancel", { sessionId: "s" });
     await transport.close();
     expect(inner.closed).toBe(true);
+  });
+
+  test("prompt 使用已加载 Session 发 ACP session/prompt，绝不发 enqueue", async () => {
+    const inner = new FakeTransport();
+    inner.responses.set("session/new", { sessionId: "session-prompt" });
+    inner.responses.set("session/prompt", { stopReason: "end_turn" });
+    const transport = new ModeTransport(inner);
+
+    await transport.request("session/new", { cwd: "/tmp/workspace" });
+    const result = await transport.prompt("请回复 prompt-clean");
+
+    expect(result).toEqual({ stopReason: "end_turn" });
+    const calls = inner.calls.filter((call) => call.method !== "session/set_mode");
+    expect(calls).toEqual([
+      { method: "session/new", params: { cwd: "/tmp/workspace" } },
+      {
+        method: "session/prompt",
+        params: {
+          sessionId: "session-prompt",
+          // Peri origin/main: peri-acp/src/dispatch/prompt.rs PromptRequest wire shape.
+          prompt: [{ type: "text", text: "请回复 prompt-clean" }],
+        },
+      },
+    ]);
+    expect(
+      inner.calls.some((call) => call.method.startsWith("session/input/")),
+    ).toBe(false);
+  });
+
+  test("未加载 Session 时 prompt 抛 not_ready，且不发任何请求", async () => {
+    const inner = new FakeTransport();
+    const transport = new ModeTransport(inner);
+
+    await expect(transport.prompt("hello")).rejects.toBeInstanceOf(
+      ModeTransportNotReadyError,
+    );
+    await expect(transport.prompt("hello")).rejects.toMatchObject({
+      code: "not_ready",
+      disposition: "not_sent",
+    });
+    expect(inner.calls).toEqual([]);
+  });
+
+  test("session/load 后 prompt 复用请求参数中的 sessionId；close 后回到 not_ready", async () => {
+    const inner = new FakeTransport();
+    inner.responses.set("session/load", {});
+    const transport = new ModeTransport(inner);
+
+    await transport.request("session/load", {
+      cwd: "/tmp/workspace",
+      sessionId: "session-loaded",
+      loadGeneration: "g1",
+    });
+    await transport.prompt("hello");
+    expect(inner.calls.at(-1)).toEqual({
+      method: "session/prompt",
+      params: {
+        sessionId: "session-loaded",
+        prompt: [{ type: "text", text: "hello" }],
+      },
+    });
+
+    await transport.request("session/close", { sessionId: "session-loaded" });
+    await expect(transport.prompt("after close")).rejects.toMatchObject({
+      code: "not_ready",
+    });
+  });
+
+  test("direct prompt cancel 只带 sessionId，不带 requestId/generation", async () => {
+    const inner = new FakeTransport();
+    inner.responses.set("session/new", { sessionId: "session-cancel" });
+    const transport = new ModeTransport(inner);
+    await transport.request("session/new", { cwd: "/tmp/workspace" });
+
+    await transport.cancel();
+    expect(inner.notifications).toEqual([
+      { method: "session/cancel", params: { sessionId: "session-cancel" } },
+    ]);
+    expect(inner.notifications[0]?.params).not.toHaveProperty("requestId");
+    expect(inner.notifications[0]?.params).not.toHaveProperty("generation");
   });
 });

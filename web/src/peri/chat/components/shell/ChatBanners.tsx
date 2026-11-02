@@ -1,6 +1,6 @@
 import { memo } from 'react';
 import { X } from 'lucide-react';
-import type { ChatRetryAction } from '../../runtime';
+import type { ChatPromptFailureBanner, ChatRetryAction } from '../../runtime';
 
 /**
  * 会话区横幅：列表错误、执行阻断/会话错误、实时同步中断与首次同步提示。
@@ -21,7 +21,11 @@ export interface ChatBannersProps {
   /** 阻断态优先展示专用提示，错误横幅让位，避免重复。 */
   blocked: boolean;
   blockedMessage: string;
+  /** 阻断对应的恢复动作；rebuild 时不再提供无效的 reload。 */
+  blockedRecovery?: 'none' | 'reload' | 'rebuild';
   chatBanner?: ChatBannerSpec;
+  /** App 轮询到的异步 prompt 失败；与同步错误按正文去重后传入。 */
+  promptFailureBanner?: ChatPromptFailureBanner;
   /** 实时同步中断：已有内容时也保留重连入口。 */
   syncError: boolean;
   /** 首次同步中：只在没有其他横幅时提示。 */
@@ -29,11 +33,12 @@ export interface ChatBannersProps {
   onAction(action: ChatRetryAction): void;
   onDismissList(): void;
   onDismissChat(): void;
+  onDismissPromptFailure?(): void;
 }
 
 export const ChatBanners = memo(function ChatBanners({
-  listBanner, blocked, blockedMessage, chatBanner, syncError, syncPending,
-  onAction, onDismissList, onDismissChat,
+  listBanner, blocked, blockedMessage, blockedRecovery, chatBanner, promptFailureBanner,
+  syncError, syncPending, onAction, onDismissList, onDismissChat, onDismissPromptFailure,
 }: ChatBannersProps) {
   return (
     <>
@@ -71,13 +76,15 @@ export const ChatBanners = memo(function ChatBanners({
           className="border-destructive/30 bg-destructive/5 text-destructive mx-3 mt-2 flex flex-wrap items-start gap-2 rounded-lg border px-3 py-2 text-xs leading-5 md:mx-5"
         >
           <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{blockedMessage}</span>
-          <button
-            type="button"
-            className="hover:bg-destructive/10 shrink-0 rounded-md px-1.5 py-0.5"
-            onClick={() => onAction('reload-chat')}
-          >
-            重新加载
-          </button>
+          {blockedRecovery !== 'rebuild' && (
+            <button
+              type="button"
+              className="hover:bg-destructive/10 shrink-0 rounded-md px-1.5 py-0.5"
+              onClick={() => onAction('reload-chat')}
+            >
+              重新加载
+            </button>
+          )}
           <button
             type="button"
             className="hover:bg-destructive/10 shrink-0 rounded-md px-1.5 py-0.5"
@@ -99,7 +106,11 @@ export const ChatBanners = memo(function ChatBanners({
               className="hover:bg-destructive/10 shrink-0 rounded-md px-1.5 py-0.5"
               onClick={() => onAction(chatBanner.action)}
             >
-              {chatBanner.action === 'reload-chat' ? '重新加载' : '刷新列表'}
+              {chatBanner.action === 'reload-chat'
+                ? '重新加载'
+                : chatBanner.action === 'rebuild-chat'
+                  ? '重启会话'
+                  : '刷新列表'}
             </button>
           )}
           {chatBanner.dismissible && (
@@ -108,6 +119,39 @@ export const ChatBanners = memo(function ChatBanners({
               className="hover:bg-destructive/10 inline-flex size-5 shrink-0 items-center justify-center rounded-md"
               aria-label="关闭错误提示"
               onClick={onDismissChat}
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
+      )}
+
+      {promptFailureBanner && !blocked && (
+        <div
+          role="alert"
+          data-slot="peri-prompt-failure-banner"
+          data-code={promptFailureBanner.code}
+          data-recovery={promptFailureBanner.recovery}
+          className="border-destructive/30 bg-destructive/5 text-destructive mx-3 mt-2 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs leading-5 md:mx-5"
+        >
+          <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
+            {promptFailureBanner.message}
+          </span>
+          {promptFailureBanner.action !== 'none' && (
+            <button
+              type="button"
+              className="hover:bg-destructive/10 shrink-0 rounded-md px-1.5 py-0.5"
+              onClick={() => onAction(promptFailureBanner.action)}
+            >
+              {promptFailureBanner.action === 'rebuild-chat' ? '重启会话' : '重新加载'}
+            </button>
+          )}
+          {promptFailureBanner.dismissible && onDismissPromptFailure && (
+            <button
+              type="button"
+              className="hover:bg-destructive/10 inline-flex size-5 shrink-0 items-center justify-center rounded-md"
+              aria-label="关闭执行失败提示"
+              onClick={onDismissPromptFailure}
             >
               <X size={14} />
             </button>

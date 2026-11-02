@@ -86,8 +86,8 @@ export function DetailsPanel({ state, mode = 'all' }: { state: ChatDisplayState 
     )}
 
     {showDetails && (
-      <Section title="输入队列">
-        {queueItems.length === 0 ? <p className={emptyClass}>队列为空。</p>
+      <Section title="输入队列（旧，只读）">
+        {queueItems.length === 0 ? <p className={emptyClass}>旧队列为空。</p>
           : <ul className={listClass}>
             {queueItems.map((item) => <li key={item.inputId}>{item.state}</li>)}
           </ul>}

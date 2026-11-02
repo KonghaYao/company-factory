@@ -14,7 +14,7 @@ import type { ComposerDraftHandle } from './useComposerDrafts';
 export interface ChatNavigationTarget {
   selectChat(target: ChatSummary | null, options?: { projectId?: string }): Promise<boolean>;
   reloadChat(): Promise<boolean>;
-  rebuildChat(): Promise<boolean>;
+  rebuildChat(force?: boolean): Promise<boolean>;
   refreshList(): Promise<void>;
   currentChatId(): string | null;
   send(content: string): Promise<ChatSendOutcome>;
@@ -64,9 +64,10 @@ export function useChatNavigation(
     if (action === 'refresh-list') void refreshList();
     else if (action === 'reload-chat') void reloadChat().then(adoptCreatedDraft);
     else if (action === 'rebuild-chat') {
-      // 关闭未确认的逃生入口：显式关闭句柄后新建会话，关闭失败保留当前会话与原因。
+      // 关闭未确认的逃生入口：显式 DELETE ?force=1 后重开同一会话，
+      // 关闭失败保留当前会话与原因。
       beginNavigation(true);
-      void rebuildChat().then((opened) => {
+      void rebuildChat(true).then((opened) => {
         finishNavigation();
         adoptCreatedDraft();
         if (opened) focusComposer();

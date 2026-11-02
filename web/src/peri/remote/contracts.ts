@@ -193,6 +193,8 @@ export const chatActionSuccessSchema = z.object({
   bindingRevision: z.number().int().nonnegative(),
   inputId: z.string().min(1).optional(),
   accepted: z.boolean().optional(),
+  /** 用户输入主路径为 prompt；queue 仅保留旧回执兼容。 */
+  mode: z.enum(["prompt", "queue"]).optional(),
   status: z.string().min(1).optional(),
   applied: z.number().int().nonnegative().optional(),
   nextCursor: z.string().nullable().optional(),
@@ -201,13 +203,17 @@ export const chatActionSuccessSchema = z.object({
 /**
  * HTTP 错误封套：`disposition` 是唯一可重试性权威。
  *
- * `not_sent` 只由客户端在请求未提交时产生；服务端只返回 `rejected`/`unknown`。
+ * `not_sent` 表示服务端能证明输入未提交（如容量耗尽、admission 被拒绝）；
+ * 无法证明时只能是 `rejected` 或 `unknown`。
  */
 export const chatErrorResponseSchema = z.object({
   ok: z.literal(false),
   code: z.string().min(1),
   message: z.string(),
   disposition: z.enum(["rejected", "unknown", "not_sent"]),
+  /** 服务端稳定恢复建议；缺省表示旧服务端。 */
+  recovery: z.enum(["none", "reload", "rebuild"]).optional(),
+  uncertain: z.boolean().optional(),
   requestId: z.string().optional(),
   chatId: z.string().optional(),
   createdSessionId: z.string().optional(),

@@ -6,6 +6,44 @@
 export const INPUT_RECEIPT_LIMIT = 1024;
 export const INPUT_RECEIPT_TTL_MS = 30 * 60 * 1000;
 
+/**
+ * direct `session/prompt` 的同步受理窗口。
+ *
+ * 窗口内同步失败 → HTTP 错误；窗口外仍可返回 202，失败通过 runtime
+ * snapshot 的 `promptFailure` 异步投影。整轮 RPC 不阻塞 HTTP。
+ */
+export const PROMPT_ADMIT_WINDOW_MS = 750;
+
+export type AdmissionWindowOutcome<T> =
+  | { state: "settled"; value: T }
+  | { state: "rejected"; error: unknown }
+  | { state: "open" };
+
+/**
+ * 在受理窗口内观察一个整轮 RPC。
+ *
+ * 始终为被观察的 promise 安装拒绝处理器：即使窗口先到，后续失败也不会成为
+ * unhandled rejection；调用方仍可自行在后台记录失败。
+ */
+export async function withinAdmissionWindow<T>(
+  work: Promise<T>,
+  windowMs = PROMPT_ADMIT_WINDOW_MS,
+): Promise<AdmissionWindowOutcome<T>> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const observed = work.then(
+    (value): AdmissionWindowOutcome<T> => ({ state: "settled", value }),
+    (error): AdmissionWindowOutcome<T> => ({ state: "rejected", error }),
+  );
+  const opened = new Promise<AdmissionWindowOutcome<T>>((resolve) => {
+    timer = setTimeout(() => resolve({ state: "open" }), Math.max(0, windowMs));
+  });
+  try {
+    return await Promise.race([observed, opened]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 export class InputReceiptCacheError extends Error {
   constructor(readonly code: "idempotency_conflict" | "input_receipt_capacity") {
     super(code === "idempotency_conflict"

@@ -27,6 +27,10 @@ export class RemoteActionError extends Error {
       chatId?: string;
       createdSessionId?: string;
       stage?: string;
+      /** 服务端稳定恢复建议；缺省时由本地 code 表补齐。 */
+      recovery?: "none" | "reload" | "rebuild";
+      /** 服务端结果不确定标记；为 true 时本地不得降级。 */
+      uncertain?: boolean;
       /** close 未确认时服务端给出 `incomplete: true`；关闭目标尚未完全达成。 */
       incomplete?: boolean;
       errors?: string[];
@@ -80,6 +84,8 @@ function failureFromResponse(status: number, body: unknown): RemoteActionError {
   const value = parsed.data;
   return new RemoteActionError(value.code, value.message, value.disposition, {
     status,
+    ...(value.recovery ? { recovery: value.recovery } : {}),
+    ...(value.uncertain === true ? { uncertain: true } : {}),
     ...(value.requestId ? { requestId: value.requestId } : {}),
     ...(value.chatId ? { chatId: value.chatId } : {}),
     ...(value.createdSessionId ? { createdSessionId: value.createdSessionId } : {}),
@@ -112,13 +118,15 @@ export interface ActionReceipt {
   bindingRevision: number;
   inputId?: string;
   accepted?: boolean;
+  /** prompt 为用户输入主路径；queue 仅保留旧回执兼容。 */
+  mode?: "prompt" | "queue";
   status?: string;
   applied?: number;
   nextCursor?: string | null;
   raw: ChatActionSuccessDTO;
 }
 
-/** 发送回执：HTTP 202 只证明入队被接受；`isSent`/`then` 由副本队列事实结算。 */
+/** 发送回执：prompt 模式 202 即受理；queue 模式由副本队列事实结算。 */
 export class RemoteSendReceipt implements PromiseLike<void> {
   private sent = false;
   private readonly delivery: Promise<void>;
@@ -129,7 +137,9 @@ export class RemoteSendReceipt implements PromiseLike<void> {
     readonly target: ChatBindingTarget,
     readonly accepted: Promise<void>,
     delivery: Promise<void>,
+    readonly mode: "prompt" | "queue" = "queue",
   ) {
+    this.sent = mode === "prompt";
     this.delivery = delivery.then(
       () => { this.sent = true; },
       (error: unknown) => { throw error; },
@@ -170,6 +180,7 @@ function parseSuccess(response: Response, body: unknown, action: ChatUserAction)
     bindingRevision: value.bindingRevision,
     ...(value.inputId === undefined ? {} : { inputId: value.inputId }),
     ...(value.accepted === undefined ? {} : { accepted: value.accepted }),
+    ...(value.mode === undefined ? {} : { mode: value.mode }),
     ...(value.status === undefined ? {} : { status: value.status }),
     ...(value.applied === undefined ? {} : { applied: value.applied }),
     ...(value.nextCursor === undefined ? {} : { nextCursor: value.nextCursor }),
@@ -251,13 +262,20 @@ export function createRemoteActions(options: RemoteActionClientOptions = {}) {
     return parseSuccess(response, body, parsedAction);
   }
 
-  async function close(chatAddress: string): Promise<void> {
+  async function close(
+    chatAddress: string,
+    options: { force?: boolean } = {},
+  ): Promise<void> {
     let response: Response;
     try {
-      response = await fetchImpl(apiUrl(base, `/api/chats/${encodeURIComponent(chatAddress)}`), {
-        method: "DELETE",
-        headers: { accept: "application/json" },
-      });
+      const suffix = options.force ? "?force=1" : "";
+      response = await fetchImpl(
+        apiUrl(base, `/api/chats/${encodeURIComponent(chatAddress)}${suffix}`),
+        {
+          method: "DELETE",
+          headers: { accept: "application/json" },
+        },
+      );
     } catch (error) {
       throw transportFailure(error, "关闭会话句柄失败，结果未知。");
     }

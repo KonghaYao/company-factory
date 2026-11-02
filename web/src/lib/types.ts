@@ -115,11 +115,24 @@ export type RuntimeQueueState = Pick<
   activeRequestId: InputQueueView["activeRequestId"] | null;
   count: number;
 };
+/** direct prompt 的异步失败投影；message 是服务端固定中文文案。 */
+export type RuntimePromptFailure = {
+  requestId?: string;
+  code: string;
+  message: string;
+  disposition: "rejected" | "unknown" | "not_sent";
+  recovery: "none" | "reload" | "rebuild";
+  at: string;
+};
 export type Runtime = {
   state?: string;
   status?: string;
   busy?: boolean;
   running?: boolean;
+  /** 进行中的 direct session/prompt admission 数。 */
+  promptInFlight?: number;
+  /** 最近一次 prompt/AgentExecutionFailed 失败；新 admission 时清空。 */
+  promptFailure?: RuntimePromptFailure | null;
   executionBlocked?: boolean;
   closed?: boolean;
   closedReason?: RuntimePublicError | null;

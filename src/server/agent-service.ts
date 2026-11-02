@@ -65,14 +65,18 @@ export class AgentService {
       return this.configuration(caller, agentId);
     });
   }
-  async restart(caller: CallerContext, agentId: string) {
+  async restart(
+    caller: CallerContext,
+    agentId: string,
+    options: { force?: boolean } = {},
+  ) {
     return this.serial(agentId, async () => {
       const a = await this.binding(caller, agentId);
       await this.domain.validateAgentConfigurationApply(caller, {
         agentId,
         configVersion: a.configVersion,
       });
-      const result = await this.runtime.restart(this.input(a, true));
+      const result = await this.runtime.restart(this.input(a, true), options);
       await this.domain.markAgentConfigurationApplied(caller, {
         agentId,
         configVersion: a.configVersion,
@@ -93,8 +97,10 @@ export class AgentService {
       ...runtime,
       capabilities: {
         ...runtime.capabilities,
-        queueTakeBack: true,
-        queueForceSend: true,
+        // 用户输入走 direct prompt；queue 动作仅为 legacy/诊断保留。
+        queue: false,
+        queueTakeBack: false,
+        queueForceSend: false,
       },
       replacesSessionId: runtime.replacesSessionId ?? a.replacesSessionId ?? null,
       agentId,
@@ -119,6 +125,7 @@ export class AgentService {
     const a = await this.binding(caller, agentId);
     return this.runtime.stop(this.input(a));
   }
+  /** LEGACY：queue 操作保留供回滚/诊断；用户输入走 direct prompt。 */
   async queue(
     caller: CallerContext,
     agentId: string,

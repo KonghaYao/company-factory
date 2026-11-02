@@ -2,7 +2,7 @@ import { afterAll, afterEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ChatActionError, ChatBusyError } from "@peri-code/sdk";
+import { ChatActionError } from "@peri-code/sdk";
 import { PeriRuntime, RuntimeError, type RuntimeAgent } from "./index";
 import { ScopedWasmStore, storeScopeId } from "./wasm-store";
 import { INPUT_RECEIPT_LIMIT, InputReceiptCache } from "./input-receipts";
@@ -183,7 +183,7 @@ test("browser does not silently accept an unrelated handle", async () => {
   try {
     expect(await controller.openChat({ sessionId: "original-session", title: "Agent", updatedAt: "2026-01-01" })).toBe(false);
     expect(sent).toEqual([]);
-    expect(controller.getState().error).toContain("绑定不一致");
+    expect(controller.getState().error).toContain("会话绑定已过期，请重新加载会话后再继续。");
   } finally { controller.dispose(); }
 });
 
@@ -191,11 +191,13 @@ test("runtime internal send retains bounded digests, deduplicates admission, and
   const f = await fixture();
   const bound = await f.runtime.wake(f.input);
   let sends = 0;
-  bound.chat.execute = ((action: any) => {
-    sends++;
-    return { accepted: Promise.resolve(), inputId: `input-${sends}`, requestId: action.requestId };
-  }) as any;
-  f.internals.recoverStrandedInput = async () => {};
+  f.internals.promptTransports.set(bound.chat.id, {
+    prompt: async () => {
+      sends++;
+      return { stopReason: "end_turn" };
+    },
+    cancel: async () => {},
+  });
   const payload = { requestId: "same", text: "正文".repeat(8192) };
   const results = await Promise.all([f.runtime.send(f.input, payload), f.runtime.send(f.input, payload)]);
   expect(results[0].inputId).toBe(results[1].inputId);
@@ -214,18 +216,23 @@ test("runtime send retries not_sent and rejected, but preserves an unknown admis
   const bound = await f.runtime.wake(f.input);
   let sends = 0;
   let failure: Error | undefined;
-  bound.chat.execute = ((action: any) => {
-    sends++;
-    if (failure) throw failure;
-    return { accepted: Promise.resolve(), inputId: `input-${sends}`, requestId: action.requestId };
-  }) as any;
-  f.internals.recoverStrandedInput = async () => { throw new Error("optional recovery failed"); };
+  f.internals.promptTransports.set(bound.chat.id, {
+    prompt: async () => {
+      sends++;
+      if (failure) throw failure;
+      return { stopReason: "end_turn" };
+    },
+    cancel: async () => {},
+  });
   bound.configured = false;
   await expect(f.runtime.send(f.input, { requestId: "config", text: "work" })).rejects.toMatchObject({ details: { disposition: "not_sent" } });
   expect(sends).toBe(0);
   bound.configured = true;
   expect((await f.runtime.send(f.input, { requestId: "config", text: "work" })).accepted).toBe(true);
-  failure = new ChatBusyError("retry", "busy");
+  failure = Object.assign(
+    new Error("Session context is owned by an in-flight prompt"),
+    { code: -32010 },
+  );
   await expect(f.runtime.send(f.input, { requestId: "retry", text: "work" })).rejects.toMatchObject({ details: { disposition: "rejected" } });
   failure = undefined;
   expect((await f.runtime.send(f.input, { requestId: "retry", text: "work" })).accepted).toBe(true);

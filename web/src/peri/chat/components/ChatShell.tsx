@@ -95,21 +95,35 @@ export function ChatShellView({
   ]);
 
   const running = chat.state?.running === true || chat.phase === 'cancelling';
-  const canSend = chat.historyReady && chat.phase === 'idle';
+  const promptInFlight = (chat.promptInFlight ?? 0) > 0;
+  // prompt 是整轮 RPC：受理后到投影出 running 之前也必须挡住第二次发送。
+  const canSend = chat.historyReady && chat.phase === 'idle'
+    && !promptInFlight && !chat.promptFailureBlocked;
   const navigationDisabled = NAVIGATION_BLOCKED_PHASES.has(chat.phase);
   const pendingInteractions = chat.state?.pendingInteractions ?? [];
   const chatBanner = chat.banners.chat;
+  const promptFailureBanner = chat.banners.promptFailure;
   const listBanner = chat.banners.list;
   const syncRetry = syncRetryAction({ loadState: chat.loadState, liveSync: chat.liveSync });
   // 阻断态必须给出原因与可执行入口；错误横幅在这时让位给专用提示，避免重复。
   const blocked = chat.phase === 'blocked';
   const blockedMessage = chat.chatError
-    || (chat.state?.executionBlocked
-      ? '宿主执行被阻断，当前会话暂时不能发送消息。'
-      : '会话被阻断，需要重新加载后才能继续。');
+    || (chat.recovery === 'rebuild'
+      ? '会话需要重启后才能继续。'
+      : chat.state?.executionBlocked
+        ? '宿主执行被阻断，当前会话暂时不能发送消息。'
+        : '会话被阻断，需要重新加载后才能继续。');
   const composerDisabledReason = chat.phase === 'blocked'
-    ? (chat.state?.executionBlocked ? '会话执行被阻断，请先重新加载。' : '操作状态未确认，请先重新加载。')
-    : undefined;
+    ? (chat.recovery === 'rebuild'
+      ? '会话需要重启后才能继续发送。'
+      : chat.state?.executionBlocked
+        ? '会话执行被阻断，请先重新加载。'
+        : '操作状态未确认，请先重新加载。')
+    : chat.promptFailureBlocked
+      ? '会话需要重启后才能继续发送。'
+      : promptInFlight
+        ? '上一条消息仍在执行，请稍候。'
+        : undefined;
   // 实时同步中断：已有内容时也保留重连；首次同步提示只在没有其他横幅时出现。
   const syncError = syncRetry === 'reload-chat' && chat.loadState !== 'failed';
   const syncPending = !blocked && !chatBanner && syncRetry === 'none' && chat.selected !== null
@@ -181,6 +195,18 @@ export function ChatShellView({
     focusComposer();
   }, [focusComposer, setPromptDraft]);
 
+  // 异步 prompt 失败只提供手动恢复入口：不自动写草稿，更不自动重发。
+  const recoveryDraft = chat.promptRecoveryDraft
+    && draft.trim() !== chat.promptRecoveryDraft.trim()
+    ? chat.promptRecoveryDraft
+    : null;
+  const restoreRecoveryDraft = useCallback(() => {
+    const text = chat.promptRecoveryDraft;
+    if (!text) return;
+    changeDraft(draft ? `${draft}\n\n${text}` : text);
+    focusComposer();
+  }, [changeDraft, chat.promptRecoveryDraft, draft, focusComposer]);
+
   /** Renderer action 路由：复用 send 的草稿迁移语义；外链只接受已白名单的 http(s)。 */
   const onOpenUIAction = useCallback((event: OpenUIActionEvent) => {
     const action = parseOpenUIAction(event);
@@ -244,12 +270,15 @@ export function ChatShellView({
           listBanner={listBanner}
           blocked={blocked}
           blockedMessage={blockedMessage}
+          blockedRecovery={chat.recovery}
           chatBanner={chatBanner}
+          promptFailureBanner={promptFailureBanner}
           syncError={syncError}
           syncPending={syncPending}
           onAction={runAction}
           onDismissList={chat.dismissListError}
           onDismissChat={chat.dismissChatError}
+          onDismissPromptFailure={chat.dismissPromptFailure}
         />
 
         {beforeTimeline}
@@ -275,10 +304,12 @@ export function ChatShellView({
                 draft={draft}
                 onDraftChange={changeDraft}
                 canSend={canSend}
-                canStop={running}
+                canStop={running || promptInFlight}
                 stopping={chat.phase === 'cancelling'}
                 disabledReason={composerDisabledReason}
                 errorBanner={chat.chatError}
+                recoveryDraft={recoveryDraft}
+                onRestoreRecoveryDraft={restoreRecoveryDraft}
                 pendingContent={
                   <>
                     {composerExtras}

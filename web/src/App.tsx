@@ -384,6 +384,7 @@ export default function App() {
                 key={scopeKey(scope)}
                 scope={scope}
                 issues={issues}
+                actualRuntime={actualRuntime}
                 onOpenSettings={() => setConfigModal(true)}
                 injectedDraft={
                   composerInsert?.agentId === scope.agentId

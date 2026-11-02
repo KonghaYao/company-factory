@@ -1,7 +1,7 @@
 /** chat 的运行期适配：副本投影与命令转发。 */
 export {
-  useChat, errorBanners, syncRetryAction,
-  type ChatRetryAction,
+  useChat, errorBanners, promptFailureBanner, promptFailureKey, syncRetryAction,
+  type ChatErrorBanner, type ChatPromptFailureBanner, type ChatRetryAction,
 } from "./useChat";
 export { loadPayloadValue } from "./payloadReader";
 export {

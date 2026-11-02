@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { InteractionAnswer } from '@peri-code/sdk/view';
-import { createChatApplication, type ChatController } from '../../remote';
+import {
+  createChatApplication, failureMessageForCode, failureRecoveryForCode, type ChatController,
+} from '../../remote';
+import type { Runtime, RuntimePromptFailure } from '../../../lib/types';
 import { createChatQueries, LIST_POLL_ACTIVITY_MS, LIST_POLL_IDLE_INTERVAL_MS, listRefetchInterval } from './queries';
 import { chatPayloadReader } from './payloadReader';
 import type { Chat, ChatRecovery, ChatSendOutcome, ChatSummary } from './types';
@@ -16,21 +19,37 @@ function errorText(error: unknown): string {
 /** 错误横幅的重试路由：列表错误刷新列表；只有读面失败才重新加载会话。 */
 export type ChatRetryAction = 'refresh-list' | 'reload-chat' | 'rebuild-chat' | 'none';
 
-interface ChatErrorBanner {
+export interface ChatErrorBanner {
   message: string;
   action: ChatRetryAction;
   /** 读面失败必须保留重试入口：关闭横幅后仍显示失败态。 */
   dismissible: boolean;
 }
 
+/** 异步 prompt 失败横幅：code/recovery 是事实，文案只来自固定中文表。 */
+export interface ChatPromptFailureBanner extends ChatErrorBanner {
+  key: string;
+  code: string;
+  recovery: ChatRecovery;
+  /** 不含 code/恢复说明的固定中文正文，用于与同步错误去重。 */
+  detail: string;
+}
+
 interface ChatErrorBanners {
   list?: ChatErrorBanner;
   chat?: ChatErrorBanner;
+  promptFailure?: ChatPromptFailureBanner;
+}
+
+function retryActionFor(recovery: ChatRecovery | undefined): ChatRetryAction {
+  if (recovery === 'reload') return 'reload-chat';
+  if (recovery === 'rebuild') return 'rebuild-chat';
+  return 'none';
 }
 
 /**
  * 横幅与重试动作的唯一映射：列表错误与会话错误分别展示，互不覆盖。
- * 有恢复入口的错误（未知执行结果、绑定过期）必须保留动作且不可 dismiss；
+ * 有恢复入口的错误（未知执行结果、绑定过期、需重建 runtime）必须保留动作且不可 dismiss；
  * 普通执行拒绝不是读面事实，不能靠 reload 重读同一错误，因此不提供重试。
  */
 export function errorBanners(input: {
@@ -50,10 +69,67 @@ export function errorBanners(input: {
       dismissible: false,
     };
   } else if (input.chatError) {
-    const retry = input.recovery === 'reload';
-    banners.chat = { message: input.chatError, action: retry ? 'reload-chat' : 'none', dismissible: !retry };
+    const action = retryActionFor(input.recovery);
+    banners.chat = { message: input.chatError, action, dismissible: action === 'none' };
   }
   return banners;
+}
+
+/** 同一失败（requestId + code + 时间）只能展示一次；新失败必须重新可见。 */
+export function promptFailureKey(failure: RuntimePromptFailure): string {
+  return `${failure.requestId ?? ''}|${failure.code}|${failure.at}`;
+}
+
+const PROMPT_FAILURE_FALLBACK = '消息执行失败，执行状态尚未确认；请核对会话状态。';
+
+/**
+ * 异步 promptFailure 是否需要阻断 composer。
+ *
+ * 只有需要重建运行时的失败（rebuild）才阻断：reload 可以由用户手动重载，
+ * 或直接发送新消息触发新 admission；none（含 execution_failed 等未知结果）
+ * 只提示结果不确定、不自动重发，不能把用户永久锁在聊天气泡里。
+ *
+ * recovery 与横幅使用同一套 code→recovery 归一，避免「横幅显示重启、
+ * 发送却未阻断」或反过来的错配。
+ */
+export function isPromptFailureBlocking(
+  failure: RuntimePromptFailure | null | undefined,
+): boolean {
+  if (!failure) return false;
+  return (failureRecoveryForCode(failure.code) ?? failure.recovery) === 'rebuild';
+}
+
+/** 异步 promptFailure → 固定中文横幅；不依赖服务端 message 原文。 */
+export function promptFailureBanner(
+  failure: RuntimePromptFailure | null | undefined,
+  dismissedKey?: string | null,
+): ChatPromptFailureBanner | null {
+  if (!failure) return null;
+  const key = promptFailureKey(failure);
+  const blocking = isPromptFailureBlocking(failure);
+  // rebuild 横幅是常驻恢复入口：即使调用方残留了同 key 的 dismiss 记录也不能隐藏。
+  if (!blocking && dismissedKey === key) return null;
+  const detail = failureMessageForCode(failure.code) ?? PROMPT_FAILURE_FALLBACK;
+  const recovery = failureRecoveryForCode(failure.code) ?? failure.recovery;
+  const action = retryActionFor(recovery);
+  const recoveryLabel = recovery === 'reload'
+    ? '重新加载会话'
+    : recovery === 'rebuild'
+      ? '重启会话'
+      : '无需自动恢复';
+  // none + unknown 不再阻断发送，但必须让用户知道结果未确认且不会自动重发。
+  const noAutoResend = recovery === 'none' && failure.disposition === 'unknown'
+    ? '本轮结果不确定，不会自动重发。'
+    : '';
+  return {
+    key,
+    code: failure.code,
+    recovery,
+    detail,
+    message: `[${failure.code}] ${detail}${noAutoResend ? ` ${noAutoResend}` : ''}（恢复：${recoveryLabel}）`,
+    action,
+    dismissible: !blocking && action === 'none',
+  };
 }
 
 /** 实时同步中断的入口：已有内容时也保留重连，不让 Header 永远停在“同步中”。 */
@@ -80,8 +156,10 @@ function documentVisible(): boolean {
 
 export function useChat(
   createApplication: () => ChatController = createChatApplication,
+  options: { actualRuntime?: Runtime | null } = {},
 ) {
   const [dismissedListError, setDismissedListError] = useState(0);
+  const [dismissedPromptFailure, setDismissedPromptFailure] = useState<string | null>(null);
   const [activityUntil, setActivityUntil] = useState(0);
   const controllerRef = useRef<ChatController | null>(null);
   const api = useMemo(() => ({
@@ -165,8 +243,9 @@ export function useChat(
     void list.refetch({ cancelRefetch: true });
     return opened;
   }, [controller, bumpActivity, list.refetch]);
-  const rebuildChat = useCallback(async () => {
-    const opened = await controller.rebuildChat();
+  const rebuildChat = useCallback(async (force = true) => {
+    // 用户显式“重启会话”默认走 DELETE ?force=1：持久化/关闭未确认时也能放弃旧 runtime。
+    const opened = await controller.rebuildChat(force);
     bumpActivity();
     void list.refetch({ cancelRefetch: true });
     return opened;
@@ -178,7 +257,11 @@ export function useChat(
     if (outcome.sessionId) bumpActivity();
     return outcome;
   }, [controller, bumpActivity]);
-  const stop = useCallback(() => controller.stop(), [controller]);
+  const promptInFlight = (options.actualRuntime?.promptInFlight ?? 0) > 0;
+  const stop = useCallback(
+    () => controller.stop({ promptInFlight }),
+    [controller, promptInFlight],
+  );
   const loadEarlierHistory = useCallback(
     (limit?: number) => controller.loadEarlierHistory(limit),
     [controller],
@@ -202,18 +285,39 @@ export function useChat(
 
   const chatError = view.error;
   const listError = list.error && dismissedListError !== list.errorUpdatedAt ? errorText(list.error) : '';
+  const runtimeFailure = options.actualRuntime?.promptFailure ?? null;
+  const rawPromptFailure = promptFailureBanner(runtimeFailure, dismissedPromptFailure);
+  // 同步 Action 已经展示同一失败时不再重复挂一条异步横幅；但 rebuild 横幅
+  // 只在同步横幅同样提供重启入口时才让位，避免去重后只剩“关闭”按钮。
+  const syncCoversPromptFailure = rawPromptFailure && chatError
+    && chatError.includes(rawPromptFailure.detail)
+    && (!isPromptFailureBlocking(runtimeFailure) || view.recovery === 'rebuild');
+  const visiblePromptFailure = syncCoversPromptFailure ? null : rawPromptFailure;
   const banners = errorBanners({
     listError, chatError, loadState: view.loadState, recovery: view.recovery,
   });
+  if (visiblePromptFailure) banners.promptFailure = visiblePromptFailure;
+  const promptRecoveryDraft = runtimeFailure
+    ? controller.recoverableDraft(runtimeFailure.requestId)
+    : null;
+  const dismissPromptFailure = useCallback(() => {
+    setDismissedPromptFailure(rawPromptFailure?.key ?? null);
+  }, [rawPromptFailure?.key]);
 
   return {
     ...view, chats: list.data ?? [], projects: projectList.data ?? [],
     listLoading: list.isFetching, projectsLoading: projectList.isFetching,
     chatError, listError, error: chatError || listError, banners,
+    /** 运行侧事实来自 App 的 runtime 轮询，不新增端点。 */
+    promptInFlight: options.actualRuntime?.promptInFlight ?? 0,
+    promptFailure: visiblePromptFailure,
+    /** 只有需要重启运行时的失败在恢复前不再发送；reload/none 可继续发送。 */
+    promptFailureBlocked: isPromptFailureBlocking(runtimeFailure),
+    promptRecoveryDraft,
     payloadReader, answerInteraction,
     refreshList, selectChat, createProject, reloadChat, rebuildChat, currentChatId, send, stop,
     loadEarlierHistory, takeBackInput, forceSendInput,
     setConfigOption,
-    dismissChatError, dismissListError,
+    dismissChatError, dismissListError, dismissPromptFailure,
   };
 }

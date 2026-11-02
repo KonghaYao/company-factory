@@ -11,11 +11,12 @@ import {
   FileStoreProvider,
   ExplicitFirstStoreProvider,
   sharedSqldProviderFromEnv,
-  redactRuntimeMessage,
   toChatActionRuntimeError,
   type StoreProvider,
 } from "../runtime";
 import { AccessControl, AccessError } from "./security";
+import { publicErrorDetails } from "./peri/errors";
+import { redactPublicMessage } from "../runtime/redaction";
 import { createPeriChatApi } from "./peri/chat-api";
 import { createDiagnosticsApi } from "./diagnostics-api";
 import {
@@ -210,15 +211,18 @@ export async function createApplication(options: ApplicationOptions = {}) {
     // bind/restart 阶段的 SDK chat 动作错误不经 executeControl，也按同一契约映射。
     const e = toChatActionRuntimeError(error) ?? (error as any);
     const status = typeof e.status === "number" ? e.status : 500;
-    console.error(
-      `[${e.code ?? "internal_error"}] ${redactRuntimeMessage(String(e.message ?? "Request failed"))}`,
+    const message = redactPublicMessage(
+      String(e.message ?? "请求失败；诊断已记录"),
     );
+    console.error(`[${e.code ?? "internal_error"}] ${message}`);
+    // 全局兜底只回传脱敏后的标量诊断，不把任意 details 对象/凭据带给客户端。
+    const details = publicErrorDetails(e.details);
     return c.json(
       {
         error: {
           code: e.code ?? "internal_error",
-          message: e.message ?? "Request failed",
-          details: e.details,
+          message,
+          ...(details ? { details } : {}),
         },
       },
       status,
@@ -324,7 +328,8 @@ export async function createApplication(options: ApplicationOptions = {}) {
     createPeriChatApi({
       runtime,
       scope: chatScope,
-      restart: (caller, agentId) => agents.restart(caller, agentId),
+      restart: (caller, agentId, options) =>
+        agents.restart(caller, agentId, options),
       diagnostics,
     }),
   );

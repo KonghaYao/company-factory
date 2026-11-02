@@ -30,6 +30,9 @@ export interface ChatComposerProps {
   disabledReason?: string | undefined;
   /** 全局错误横幅文案；已覆盖同一发送失败时，行内只保留重试入口，避免重复播报。 */
   errorBanner?: string | undefined;
+  /** 异步 promptFailure 的内存原文；仅提供手动恢复，不自动写入或发送。 */
+  recoveryDraft?: string | null;
+  onRestoreRecoveryDraft?: () => void;
   /** 返回发送结果：只有 `delivered` 为真才清空草稿，撤回/失败保留输入。 */
   onSend: (content: string) => Promise<ChatSendOutcome>;
   onStop: () => Promise<boolean>;
@@ -63,6 +66,7 @@ interface SendFailure {
   content: string;
   message: string;
   disposition?: 'rejected' | 'unknown' | 'not_sent';
+  blocked?: boolean;
 }
 
 const DEFAULT_SEND_ERROR = '消息未发送，请检查连接后重试。';
@@ -74,7 +78,7 @@ const DEFAULT_SEND_ERROR = '消息未发送，请检查连接后重试。';
 export function ChatComposer({
   draft, onDraftChange, canSend, canStop, stopping, pendingContent, disabledReason,
   onSend, onStop, onHeightChange, focusSignal, meta, usage, historyPrompts = [],
-  commands = [], onConfigOption, errorBanner,
+  commands = [], onConfigOption, errorBanner, recoveryDraft, onRestoreRecoveryDraft,
 }: ChatComposerProps) {
   const textarea = useRef<HTMLTextAreaElement>(null);
   const draftRef = useRef(draft);
@@ -160,6 +164,7 @@ export function ChatComposer({
           content,
           message: outcome.message || DEFAULT_SEND_ERROR,
           ...(outcome.disposition ? { disposition: outcome.disposition } : {}),
+          ...(outcome.blocked ? { blocked: true } : {}),
         });
       }
     } finally {
@@ -268,7 +273,14 @@ export function ChatComposer({
   const actionDisabled = busy
     ? stopping
     : !canSend || submitting || draft.trim().length === 0 || limit.overLimit;
-  const canRetry = failure?.disposition === 'rejected' && draft.trim() === failure.content;
+  const canRetry = failure !== null
+    && failure.disposition !== 'unknown'
+    && failure.blocked !== true
+    && (failure.disposition === 'rejected' || failure.disposition === 'not_sent')
+    && draft.trim() === failure.content;
+  const showRecoveryDraft = Boolean(recoveryDraft)
+    && draft.trim() !== recoveryDraft?.trim()
+    && Boolean(onRestoreRecoveryDraft);
   const bannerCoversFailure = failure !== null && errorBanner !== undefined
     && errorBanner.length > 0 && errorBanner.includes(failure.message);
   const showDisabledReason = !busy && !canSend && draft.length > 0 && disabledReason !== undefined;
@@ -315,6 +327,23 @@ export function ChatComposer({
           </button>
         </div>
       )}
+      {showRecoveryDraft && (
+        <div
+          className="text-muted-foreground flex items-center gap-2 px-4 pt-2 text-xs"
+          role="status"
+          data-slot="peri-composer-recovery-draft"
+        >
+          <span className="min-w-0 flex-1">上次消息执行失败，草稿未自动恢复。</span>
+          <button
+            type="button"
+            className="hover:bg-accent shrink-0 rounded px-1.5 py-0.5 underline underline-offset-2"
+            aria-label="恢复上次消息草稿"
+            onClick={onRestoreRecoveryDraft}
+          >
+            恢复草稿
+          </button>
+        </div>
+      )}
       {limit.overLimit && (
         <p
           id={limitId}
@@ -347,7 +376,7 @@ export function ChatComposer({
           ref={textarea}
           value={draft}
           rows={1}
-          placeholder={busy ? '任务运行中，可先起草消息…' : canSend
+          placeholder={busy ? '任务运行中，发送已禁用；可先起草，稍后手动发送。' : canSend
             ? '输入消息'
             : disabledReason ?? '等待会话同步…'}
           data-slot="peri-composer-textarea"

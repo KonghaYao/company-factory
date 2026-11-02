@@ -20,8 +20,19 @@ export interface WasmAgentScope {
   diagnostics?: DiagnosticsSink;
 }
 
+export interface WasmAgentModuleHooks {
+  /**
+   * 每个 Chat 的 activation 创建一个 ModeTransport；宿主据此把 direct
+   * `session/prompt` 绑到同一个 inner transport。
+   */
+  onTransport?: (chatId: string, transport: ModeTransport) => void;
+}
+
 /** Manager 拥有端口兜底回收；native 与 scheduler 生命周期仍由 SDK 驱动。 */
-export function createAgentWasmModules(scope?: WasmAgentScope) {
+export function createAgentWasmModules(
+  scope?: WasmAgentScope,
+  hooks: WasmAgentModuleHooks = {},
+) {
   const pending = new Set<() => Promise<void>>();
   /**
    * Native stderr is allowlist-only: at most 8 lines per callback, and only the
@@ -111,6 +122,7 @@ export function createAgentWasmModules(scope?: WasmAgentScope) {
     async startTransport(options: {
       configJson: string;
       signal?: AbortSignal;
+      chatId?: string;
     }): Promise<ModeTransport> {
       const controller = new AbortController();
       const forwardAbort = () => controller.abort(options.signal?.reason);
@@ -123,13 +135,16 @@ export function createAgentWasmModules(scope?: WasmAgentScope) {
           signal: controller.signal,
         });
         try {
-          return new ModeTransport(
+          const transport = new ModeTransport(
             await withDeadline(
               starting,
               STARTUP_TIMEOUT_MS,
               "Peri WASM runtime startup",
             ),
           );
+          if (options.chatId)
+            hooks.onTransport?.(options.chatId, transport);
+          return transport;
         } catch (error) {
           // 超时/取消后中止启动，让 SDK 自行结算 native 与端口清理。
           controller.abort(error);

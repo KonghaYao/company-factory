@@ -1006,6 +1006,25 @@ profiles:
     const systemContent = (body: any) =>
       (body?.messages ?? []).find((message: any) => message.role === "system")
         ?.content ?? "";
+    // 每轮成功后 Peri 会额外发起 prediction 请求；它同样带 messages，
+    // 不能按数组下标把它当成用户 prompt。
+    const isPredictionRequest = (body: any) => {
+      const wire = JSON.stringify(body ?? {});
+      return wire.includes("请根据以上对话预测用户下一步输入")
+        || wire.includes("<prediction_directive>")
+        || wire.includes("预测输入助手");
+    };
+    const waitForUserRequest = async (text: string) => {
+      const limit = Date.now() + 15000;
+      while (Date.now() < limit) {
+        const match = requests.find(
+          (body) => !isPredictionRequest(body) && userContent(body) === text,
+        );
+        if (match) return match;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      throw new Error(`request with user content ${text} was not observed`);
+    };
     try {
       runtime = newRuntime(root);
       const { sessionId } = await runtime.provision(input);
@@ -1042,23 +1061,25 @@ profiles:
         text: "ISOLATED_SECOND_USER_SENTINEL",
         requestId: "isolated-second",
       });
-      await waitForRequest(2);
-      expect(systemContent(requests[1])).not.toContain(
+      const secondRequest = await waitForUserRequest(
+        "ISOLATED_SECOND_USER_SENTINEL",
+      );
+      expect(systemContent(secondRequest)).not.toContain(
         "BASE_RESPONSIBILITIES_SENTINEL",
       );
-      expect(systemContent(requests[1])).not.toContain(
+      expect(systemContent(secondRequest)).not.toContain(
         "PER_AGENT_SYSTEM_PROMPT_SENTINEL",
       );
-      expect(JSON.stringify(requests[1])).not.toContain(
+      expect(JSON.stringify(secondRequest)).not.toContain(
         "NEW_APPLIED_RESPONSIBILITIES_SENTINEL",
       );
-      expect(JSON.stringify(requests[1])).not.toContain(
+      expect(JSON.stringify(secondRequest)).not.toContain(
         "NEW_APPLIED_SYSTEM_PROMPT_SENTINEL",
       );
-      expect(JSON.stringify(requests[1])).not.toContain(
+      expect(JSON.stringify(secondRequest)).not.toContain(
         "[Company effective configuration",
       );
-      expect(userContent(requests[1])).toBe("ISOLATED_SECOND_USER_SENTINEL");
+      expect(userContent(secondRequest)).toBe("ISOLATED_SECOND_USER_SENTINEL");
       expect(runtime.snapshot(configured).sessionId).toBe(sessionId);
     } finally {
       provider.stop(true);

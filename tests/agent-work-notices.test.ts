@@ -111,6 +111,7 @@ describe("Company fact notices through the HTTP/MCP boundary", () => {
           });
         return {
           accepted: true,
+          mode: "prompt",
           inputId: "input-" + input.requestId,
           requestId: String(input.requestId),
           sessionId: "fixture-" + agentId,

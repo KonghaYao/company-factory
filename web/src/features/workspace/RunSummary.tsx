@@ -71,7 +71,7 @@ export function RunSummary({
         ? "运行状态来自 Peri，不代表业务验收通过；错误详情见下方。"
         : "运行状态来自 Peri，不代表业务验收通过。"
       : state === "blocked"
-        ? "执行已被阻断；请在主列重新加载或关闭会话。"
+        ? "执行已被阻断；请在主列重新加载或重启会话。"
         : state === "running"
           ? "运行状态来自 Peri，不代表业务验收通过。"
           : "未完成 Issue 或等待裁定不会被显示为忙碌。";
@@ -152,9 +152,12 @@ export function RunSummary({
           </dd>
         </div>
         <div className="runtime-fact runtime-fact-queue">
-          <dt>待投递</dt>
+          <dt>旧队列</dt>
           <dd data-active={queueCount > 0 ? "true" : undefined}>
             {queueCount} 条
+            {queueCount > 0 && (
+              <span className="text-muted-foreground">（只读，不会自动执行）</span>
+            )}
           </dd>
         </div>
       </dl>

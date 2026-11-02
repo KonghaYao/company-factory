@@ -336,11 +336,20 @@ export class AgentWorkNotices {
           "model_not_configured",
           "missing_session",
           "not_ready",
+          "session_busy",
+          "session_closing",
+          "stale_session",
+          "invalid_prompt",
+          "prompt_superseded",
+          "prompt_not_admitted",
           "wasm_store_not_configured",
           "wasm_store_unavailable",
           "wasm_session_cwd_mismatch",
           "peri_not_installed",
         ].includes(e.code ?? "");
+      // `failed` is explicitly retryable through the owner-only notice retry
+      // endpoint. session_busy is a definite non-admission: persist it as failed
+      // rather than losing the notice; never auto-resend it here.
       outcome = {
         ...notice,
         status: notSent ? "failed" : "unknown",

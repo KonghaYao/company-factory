@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { redactRuntimeMessage } from "./redaction";
+import { redactPublicMessage, redactRuntimeMessage } from "./redaction";
 
 test("URLs are replaced without leaking hosts or credentials", () => {
   for (const message of [
@@ -42,4 +42,13 @@ test("length limits are applied without touching ordinary text", () => {
   const longText = "word ".repeat(200).trim();
   expect(redactRuntimeMessage(longText).length).toBeLessThanOrEqual(241);
   expect(redactRuntimeMessage(longText, 500).length).toBe(501);
+});
+
+test("public messages also redact bare short tokens without a key prefix", () => {
+  const token = "SUPERSECRET1234567890";
+  expect(redactRuntimeMessage(`auth failed for ${token}`)).toContain(token);
+  const redacted = redactPublicMessage(`auth failed for ${token}`);
+  expect(redacted).toContain("[redacted]");
+  expect(redacted).not.toContain(token);
+  expect(redactPublicMessage("database is locked")).toBe("database is locked");
 });

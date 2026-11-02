@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   CircleDot,
-  FastForward,
   FileCode2,
   ListOrdered,
-  Undo2,
   X,
 } from "lucide-react";
-import type { Issue, Scope } from "../../lib/types";
+import type { Issue, Runtime, Scope } from "../../lib/types";
 import { scopeKey } from "../../lib/types";
 import { emptyLocal, useLocal, type LocalScope } from "../../lib/state";
 import { useChat } from "../../peri/chat/runtime";
@@ -25,12 +23,15 @@ export function CompanyChatShell({
   scope,
   issues,
   onOpenSettings,
+  actualRuntime,
   injectedDraft,
   onInjectedDraft,
 }: {
   scope: Scope;
   issues: Issue[];
   onOpenSettings: () => void;
+  /** App 已轮询的 runtime 快照：提供 promptInFlight / promptFailure，不新增端点。 */
+  actualRuntime?: Runtime;
   injectedDraft?: { text: string; revision: number };
   onInjectedDraft?: () => void;
 }) {
@@ -40,7 +41,7 @@ export function CompanyChatShell({
     () => createCompanyChatApplication(scope),
     [scope.companyId, scope.agentId],
   );
-  const chat = useChat(() => application);
+  const chat = useChat(() => application, { actualRuntime });
 
   // 目录就绪后自动打开唯一的固定会话；失败由 ChatBanners 的重载入口恢复。
   const autoSelected = useRef(false);
@@ -185,39 +186,15 @@ function CompanyComposerExtras({
 
       {queue && queue.items.length > 0 && (
         <div
-          data-slot="company-input-queue"
-          className="bg-muted/40 rounded-lg border px-2 py-1.5 text-[11px]"
+          data-slot="company-input-queue-readonly"
+          className="bg-muted/40 text-muted-foreground rounded-lg border px-2 py-1.5 text-[11px]"
         >
-          <div className="text-muted-foreground mb-1 flex items-center gap-1.5 font-medium">
+          <div className="mb-1 flex items-center gap-1.5 font-medium">
             <ListOrdered size={12} />
-            待投递 <span>{queue.items.length}</span>
+            旧队列（只读，不会自动执行）
+            <span>{queue.items.length} 条</span>
           </div>
-          {queue.items.map((item) => (
-            <div key={item.inputId} className="flex items-center gap-2 py-0.5">
-              <code className="text-muted-foreground">{item.inputId.slice(0, 8)}</code>
-              <span className="text-muted-foreground">{item.state}</span>
-              <span className="ml-auto flex items-center gap-1">
-                <button
-                  type="button"
-                  title="取回，不停止当前回复"
-                  aria-label="取回输入"
-                  className="hover:bg-accent rounded p-1"
-                  onClick={() => void chat.takeBackInput(item.inputId)}
-                >
-                  <Undo2 size={12} />
-                </button>
-                <button
-                  type="button"
-                  title="立即投递"
-                  aria-label="立即投递输入"
-                  className="hover:bg-accent rounded p-1"
-                  onClick={() => void chat.forceSendInput(item.inputId)}
-                >
-                  <FastForward size={12} />
-                </button>
-              </span>
-            </div>
-          ))}
+          <p>旧队列只读，请重启会话清理。</p>
         </div>
       )}
     </div>

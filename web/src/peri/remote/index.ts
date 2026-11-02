@@ -9,6 +9,10 @@ export {
   type ChatLoadState, type ChatRecovery, type ChatSendOutcome, type ChatView, type Phase, type SyncStatus,
 } from "./controller";
 export {
+  describeActionFailure, failureMessageForCode, failureRecoveryForCode,
+  type ActionFailure,
+} from "./view-state";
+export {
   ChatDirectoryUnavailableError, createHttpRepository,
   type ChatDirectoryRepository,
 } from "./repository";

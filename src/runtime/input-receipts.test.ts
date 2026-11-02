@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { InputReceiptCache } from "./input-receipts";
+import {
+  InputReceiptCache,
+  PROMPT_ADMIT_WINDOW_MS,
+  withinAdmissionWindow,
+} from "./input-receipts";
 
 describe("bounded input admission receipts", () => {
   test("concurrent replay shares one admission and a conflicting body never submits", async () => {
@@ -61,5 +65,28 @@ describe("bounded input admission receipts", () => {
     cache.clear();
     expect(cache.size).toBe(0);
     void thirdPending;
+  });
+
+  test("direct prompt admission window is 750ms by contract", () => {
+    expect(PROMPT_ADMIT_WINDOW_MS).toBe(750);
+  });
+
+  test("window observes success/rejection but leaves a long prompt open", async () => {
+    const settled = await withinAdmissionWindow(Promise.resolve(7), 20);
+    expect(settled).toEqual({ state: "settled", value: 7 });
+
+    const rejected = await withinAdmissionWindow(
+      Promise.reject({ details: { disposition: "rejected" } }),
+      20,
+    );
+    expect(rejected).toMatchObject({ state: "rejected" });
+
+    let rejectLate!: (error: unknown) => void;
+    const late = new Promise<never>((_, reject) => { rejectLate = reject; });
+    const open = await withinAdmissionWindow(late, 5);
+    expect(open).toEqual({ state: "open" });
+    // 窗口先到后仍安装拒绝处理器；这里只验证不会产生未处理的 rejection。
+    rejectLate(new Error("late failure"));
+    await Promise.resolve();
   });
 });
