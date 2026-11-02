@@ -1,5 +1,18 @@
 import { test, expect } from "bun:test";
-import { api, errorCauseCode, scoped } from "./api";
+import { api, errorCauseCode, requestId, scoped } from "./api";
+test("requestId still works on LAN HTTP where randomUUID is unavailable", () => {
+  Object.defineProperty(globalThis.crypto, "randomUUID", {
+    value: undefined,
+    configurable: true,
+  });
+  try {
+    expect(requestId()).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+  } finally {
+    delete (globalThis.crypto as any).randomUUID;
+  }
+});
 test("every scoped browser query includes the full Company/Agent identity", () => {
   expect(
     scoped({ companyId: "one", agentId: "dev" }, "files/read", {
