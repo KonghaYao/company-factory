@@ -30,6 +30,8 @@ export type ProvisionInput = {
   config: AgentConfig;
   authToken: string;
   baseUrl: string;
+  /** Recovery verifies this already-confirmed binding; it must not be replaced. */
+  sessionId?: string;
 };
 export type DeliveryInput = {
   companyId: string;

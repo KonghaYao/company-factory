@@ -15,6 +15,7 @@ import type {
   Runtime,
   Scope,
   Thread,
+  WorkNotice,
 } from "../../lib/types";
 import { ErrorBox, IconButton, Loading } from "../../ui/primitives";
 import { RunView } from "./RunView";
@@ -52,6 +53,7 @@ export function WorkspacePanel({
   issues,
   previews,
   threads,
+  notices,
   agents,
   tab,
   selectedIssue,
@@ -72,6 +74,7 @@ export function WorkspacePanel({
   issues: Issue[];
   previews: Preview[];
   threads: Thread[];
+  notices: WorkNotice[];
   agents: Agent[];
   tab: WorkspaceTab;
   selectedIssue?: string;
@@ -134,10 +137,12 @@ export function WorkspacePanel({
           <div className="workspace-empty">选择一位 Agent 开始工作。</div>
         ) : tab === "run" ? (
           <RunView
+            scope={scope}
             agent={agent}
             runtime={runtime}
             issues={issues}
             previews={previews}
+            notices={notices}
             onIssue={onSelectIssue}
             onModel={() => onTab("model")}
           />

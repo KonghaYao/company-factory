@@ -2,11 +2,32 @@
 
 > **2026-11-02 架构变更：**Workspace 已改为本地运行，删除 Linux / bubblewrap 沙箱及 `COMPANY_SANDBOX`。本文 2026-10-31 的 live E2E 是沙箱版历史证据，不再代表当前实现；当前版本需要重新做 live 验收。下文提到的 `sandbox_unavailable`、bwrap 版本与 Linux 全量结果均不再适用。历史命令保留 npm 形式；当前项目统一使用 Bun（`bun install` / `bun run` / `bun test`）。
 
-日期：2026-10-30（UTC）。最后更新：2026-10-31（UTC）。现行要求：原始任务书 + `USER-OVERRIDES.md`。
+日期：2026-10-30（UTC）。最后更新：2026-11-02（UTC）。2026-11-02 的自主性优先裁定见 `SYSTEM-FOR-AGENT.md`；较早章节保留为历史证据。
+
+## System For Agent 修复验证（2026-11-02）
+
+基线：`7ae47ad229650fc8e7c688da63e1f81428599b41`。先落实顶层责任边界，再并行修复事实一致性、职责/记忆、Session/输入；集成复核补齐上下文发现入口和通知状态读取。
+
+- `bun run typecheck`：通过。
+- `bun run build`：通过，保留既有 Monaco chunk 体积提示。
+- `bun test`：**190 pass / 24 skip / 0 fail**，214 项、1,281 断言、28 个文件（2026-11-02，macOS 本地复跑）。
+- 补丁交付方在原 npm/沙箱基线上报告 186 pass / 29 skip / 1 fail；唯一失败来自 `src/storage/git-sandbox.test.ts` 的 bubblewrap 隔离测试（`Failed to create NETLINK_ROUTE socket: Operation not permitted`）。该测试已随 2026-11-02 本地运行裁定删除，本仓库不再要求 Linux 或 bubblewrap。
+- 29 个跳过项需要真实 Peri/sqld 等外部条件；本轮没有重跑真实模型/WASM live E2E，也没有进行浏览器视觉验收。下文 2026-10-31 的 live 结论不能直接用于本补丁。
+
+| 验证边界 | 本轮证据 |
+| --- | --- |
+| 业务事实 | 真文件/Company Git 的提交失败重试、初始化 roster 故障恢复、Preview 移除旧成员的完整权限与证据检查 |
+| 职责与记忆 | saved/applied instructions 顺序、重启中再次保存与自由记忆更新、符号/硬链接和非法文档拒绝 |
+| 会话与输入 | 实际宿主 bind → manifest → 冷热服务投影 → HTTP → 浏览器控制器；外部 sqld/SDK Chat/WS 使用明确替身；输入缓存容量、过期、未知结果不重投 |
+| 自主性与上下文 | 新冻结提示词只含稳定边界；旧 Session load/restart 不重发 instructions；Issue/线程/Preview 独立分页及 32 KiB 投影预算；未回复发出线程和仍可见旧批次可重新发现 |
+| 通知 | 真实 HTTP/MCP、Company Git、鉴权与重试；SDK admission 为替身；通知不推进状态，自己创建的工单不回送，失败/未知状态可经 HTTP 读取 |
+| UTF-8 | 真实长驻子进程逐字节发送中文/emoji，两次请求与通知均完整，stderr 退出诊断完整；用 StringDecoder 避免 Bun 管道 setEncoding 停发事件，无增加测试超时 |
+
+这些证据验证宿主控制流和接口不变量，不代表模型已能自主完成复杂真实项目。跨外部运行时与多文件的崩溃事务仍未承诺；发生应用后版本/记忆冲突会明确报错。未知通知不自动重送，需先查看固定 Session 与队列。
 
 ## 最终 live E2E 事实（2026-10-31）
 
-以下取代本文历史章节中“未执行 live / 未验证外部模型”的表述。
+以下只更新 2026-10-30 历史章节中“未执行 live / 未验证外部模型”的表述，不覆盖上方 2026-11-02 的修复验证范围。
 
 - **结论**：按计划 §11 字面口径 `closure=true`；Stage 2 `--mode=linux-full` 的 E00–E19 全部 `passed`。运行 `91201b67`。证据：`/tmp/cf-e2e-delivery-round2.n5TgK726/`。下方 A01–A15 与命令记录保留为 2026-10-30 的历史接口验收。
 - **真实执行范围**：Linux 容器内官方 Peri 4.4.1、sqld 0.24.32、bwrap 0.8.0；真实模型端点与真实 Session；Workspace/Git/Preview/CI/Review、重启与 IM 均实际执行。

@@ -253,6 +253,34 @@ export class CompanyStore {
     await git.add(".");
     if ((await git.status()).files.length) await git.commit(message);
   }
+  /** Exact HEAD proof for a trusted Company request record, never Agent Git. */
+  async isCommittedFile(dir: string, path: string): Promise<boolean> {
+    const relativePath = relative(resolve(dir), resolve(path));
+    requireValue(
+      !this.isAgentDirectory(dir) &&
+        relativePath !== "" &&
+        !relativePath.startsWith("..") &&
+        !relativePath.startsWith("/"),
+      "invalid_path",
+      "Commit proof requires a file inside a trusted Company repository",
+    );
+    const current = await readFile(path, "utf8");
+    try {
+      const committed = await simpleGit(dir).show([
+        `HEAD:${relativePath.replaceAll("\\", "/")}`,
+      ]);
+      return committed === current;
+    } catch (error) {
+      // A newly prepared request (or an unborn repository) has no HEAD blob.
+      // Other Git failures must remain failures rather than a false proof.
+      const message = String((error as Error).message);
+      if (
+        /does not exist in 'HEAD'|exists on disk, but not in 'HEAD'|invalid object name 'HEAD'|bad revision 'HEAD'/.test(message)
+      )
+        return false;
+      throw error;
+    }
+  }
   async history(dir: string) {
     try {
       if (this.isAgentDirectory(dir)) {

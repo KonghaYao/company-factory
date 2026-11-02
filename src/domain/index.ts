@@ -1,15 +1,14 @@
-import { mkdir, readdir, readFile, rename, unlink } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { CompanyStore, safeId, digest } from "../storage/company-store";
 import { z } from "zod";
+import { applyAgentMemory, prepareAgentMemory } from "./agent-memory";
+import { completeMutation } from "./mutation-completion";
 import {
-  LEGACY_MEMORY_FILE,
   MEMORY_FILE,
   assertNoManagedMarkers,
-  memoryManagedBlock,
   memoryTemplate,
-  mergeManagedBlock,
   softwarePipeline,
 } from "./templates";
 import {
@@ -278,44 +277,15 @@ export class CompanyDomain {
   ): Promise<T> {
     return this.store.locked(`company:${ctx.companyId}`, async () => {
       await this.access(ctx);
-      safeId(input.requestId, "requestId (required for mutations)");
-      let requestPath: string | undefined;
-      const requestHash = digest(input);
-      if (input.requestId) {
-        safeId(input.requestId, "requestId");
-        requestPath = this.path(
-          ctx,
-          "events",
-          "requests",
-          `${digest(`${ctx.type}:${ctx.id}:${operation}:${input.requestId}`)}.yaml`,
-        );
-        if (await this.store.exists(requestPath)) {
-          const saved = await this.store.yaml(requestPath);
-          requireValue(
-            saved.hash === requestHash,
-            "idempotency_conflict",
-            "Request ID was already used with different input",
-            409,
-          );
-          return saved.result as T;
-        }
-      }
-      const result = await fn();
-      if (requestPath)
-        await this.store.putYaml(requestPath, {
-          operation,
-          actor: ctx.id,
-          request_id: input.requestId,
-          hash: requestHash,
-          at: now(),
-          result,
-        });
-      await this.store.commit(
-        this.store.company(ctx.companyId),
-        `${operation} by ${ctx.type}:${ctx.id}`,
-      );
-      this.options.onChange?.({ companyId: ctx.companyId, kind: operation });
-      return result;
+      return completeMutation({
+        store: this.store,
+        caller: ctx,
+        operation,
+        input,
+        run: fn,
+        changed: () =>
+          this.options.onChange?.({ companyId: ctx.companyId, kind: operation }),
+      });
     });
   }
   private async writeIssue(ctx: CallerContext, issue: Issue) {
@@ -472,8 +442,22 @@ export class CompanyDomain {
         ];
         for (const definition of definitions) {
           const roster = await this.roster(cctx);
-          if (!roster.members.some((a) => a.agentId === definition.agentId))
-            await this.provision(cctx, definition);
+          const member = roster.members.find((a) => a.agentId === definition.agentId);
+          if (!member)
+            await this.provision(cctx, definition, true);
+          else {
+            // A prior attempt may have saved the roster before Agent Git failed.
+            // These fixed members are protected by the same initialization hash.
+            const agent = await this.getAgentInternal(definition.agentId);
+            this.matchInitializationAgent(cctx, definition, agent);
+            requireValue(
+              member.groupId === agent.groupId && member.role === agent.role,
+              "already_exists",
+              "Existing roster member does not match this Company initialization",
+              409,
+            );
+            await this.commitProvisionedAgent(agent);
+          }
         }
         await this.store.putYaml(initPath, {
           hash: digest(input),
@@ -562,14 +546,86 @@ export class CompanyDomain {
       return group;
     });
   }
-  private async provision(ctx: CallerContext, input: Input) {
+  private async provision(
+    ctx: CallerContext,
+    input: Input,
+    resumeInitialization = false,
+  ) {
     return this.store.locked(`agent:${safeId(input.agentId, "agentId")}`, () =>
-      this.provisionLocked(ctx, input),
+      this.provisionLocked(ctx, input, resumeInitialization),
     );
   }
-  private async provisionLocked(ctx: CallerContext, input: Input) {
+  /** Only createCompany passes recovery permission after verifying its intent hash. */
+  private matchInitializationAgent(
+    ctx: CallerContext,
+    input: Input,
+    agent: InternalAgent,
+  ) {
+    requireValue(
+      agent.agentId === input.agentId &&
+        agent.companyId === ctx.companyId &&
+        agent.directory === this.store.agent(input.agentId) &&
+        agent.groupId === input.groupId &&
+        agent.role === input.role &&
+        agent.name === input.name &&
+        agent.responsibilities === input.responsibilities &&
+        agent.systemPrompt === (input.systemPrompt ?? "") &&
+        digest(agent.config) === digest(input.config ?? {}) &&
+        typeof agent.sessionId === "string" &&
+        agent.sessionId.length > 0 &&
+        typeof agent.authToken === "string" &&
+        agent.authToken.length >= 32,
+      "already_exists",
+      "Existing Agent does not match this Company initialization",
+      409,
+    );
+  }
+  private async commitProvisionedAgent(agent: InternalAgent) {
+    // Workspace runs locally and Agent Git is decoupled from the Workspace switch.
+    await this.store.commit(
+      agent.directory,
+      `Provision ${agent.name} with fixed Session`,
+    );
+  }
+  private async provisionLocked(
+    ctx: CallerContext,
+    input: Input,
+    resumeInitialization = false,
+  ) {
     const agentId = safeId(input.agentId, "agentId");
     const dir = this.store.agent(agentId);
+    if (resumeInitialization && (await this.store.exists(join(dir, "agent.yaml")))) {
+      const agent = await this.getAgentInternal(agentId);
+      this.matchInitializationAgent(ctx, input, agent);
+      // Reuse the confirmed identity and credential. The runtime validates the
+      // fixed backend binding instead of creating another Session for recovery.
+      const confirmed = await this.options.provisionAgent({
+        ...agent,
+        knowledgeDirectory: this.path(ctx, "knowledgebase"),
+        baseUrl: this.options.baseUrl ?? "http://127.0.0.1:3000",
+      });
+      requireValue(
+        confirmed.sessionId === agent.sessionId,
+        "runtime_error",
+        "Runtime did not confirm the original initialization Session",
+        503,
+      );
+      const roster = await this.roster(ctx);
+      const member = roster.members.find((m) => m.agentId === agentId);
+      requireValue(
+        !member || (member.groupId === agent.groupId && member.role === agent.role),
+        "already_exists",
+        "Existing roster member does not match this Company initialization",
+        409,
+      );
+      if (!member) {
+        roster.members.push({ agentId, groupId: agent.groupId, role: agent.role });
+        roster.version++;
+        await this.store.putYaml(this.path(ctx, "roster.yaml"), roster);
+      }
+      await this.commitProvisionedAgent(agent);
+      return publicAgent(agent);
+    }
     requireValue(
       !(await this.store.exists(join(dir, "agent.yaml"))),
       "already_exists",
@@ -690,8 +746,7 @@ export class CompanyDomain {
     roster.members.push({ agentId, groupId, role });
     roster.version++;
     await this.store.putYaml(this.path(ctx, "roster.yaml"), roster);
-    // Workspace 现在本地直接运行，不再有 OS 沙箱；Agent Git 与 Workspace 开关解耦。
-    await this.store.commit(dir, `Provision ${name} with fixed Session`);
+    await this.commitProvisionedAgent(agent);
     return publicAgent(agent);
   }
   async createMember(ctx: CallerContext, input: Input) {
@@ -747,67 +802,42 @@ export class CompanyDomain {
         );
       if (input.systemPrompt !== undefined)
         a.systemPrompt = promptText(input.systemPrompt);
+      const profile = this.memoryProfile(ctx, a, a.effectiveConfig);
+      // Validation and memory application precede member writes: a malformed or
+      // unsafe memory file cannot leave a rejected member edit half-applied.
+      await applyAgentMemory(this.store, profile);
       a.version++;
       await this.store.putYaml(
         join(a.directory, "agent.yaml"),
         a,
         input.version,
       );
-      const existing = await this.readAgentMemory(a.directory);
-      const block = memoryManagedBlock({
-        role: a.role,
-        responsibilities: a.responsibilities,
-        systemPrompt: a.systemPrompt,
-        instructions:
-          typeof a.config.instructions === "string" ? a.config.instructions : "",
-      });
-      const memory = existing
-        ? mergeManagedBlock(existing.content, block)
-        : memoryTemplate({
-            name: a.name,
-            role: a.role,
-            responsibilities: a.responsibilities,
-            systemPrompt: a.systemPrompt,
-            instructions:
-              typeof a.config.instructions === "string"
-                ? a.config.instructions
-                : "",
-            knowledgeDirectory: this.path(ctx, "knowledgebase"),
-          });
-      await this.store.atomic(join(a.directory, MEMORY_FILE), memory);
-      // Only migrate when the legacy file was the sole memory entry. If both
-      // names already existed, leave the conflict untouched for the user.
-      if (existing?.legacy) {
-        const entries = await readdir(a.directory);
-        if (entries.includes(LEGACY_MEMORY_FILE)) {
-          if (entries.includes(MEMORY_FILE))
-            await unlink(join(a.directory, LEGACY_MEMORY_FILE));
-          else
-            await rename(
-              join(a.directory, LEGACY_MEMORY_FILE),
-              join(a.directory, MEMORY_FILE),
-            );
-        }
-      }
       await this.store.commit(a.directory, "Update member definition");
       return publicAgent(a);
     });
   }
-  private async readAgentMemory(directory: string) {
-    // Use exact directory entries rather than existsSync/readFile so a legacy
-    // lowercase name is not mistaken for the canonical one on macOS.
-    const entries = await readdir(directory);
-    if (entries.includes(MEMORY_FILE))
-      return {
-        content: await readFile(join(directory, MEMORY_FILE), "utf8"),
-        legacy: false,
-      };
-    if (entries.includes(LEGACY_MEMORY_FILE))
-      return {
-        content: await readFile(join(directory, LEGACY_MEMORY_FILE), "utf8"),
-        legacy: true,
-      };
-    return null;
+  private memoryProfile(ctx: CallerContext, agent: AgentRecord, config: AgentConfig) {
+    return {
+      directory: agent.directory,
+      knowledgeDirectory: this.path(ctx, "knowledgebase"),
+      name: agent.name,
+      role: agent.role,
+      responsibilities: agent.responsibilities,
+      systemPrompt: agent.systemPrompt,
+      instructions: typeof config.instructions === "string" ? config.instructions : "",
+    };
+  }
+  /** Internal restart preflight; does not publish saved instructions early. */
+  async validateAgentConfigurationApply(ctx: CallerContext, input: Input) {
+    requireValue(ctx.type === "user", "forbidden", "Only the user may restart an Agent", 403);
+    const agent = await this.getAgent(ctx, { agentId: input.agentId });
+    requireValue(
+      agent.configVersion === input.configVersion,
+      "version_conflict",
+      "Configuration changed before restarting",
+      409,
+    );
+    await prepareAgentMemory(this.memoryProfile(ctx, agent, agent.config));
   }
   async setRolePermissions(ctx: CallerContext, input: Input) {
     return this.mutate(ctx, "setRolePermissions", input, async () => {
@@ -913,7 +943,22 @@ export class CompanyDomain {
           "Configuration changed while restarting",
           409,
         );
-      a.effectiveConfig = structuredClone(a.config);
+      // The service supplies the exact snapshot used to start this activation.
+      // Direct internal callers may omit it only while the checked version is
+      // still current. Never substitute a later saved configuration.
+      const applied = input.configuration === undefined
+        ? structuredClone(a.config)
+        : validatedConfig(input.configuration);
+      requireValue(
+        digest(applied) === digest(a.config),
+        "version_conflict",
+        "Applied runtime configuration differs from the saved revision",
+        409,
+      );
+      // Re-read after runtime restart so Agent-authored free memory and current
+      // member responsibilities are preserved. Failure leaves applied unchanged.
+      await applyAgentMemory(this.store, this.memoryProfile(ctx, a, applied));
+      a.effectiveConfig = structuredClone(applied);
       a.appliedConfigVersion = a.configVersion;
       a.version++;
       await this.store.putYaml(join(a.directory, "agent.yaml"), a);
@@ -929,7 +974,15 @@ export class CompanyDomain {
     const all: Issue[] = [];
     for (const file of await this.store.files(this.path(ctx, "tasks")))
       all.push(await this.store.markdown(this.path(ctx, "tasks", file)));
-    const agentId = input.agentId ?? (ctx.type === "agent" ? ctx.id : null);
+    // Agent scope comes from its credential, never from the truthiness of input.
+    if (ctx.type === "agent" && input.agentId !== undefined)
+      requireValue(
+        safeId(input.agentId, "agentId") === ctx.id,
+        "forbidden",
+        "Cannot query another Agent workspace",
+        403,
+      );
+    const agentId = ctx.type === "agent" ? ctx.id : input.agentId ?? null;
     if (agentId) {
       const a = await this.getAgentInternal(safeId(agentId, "agentId"));
       requireValue(
@@ -1474,6 +1527,24 @@ export class CompanyDomain {
         );
         issues.push(issue);
       }
+      // Removing a batch member changes that Issue too. Validate the full write
+      // set before touching any file; batch ownership cannot override Issue ownership.
+      const removed: Issue[] = [];
+      for (const removedId of
+        existing?.issue_ids.filter((i) => !ids.includes(i)) ?? []) {
+        const issue = await this.store.markdown<Issue>(
+          this.issuePath(ctx, removedId),
+        );
+        if (issue.preview_batch !== id) continue;
+        await this.owner(ctx, issue);
+        requireValue(
+          !["accepted", "verifying", "ready_merge"].includes(issue.status),
+          "preview_evidence_in_use",
+          "Current acceptance or verification still uses this Preview; explicitly revise the Issue before removing it",
+          409,
+        );
+        removed.push(issue);
+      }
       const batch: Preview = {
         id,
         owner_id: ownerId,
@@ -1489,19 +1560,11 @@ export class CompanyDomain {
         version: (existing?.version ?? 0) + 1,
         updated_at: now(),
       };
-      if (existing)
-        for (const removedId of existing.issue_ids.filter(
-          (i) => !ids.includes(i),
-        )) {
-          const issue = await this.store.markdown<Issue>(
-            this.issuePath(ctx, removedId),
-          );
-          if (issue.preview_batch === id) {
-            issue.preview_batch = null;
-            if (issue.status === "preview") issue.status = "ready_preview";
-            await this.writeIssue(ctx, issue);
-          }
-        }
+      for (const issue of removed) {
+        issue.preview_batch = null;
+        if (issue.status === "preview") issue.status = "ready_preview";
+        await this.writeIssue(ctx, issue);
+      }
       for (const issue of issues) {
         const changed =
           issue.code_ref !== codeRefs[issue.id] || issue.preview_batch !== id;

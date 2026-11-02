@@ -295,8 +295,8 @@ export function createPeriChatApi(deps: PeriChatApiDeps): Hono<SyncEnv> {
     const scope = await deps.scope(c);
     try {
       if (sessionId !== undefined) {
-        const bound = await deps.runtime.boundSession(scope.input);
-        if (bound && bound !== sessionId)
+        const binding = await deps.runtime.sessionBinding(scope.input);
+        if (binding && binding.sessionId !== sessionId && binding.replacesSessionId !== sessionId)
           return c.json({
             ok: false,
             code: "binding_conflict",
@@ -305,11 +305,13 @@ export function createPeriChatApi(deps: PeriChatApiDeps): Hono<SyncEnv> {
           }, 409);
       }
       const chat = await deps.runtime.wakeChat(scope.input);
+      const binding = await deps.runtime.sessionBinding(scope.input);
       return c.json({
         chat: {
           id: chat.id,
           sessionId: chat.sessionId,
           bindingRevision: chat.bindingRevision,
+          ...(binding?.replacesSessionId ? { replacesSessionId: binding.replacesSessionId } : {}),
         },
       }, 201);
     } catch (error) {

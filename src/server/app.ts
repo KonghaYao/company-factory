@@ -5,10 +5,21 @@ import { homedir } from "node:os";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { CompanyDomain, DomainError, type CallerContext } from "../domain";
-import { PeriRuntime, WorkspaceViewAdapter, FileStoreProvider, ExplicitFirstStoreProvider, sharedSqldProviderFromEnv, redactRuntimeMessage, toChatActionRuntimeError, type StoreProvider } from "../runtime";
+import {
+  PeriRuntime,
+  WorkspaceViewAdapter,
+  FileStoreProvider,
+  ExplicitFirstStoreProvider,
+  sharedSqldProviderFromEnv,
+  redactRuntimeMessage,
+  toChatActionRuntimeError,
+  type StoreProvider,
+} from "../runtime";
 import { AccessControl, AccessError } from "./security";
 import { createPeriChatApi } from "./peri/chat-api";
 import { AgentService } from "./agent-service";
+import { AgentWorkNotices } from "./agent-work-notices";
+import { AgentContextView } from "../domain/agent-context";
 import { createCompanyMcp } from "./mcp";
 import { MODULE_OPERATIONS, type CompanyModule } from "./operations";
 
@@ -29,7 +40,9 @@ export async function createApplication(options: ApplicationOptions = {}) {
     options.baseUrl ?? process.env.COMPANY_BASE_URL ?? "http://127.0.0.1:3000";
   const storesFile = options.storesFile ?? process.env.COMPANY_WASM_STORES_FILE;
   // 显式 stores 优先；显式 scope 缺配时才回退到宿主自动供给的单一共享 sqld。
-  const sharedStores = options.storeProvider ? undefined : sharedSqldProviderFromEnv();
+  const sharedStores = options.storeProvider
+    ? undefined
+    : sharedSqldProviderFromEnv();
   const storeProvider =
     options.storeProvider ??
     (sharedStores
@@ -62,12 +75,17 @@ export async function createApplication(options: ApplicationOptions = {}) {
     if (token && pendingTokens.has(token)) return pendingTokens.get(token)!;
     return authenticate(request);
   };
-  const backgroundWork = new Set<Promise<unknown>>();
   const listeners = new Set<(event: Record<string, unknown>) => void>();
   let mcp: ReturnType<typeof createCompanyMcp> | undefined;
   const emit = (event: Record<string, unknown>) => {
     mcp?.changed();
-    for (const fn of listeners) fn(event);
+    for (const fn of listeners) {
+      try {
+        fn(event);
+      } catch {
+        listeners.delete(fn);
+      }
+    }
   };
   const runtime = new PeriRuntime({
     root,
@@ -116,6 +134,8 @@ export async function createApplication(options: ApplicationOptions = {}) {
     onChange: (event) => emit(event),
   });
   agents = new AgentService(domain, runtime);
+  const notices = new AgentWorkNotices(domain, agents, emit);
+  const agentContext = new AgentContextView(domain);
   const dispatch = async (
     module: CompanyModule,
     operation: string,
@@ -141,6 +161,12 @@ export async function createApplication(options: ApplicationOptions = {}) {
       normalized.recipientId = normalized.toAgentId;
       delete normalized.toAgentId;
     }
+    if (caller.type === "agent" && module === "company_tasks") {
+      if (operation === "listIssues")
+        return agentContext.issues(caller, normalized);
+      if (operation === "workspace")
+        return agentContext.workspace(caller, normalized);
+    }
     const method = operation === "listPipelines" ? "pipelines" : operation;
     const handler = (domain as any)[method];
     if (typeof handler !== "function")
@@ -150,70 +176,19 @@ export async function createApplication(options: ApplicationOptions = {}) {
         404,
       );
     const result = await handler.call(domain, caller, normalized);
-    if (
-      operation === "answerDecision" &&
-      result.decisions?.some(
-        (q: any) => q.id === normalized.questionId && q.status === "pending",
-      )
-    ) {
-      const eventId = String(normalized.requestId);
-      const eventPath = join(
-        domain.store.company(caller.companyId),
-        "events",
-        "deliveries",
-        eventId + ".yaml",
-      );
-      await domain.store.locked(
-        "decision-delivery:" + caller.companyId + ":" + eventId,
-        async () => {
-          if (await domain.store.exists(eventPath)) return;
-          await domain.store.putYaml(eventPath, {
-            id: eventId,
-            kind: "decision-answer",
-            issueId: result.id,
-            questionId: normalized.questionId,
-            agentId: result.agent_id,
-            status: "saved",
-            at: new Date().toISOString(),
-          });
-          const work = agents
-            .send(caller, result.agent_id, {
-              text: `用户已答复 Company Issue #${result.id} 的明确问题 ${normalized.questionId}。请通过 company_tasks 读取原始问题和答复，处理后用 resolveDecision 标记 answered；不要把普通消息当成其他问题的裁定。`,
-              requestId: "decision-" + eventId,
-              issueId: result.id,
-            })
-            .then((receipt) => ({ status: "delivered", receipt }))
-            .catch((error) => ({
-              status: "failed",
-              error: error instanceof Error ? error.message : String(error),
-            }))
-            .then(async (receipt) => {
-              await domain.store.locked(
-                "company:" + caller.companyId,
-                async () => {
-                  await domain.store.putYaml(eventPath, {
-                    ...(await domain.store.yaml(eventPath)),
-                    ...receipt,
-                  });
-                  await domain.store.commit(
-                    domain.store.company(caller.companyId),
-                    "Record exact decision-answer work delivery",
-                  );
-                  emit({
-                    companyId: caller.companyId,
-                    agentId: result.agent_id,
-                    kind: "decisionDelivery",
-                  });
-                },
-              );
-            });
-          backgroundWork.add(work);
-          void work.finally(() => backgroundWork.delete(work));
-        },
-      );
-      return { ...result, delivery: await domain.store.yaml(eventPath) };
-    }
-    return result;
+    const notification = await notices.afterOperation(
+      caller,
+      operation,
+      normalized,
+      result,
+    );
+    return notification
+      ? {
+          ...result,
+          notification,
+          ...(operation === "answerDecision" ? { delivery: notification } : {}),
+        }
+      : result;
   };
   mcp = createCompanyMcp(access, dispatch);
   const app = new Hono();
@@ -248,7 +223,8 @@ export async function createApplication(options: ApplicationOptions = {}) {
       service: "company-factory",
       version: "1.0.0",
       mcpModules: Object.keys(MODULE_OPERATIONS),
-      runtime: "@peri-code/sdk@0.3.0 WASM + local sqld (explicit or host-provisioned shared)",
+      runtime:
+        "@peri-code/sdk@0.3.0 WASM + local sqld (explicit or host-provisioned shared)",
       storage: {
         sharedSqld: sharedStores ? "enabled" : "disabled",
       },
@@ -293,10 +269,7 @@ export async function createApplication(options: ApplicationOptions = {}) {
   app.post("/api/action", async (c) => {
     const body = await c.req.json();
     const module = body.module as CompanyModule;
-    const caller = access.user(
-      c.req.raw,
-      String(body.companyId ?? ""),
-    );
+    const caller = access.user(c.req.raw, String(body.companyId ?? ""));
     return c.json(
       await dispatch(module, String(body.operation), caller, body.input ?? {}),
     );
@@ -341,8 +314,23 @@ export async function createApplication(options: ApplicationOptions = {}) {
     const workspace = await domain.workspace(caller, { agentId });
     return c.json({
       ...workspace,
+      notices: await notices.list(caller, agentId),
       runtime: await agents.snapshot(caller, agentId),
     });
+  });
+  app.get("/api/agents/:agentId/notices", async (c) => {
+    const { caller, agentId } = scope(c);
+    return c.json(await notices.list(caller, agentId));
+  });
+  app.get("/api/agents/:agentId/notices/:noticeId", async (c) => {
+    const { caller, agentId } = scope(c);
+    return c.json(await notices.get(caller, agentId, c.req.param("noticeId")));
+  });
+  app.post("/api/agents/:agentId/notices/:noticeId/retry", async (c) => {
+    const { caller, agentId } = scope(c, await c.req.json());
+    return c.json(
+      await notices.retry(caller, agentId, c.req.param("noticeId")),
+    );
   });
   app.get("/api/agents/:agentId/runtime", async (c) => {
     const { caller, agentId } = scope(c);
@@ -491,14 +479,18 @@ export async function createApplication(options: ApplicationOptions = {}) {
     ownerToken,
     dispatch,
     async close() {
-      await Promise.allSettled([...backgroundWork]);
+      await notices.close();
       const results = await Promise.allSettled([
-        mcp!.close(), files.shutdown(), runtime.shutdown(),
+        mcp!.close(),
+        files.shutdown(),
+        runtime.shutdown(),
       ]);
       if (sharedStores)
         results.push(...(await Promise.allSettled([sharedStores.close()])));
       if (results.some((result) => result.status === "rejected"))
-        throw new Error("应用关闭未确认；Workspace/WASM/共享 sqld handle 已保留，请重试关闭。");
+        throw new Error(
+          "应用关闭未确认；Workspace/WASM/共享 sqld handle 已保留，请重试关闭。",
+        );
     },
   };
 }

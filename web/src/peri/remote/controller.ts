@@ -504,7 +504,7 @@ export class ChatController {
   }
 
   private async openExisting(target: OpenChatTarget, token: number): Promise<boolean> {
-    const sessionId = target.sessionId;
+    let sessionId = target.sessionId;
     let record = this.handles.get(sessionId);
     if (!record) {
       const handle = await this.deps.actions.createHandle(sessionId);
@@ -512,12 +512,24 @@ export class ChatController {
         await this.closeCandidate(handle.id);
         return false;
       }
+      if (handle.sessionId !== null && handle.sessionId !== sessionId) {
+        if (handle.replacesSessionId !== sessionId) {
+          await this.closeCandidate(handle.id);
+          throw new RemoteActionError("binding_conflict", "返回的会话与请求绑定不一致，未打开。", "rejected");
+        }
+        // Only an explicit, trusted replacement receipt can redirect an old
+        // directory entry. It is a new Session, not recovered history.
+        sessionId = handle.sessionId;
+        target = { ...target, sessionId };
+      }
+      if (handle.replacesSessionId)
+        this.actionError = "原固定会话已不在存储中；已打开替代会话，原历史未恢复。";
       let bound = false;
       try {
         await this.deps.actions.execute(
           handle.id,
           ChatUserAction.changeSessionTo(sessionId),
-          { sessionId: null, bindingRevision: 0 },
+          { sessionId: handle.sessionId, bindingRevision: handle.bindingRevision },
         );
         bound = true;
         record = { address: handle.id, handleId: handle.id, chat: toChat(target) };

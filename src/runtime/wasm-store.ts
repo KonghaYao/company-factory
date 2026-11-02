@@ -114,6 +114,8 @@ interface StoreBinding {
   storeIdentity: string;
   state: "creating" | "bound";
   sessionId?: string;
+  /** Last confirmed replacement; never interpreted as another accessible Session. */
+  replacesSessionId?: string;
 }
 export class ScopedWasmStore implements ChatDatabase {
   constructor(
@@ -124,6 +126,7 @@ export class ScopedWasmStore implements ChatDatabase {
     private path: string,
   ) {}
   get sessionId() { return this.binding?.sessionId; }
+  get replacesSessionId() { return this.binding?.replacesSessionId; }
   async listSessions(path?: string) {
     if (!this.sessionId || (path !== undefined && path !== this.scope.directory)) return [];
     const session = await this.getSession(this.sessionId);
@@ -133,8 +136,11 @@ export class ScopedWasmStore implements ChatDatabase {
     if (!this.sessionId || id !== this.sessionId) return null;
     try {
       const session = await this.storage.getSession(id);
-      return session?.cwd === this.scope.directory ? session : null;
-    } catch {
+      if (session && session.cwd !== this.scope.directory)
+        throw failure("wasm_session_cwd_mismatch", "固定 Session 存在但工作目录不匹配；拒绝恢复或创建替代 Session。");
+      return session;
+    } catch (error) {
+      if (error instanceof WasmStoreError) throw error;
       throw failure("wasm_store_unavailable", "无法读取此 Agent 的本地 sqld Session；请检查宿主端点、凭据和服务状态。");
     }
   }
@@ -174,7 +180,7 @@ export class ScopedWasmStore implements ChatDatabase {
     if (!sessionId)
       throw failure("wasm_store_binding_invalid", "新 Session 绑定缺少 Session ID。");
     await this.persist(
-      { ...current, state: "bound", sessionId },
+      { ...current, state: "bound", sessionId, replacesSessionId: expectedSessionId },
       "替代 Session 可能已创建，但宿主绑定未能持久化；拒绝静默覆盖。",
     );
   }
@@ -209,16 +215,25 @@ export class WasmStoreDirectory implements ChatDatabase {
     return clean(value);
   }
   /** 只读宿主可信绑定；缺失、不可读或未完成绑定时返回 undefined。 */
-  async boundSessionId(scope: Pick<StoreScope, "companyId" | "agentId">): Promise<string | undefined> {
+  async boundSessionInfo(scope: Pick<StoreScope, "companyId" | "agentId">): Promise<{ sessionId: string; replacesSessionId?: string } | undefined> {
     const path = join(this.options.root, "runtime", "wasm-stores", storeScopeId(scope) + ".json");
     try {
       const binding = JSON.parse(await readFile(path, "utf8"));
-      if (binding?.state === "bound" && typeof binding.sessionId === "string" && binding.sessionId)
-        return binding.sessionId;
+      if (binding?.backend === BACKEND && binding.companyId === scope.companyId &&
+          binding.agentId === scope.agentId && binding.state === "bound" &&
+          typeof binding.sessionId === "string" && binding.sessionId)
+        return {
+          sessionId: binding.sessionId,
+          ...(typeof binding.replacesSessionId === "string" && binding.replacesSessionId
+            ? { replacesSessionId: binding.replacesSessionId } : {}),
+        };
     } catch {
       // 无副作用：读取失败不创建目录、不写文件，交由 acquire 报告具体错误。
     }
     return undefined;
+  }
+  async boundSessionId(scope: Pick<StoreScope, "companyId" | "agentId">): Promise<string | undefined> {
+    return (await this.boundSessionInfo(scope))?.sessionId;
   }
   async acquire(scope: StoreScope, requestedSessionId?: string) {
     if (![scope.companyId, scope.agentId].every((id) => /^[a-zA-Z0-9_-]+$/.test(id)))

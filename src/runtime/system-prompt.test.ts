@@ -16,12 +16,13 @@ const base = {
 };
 
 describe("composeSystemInstructions", () => {
-  test("includes the fixed role profile and CLAUDE.md pointer without embedding memory", () => {
+  test("freezes identity and capability boundaries while mutable profiles share one current source", () => {
     const text = composeSystemInstructions(base);
-    expect(text).toContain("ROLE_SENTINEL");
-    expect(text).toContain("RESPONSIBILITIES_SENTINEL");
-    expect(text).toContain("SYSTEM_PROMPT_SENTINEL");
-    expect(text).toContain("CONFIG_INSTRUCTIONS_SENTINEL");
+    expect(text).not.toContain("ROLE_SENTINEL");
+    expect(text).not.toContain("RESPONSIBILITIES_SENTINEL");
+    expect(text).not.toContain("SYSTEM_PROMPT_SENTINEL");
+    expect(text).not.toContain("CONFIG_INSTRUCTIONS_SENTINEL");
+    expect(text).not.toContain("Developer");
     expect(text).toContain("dev-1");
     expect(text).toContain("acme");
     expect(text).toContain("CLAUDE.md");
@@ -32,7 +33,20 @@ describe("composeSystemInstructions", () => {
     expect(text).toContain("company_im");
     expect(text).toContain("fixed Session");
     expect(text).toContain("contractors");
+    expect(text).toContain("You decide how to decompose work");
+    expect(text).toContain("getIssue(issueId)");
+    expect(text).toContain("getPreview(batchId)");
     expect(text).not.toContain("PROFILE_MEMORY_BODY_SENTINEL");
+    expect(
+      composeSystemInstructions({
+        ...base,
+        name: "new name",
+        role: "new role",
+        responsibilities: "new responsibilities",
+        systemPrompt: "new prompt",
+        instructions: "new instructions",
+      }),
+    ).toBe(text);
   });
 
   test("rejects Peri's reserved cache boundary without echoing the prompt", () => {
@@ -41,7 +55,7 @@ describe("composeSystemInstructions", () => {
     try {
       composeSystemInstructions({
         ...base,
-        systemPrompt: `${secret} ${RESERVED_CACHE_BOUNDARY} ${secret}`,
+        agentId: `${secret} ${RESERVED_CACHE_BOUNDARY} ${secret}`,
       });
     } catch (e) {
       error = e;
@@ -55,7 +69,7 @@ describe("composeSystemInstructions", () => {
     try {
       composeSystemInstructions({
         ...base,
-        systemPrompt: "汉".repeat(SYSTEM_PROMPT_BYTE_BUDGET),
+        agentId: "汉".repeat(SYSTEM_PROMPT_BYTE_BUDGET),
       });
     } catch (e) {
       error = e;
@@ -65,13 +79,17 @@ describe("composeSystemInstructions", () => {
     expect(error.message).not.toContain("汉汉汉");
   });
 
-  test("separates optional sections and tolerates an empty profile", () => {
+  test("large mutable instructions do not consume the frozen transport budget", () => {
     const text = composeSystemInstructions({
       agentId: "dev-1",
       companyId: "acme",
       role: "developer",
+      systemPrompt: "汉".repeat(SYSTEM_PROMPT_BYTE_BUDGET),
+      instructions: RESERVED_CACHE_BOUNDARY,
     });
-    expect(text).toContain("## Role\ndeveloper");
+    expect(text).not.toContain("## Role\ndeveloper");
+    expect(text).not.toContain("汉汉汉");
+    expect(text).not.toContain(RESERVED_CACHE_BOUNDARY);
     expect(text).not.toContain("## Agent-specific system prompt");
     expect(text).not.toContain("## Role instructions");
     expect(text.endsWith("\n")).toBe(false);

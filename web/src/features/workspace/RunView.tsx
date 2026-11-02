@@ -1,23 +1,41 @@
-import { Activity, ArrowUpRight, GitBranch, Hash, Terminal } from "lucide-react";
-import type { Agent, Issue, Preview, Runtime } from "../../lib/types";
+import {
+  Activity,
+  ArrowUpRight,
+  GitBranch,
+  Hash,
+  Terminal,
+} from "lucide-react";
+import type {
+  Agent,
+  Issue,
+  Preview,
+  Runtime,
+  Scope,
+  WorkNotice,
+} from "../../lib/types";
 import { statusLabel, statusTone } from "../../lib/format";
 import { modelReason } from "../../lib/model";
 import { Badge, EmptyState, ErrorBox } from "../../ui/primitives";
 import { ModelChain } from "../models/ModelChain";
+import { WorkNotices } from "./WorkNotices";
 
 /** 概览回答「现在发生了什么」：运行态、待裁定、任务与交付物。 */
 export function RunView({
+  scope,
   agent,
   runtime,
   issues,
   previews,
+  notices,
   onIssue,
   onModel,
 }: {
+  scope: Scope;
   agent: Agent;
   runtime?: Runtime;
   issues: Issue[];
   previews: Preview[];
+  notices: WorkNotice[];
   onIssue: (id: string) => void;
   onModel: () => void;
 }) {
@@ -28,8 +46,8 @@ export function RunView({
   );
   const busy = Boolean(
     runtime?.busy ||
-      runtime?.running ||
-      runtime?.activeTurn?.status === "running",
+    runtime?.running ||
+    runtime?.activeTurn?.status === "running",
   );
   const activities = runtime?.activities || [];
 
@@ -84,8 +102,8 @@ export function RunView({
       <ErrorBox error={runtime?.error} />
       {runtime?.configured === false && (
         <div className="notice notice-warn">
-          模型尚未配置：{modelReason(runtime.modelError, runtime.modelMissing)}。
-          组织、任务和文件功能仍可使用；请检查模型库后手动重启该 Agent。
+          模型尚未配置：{modelReason(runtime.modelError, runtime.modelMissing)}
+          。 组织、任务和文件功能仍可使用；请检查模型库后手动重启该 Agent。
         </div>
       )}
 
@@ -109,6 +127,13 @@ export function RunView({
         </section>
       )}
 
+      <WorkNotices
+        key={`${scope.companyId}:${scope.agentId}`}
+        scope={scope}
+        notices={notices}
+        onIssue={onIssue}
+      />
+
       <section className="panel-section">
         <header className="section-head">
           <h3>当前任务</h3>
@@ -129,7 +154,10 @@ export function RunView({
                   {issue.progress || issue.summary || "尚未更新阶段进度"}
                 </small>
               </span>
-              <Badge value={statusLabel(issue.status)} tone={statusTone(issue.status)} />
+              <Badge
+                value={statusLabel(issue.status)}
+                tone={statusTone(issue.status)}
+              />
             </button>
           ))
         ) : (

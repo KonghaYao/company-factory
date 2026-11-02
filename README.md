@@ -2,11 +2,13 @@
 
 一个 **Bun HTTP 服务 + 本地磁盘** 的 Agent 软件工厂。React 三栏工作台以 Agent 为第一维度，业务事实保存在 YAML / Markdown / Git；主 Agent 推理、Session 与控制面采用 **Peri SDK 0.3.0 WASM**，接入用户显式配置的本地 sqld 或宿主自动供给的单一共享本地 sqld；**官方 Peri 4.4.1 进程提供本地 Workspace MCP（无 OS 沙箱）**，不启动 native `peri acp`，不自动回退。
 
+**System For Agent：Agent 自主性优先。** 代码提供可靠事实、能力入口、会话与身份边界；拆解、流程选择、协作和下一步行动由 Agent 决定。当前顶层设计见 [SYSTEM-FOR-AGENT](docs/SYSTEM-FOR-AGENT.md)。2026-10-31 的 live 证据属于历史版本；本轮改动的验证范围单独记录于 [VERIFICATION](docs/VERIFICATION.md)。
+
 **当前交付不是模拟 Agent 演示。** 创建公司通过 WASM 创建真实 Peri Session；必须先配置显式本地存储或启用单一共享 sqld 自动供给，没有模型配置时明确拒绝发送，不伪造回答或投递成功。
 
 **2026-11-02 架构变更：Workspace 本地运行。** 按所有者裁定，Agent 的官方 Workspace MCP 与宿主 Git 直接以宿主用户身份运行，不再依赖 Linux / bubblewrap，也不再提供 OS 级隔离；Agent 工具可访问该用户可访问的本机文件。`COMPANY_SANDBOX` 已移除；`COMPANY_WORKSPACE=disabled` 仅作为显式关闭 Agent Workspace 的调试开关。
 
-**测试基线（2026-11-02，macOS）：** 全量 `139 pass / 24 skip / 0 fail`；`bun run typecheck` 与 `bun run build` 通过。历史 Linux live 验收（2026-10-31，沙箱版，`closure=true`）是过去实现的证据，**不代表当前本地架构**，需要重新做 live 验收；详见 [验证记录](docs/VERIFICATION.md)。
+**测试基线（2026-11-02，macOS）：** 全量 `190 pass / 24 skip / 0 fail`（214 项、1,281 断言、28 个文件）；`bun run typecheck` 与 `bun run build` 通过。历史 Linux live 验收（2026-10-31，沙箱版，`closure=true`）是过去实现的证据，**不代表当前本地架构**，需要重新做 live 验收；详见 [验证记录](docs/VERIFICATION.md)。
 
 **未验证项，不能声称：** 独立 fable 模型仍未验证（供应商无独立 fable 模型）；四档 alias 路由可用，但不能声称四档四模型全部真实通过。历史 live 证据中的 `agentCiExecuted` 与 digest 口径仅对那轮沙箱版运行有效。
 
@@ -86,7 +88,7 @@ profiles:
 
 **只读展示与 revision。** 运行时快照暴露 `modelProfile/modelProvider/modelAlias/model/modelMissing/modelError/modelSource/modelLibraryRevision`，以及 v2 的 `modelTiers/modelTierProviders/modelTierSources/modelResolvedAt`；旧快照没有四档明细时给出 `modelTierNotice`，重启后补齐。`GET /api/model-library` 只返回 `status/error/issues/path/version/activeProfile/revision/profiles[]/providers[]`；profile 的四个档位带 `bound/provider/providerType/model/modelEnv/missing/ready`，provider 只返回 `baseUrlEnv/apiKeyEnv` 名称与 `endpointConfigured/credentialConfigured` 布尔，不返回任何值，也没有顶层 `models` 或 `bindings`。工作台顶栏「模型库」打开全局只读 Sheet（路径、短 revision、默认 profile、profile 四档与 provider 环境变量名）；右侧面板「模型」tab 显示当前 Agent 的已应用链路、已保存配置、四档表与库摘要；Agent 配置中的 profile/alias 选择器只修改 JSON 草稿，保存仍走现有 CAS，重启才应用。UI 不做写回，也不新增 PUT。
 
-未配置模型时，只要显式本地存储或单一共享 sqld 自动供给已配置、工具隔离可用，仍可创建组织/真实固定 Session、手动操作 Issue 和文件；Chat 提示模型配置缺失。存储缺配会明确失败，不以空 Session 替代。
+未配置模型时，只要显式本地存储或单一共享 sqld 自动供给已配置、Workspace 可用，仍可创建组织/真实固定 Session、手动操作 Issue 和文件；Chat 提示模型配置缺失。存储缺配会明确失败，不以空 Session 替代。
 
 ### 本地 sqld（显式配置或单一共享自动供给）
 
@@ -124,7 +126,7 @@ profiles:
 
 **后端生成 ID 不需要预先猜测：** 首次创建若缺配，会在宿主 `runtime/store-requests/<scope-hash>.json` 写入无秘密的 `companyId/agentId`，公司初始化保留 failed 状态。补齐显式映射或启用共享自动供给后，以**相同 `requestId` 与相同输入**重试；HR 成功后若主管缺配，再按新请求补配并重试，已完成绑定复用。也可由宿主在 `createApplication({ storeProvider })` 注入 `resolve(scope)` 钩子；注入的 provider 优先于环境自动供给。
 
-配置文件按 activation 读取，token 轮转不改变 backend 身份。首次成功创建后，在 `runtime/wasm-stores` 持久化 scope、endpoint hash 与 Session 绑定；endpoint 改变、Session 缺失或无可信绑定都会拒绝恢复。既有绑定不会因为改用共享实例而自动迁移：原 binding 指向另一个 URL 时，解析会以 `wasm_store_backend_changed` 拒绝，需要所有者先决定保留旧端点还是人工处理迁移。旧 native `sessions.db/sessionId` 原样保留、不迁移、不写 schema，也不会自动新建替代。创建过程只留下 `creating` 标记而未完成可信绑定时，重试明确报错，需所有者人工处理未确认创建；本期不提供自动恢复/迁移工具。
+配置文件按 activation 读取，token 轮转不改变 backend 身份。首次成功创建后，在 `runtime/wasm-stores` 持久化 scope、endpoint hash 与 Session 绑定。endpoint 改变、cwd 不符或无可信绑定都会明确拒绝。普通 wake 仅在可信绑定指向的 Session 确认缺失时创建替代 Session；manifest 与冷热快照统一使用新 ID，并显式记录 `replacesSessionId`，界面提示原历史未恢复。初始化补花名册的 provision 则必须确认原 Session，缺失时不替代。既有绑定不会因为改用共享实例而自动迁移：原 binding 指向另一个 URL 时，解析会以 `wasm_store_backend_changed` 拒绝，需要所有者先决定保留旧端点还是人工处理迁移。旧 native `sessions.db/sessionId` 原样保留、不迁移、不写 schema，也不会自动新建替代。创建过程只留下 `creating` 标记而未完成可信绑定时，重试明确报错，需所有者人工处理未确认创建；本期不提供自动恢复/迁移工具。
 
 ## 2. 使用流程
 
@@ -141,7 +143,8 @@ profiles:
 
 - `agentId`、活动目录、`sessionId` 固定。并发唤醒复用同一实例；初始化 Session 后可无存活实例。
 - 保存只改 `config`，普通唤醒仍使用 `effectiveConfig`。手动重启应用新配置且保留 Session。
-- 当前 Peri 的 **frozen system context 不支持在同一 Session 上重建**，且 `session/load` 不会替换创建时的 instructions。本适配不篡改 Peri SQLite，也不偷偷新开会话：只在 provision 或目标 Session 缺失需替代创建时组装完整系统提示词（role、responsibilities、Agent 专属 systemPrompt、`config.instructions`、Company 硬约束与 `CLAUDE.md` 指针）；已有 Session 的普通 wake/显式 restart 继续使用同一冻结提示词。可变职责、记忆和最新岗位档案由 `CLAUDE.md` 承载，Agent 开工前读取。旧消息中曾注入的上下文保留为历史，新发送的用户正文不再包含宿主注入块。模型/MCP 连接按官方 Session load 路径重绑。请阅读 [SDK 接入依据](docs/SDK-INTEGRATION.md)，不要把“固定 Session 重启”理解为删除/重写历史系统消息。
+- 当前 Peri 的 **frozen system context 不支持在同一 Session 上重建**，且 `session/load` 不会替换创建时的 instructions。本适配不篡改 Peri SQLite。新 Session 仅冻结身份、能力入口与稳定事实边界；可变职责、Agent 专属 systemPrompt、已应用 `config.instructions` 和长期记忆统一从 `CLAUDE.md` 读取。已有 Session 的普通 wake/显式 restart 保留原冻结提示词和历史。保存配置不提前发布 instructions，显式重启成功后更新 CLAUDE 托管块及 applied version。模型/MCP 连接按官方 Session load 路径重绑。请阅读 [SDK 接入依据](docs/SDK-INTEGRATION.md)，不要把“固定 Session 重启”理解为删除/重写历史系统消息。
+- 新建工单、指派信息更新和明确答复会发出携带 Issue 引用的简短通知，Agent 自主决定如何响应；通知不推进状态。运行面板显示最近通知与确定失败后的重试入口。Agent MCP 的工作区返回有界索引与详情读取入口，完整历史按需读取。
 - 运行时授权/问答与 Company 决策分开；停止和输入队列使用 SDK 原生控制。未接通的附件上传能力不开放。
 
 ## 4. 数据和安全边界
@@ -192,7 +195,7 @@ bun run test:integration
 bun run example                  # 在隔离临时目录运行真实双 Issue 交付示例
 ```
 
-当前代码已实际执行 `bun run typecheck`、`bun run build` 与全量测试（macOS `139 pass / 24 skip / 0 fail`）；`bun run example` 与浏览器套件未执行。真实 runtime 套件还需设置专用空库的 `COMPANY_TEST_SQLD_URL/COMPANY_TEST_SQLD_TOKEN`；HTTP/MCP 集成套件使用 `COMPANY_TEST_INTEGRATION_STORES_FILE`（相同 stores 格式），为生成公司固定成员及 `integrated-dev/integrated-preview` 准备显式测试端点（可共用同一回环端点）。缺少 Peri 二进制或显式测试存储时套件 SKIP，不计为通过；不能使用生产数据库。集成套件使用固定 `requestId: initialize` 与所有者身份，缺配时可从其临时根的请求文件取得真实生成 ID。Domain 测试替身只证明业务规则，不冒充 WASM/存储证据；测试代码不自动安装或启动 sqld。
+当前代码已实际执行 `bun run typecheck`、`bun run build` 与全量测试（macOS `190 pass / 24 skip / 0 fail`）；`bun run example` 与浏览器套件未执行。真实 runtime 套件还需设置专用空库的 `COMPANY_TEST_SQLD_URL/COMPANY_TEST_SQLD_TOKEN`；HTTP/MCP 集成套件使用 `COMPANY_TEST_INTEGRATION_STORES_FILE`（相同 stores 格式），为生成公司固定成员及 `integrated-dev/integrated-preview` 准备显式测试端点（可共用同一回环端点）。缺少 Peri 二进制或显式测试存储时套件 SKIP，不计为通过；不能使用生产数据库。集成套件使用固定 `requestId: initialize` 与所有者身份，缺配时可从其临时根的请求文件取得真实生成 ID。Domain 测试替身只证明业务规则，不冒充 WASM/存储证据；测试代码不自动安装或启动 sqld。
 
 `SOURCE-MANIFEST.sha256` 是历史源码快照，已过期：2026-10-31 复核有 24/62 项不匹配，且不包含 `scripts/e2e-live.ts`、`scripts/e2e-ci-runner.ts` 等文件。它不得作为当前源码完整性或 E2E 证据；需要时重新生成。
 

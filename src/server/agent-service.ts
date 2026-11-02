@@ -19,7 +19,9 @@ export class AgentService {
     }
   }
   async binding(caller: CallerContext, agentId: string) {
-    return this.domain.getAgent(caller, { agentId });
+    const agent = await this.domain.getAgent(caller, { agentId });
+    const binding = await this.runtime.sessionBinding(agent);
+    return { ...agent, ...(binding ?? {}) };
   }
   input(agent: AgentRecord, saved = false) {
     return {
@@ -66,10 +68,15 @@ export class AgentService {
   async restart(caller: CallerContext, agentId: string) {
     return this.serial(agentId, async () => {
       const a = await this.binding(caller, agentId);
+      await this.domain.validateAgentConfigurationApply(caller, {
+        agentId,
+        configVersion: a.configVersion,
+      });
       const result = await this.runtime.restart(this.input(a, true));
       await this.domain.markAgentConfigurationApplied(caller, {
         agentId,
         configVersion: a.configVersion,
+        configuration: a.config,
         requestId: crypto.randomUUID(),
       });
       return result;
@@ -80,6 +87,7 @@ export class AgentService {
     const runtime = await this.runtime.snapshot({
       companyId: a.companyId,
       agentId,
+      sessionId: a.sessionId,
     });
     return {
       ...runtime,
@@ -88,7 +96,7 @@ export class AgentService {
         queueTakeBack: true,
         queueForceSend: true,
       },
-      sessionId: a.sessionId,
+      replacesSessionId: runtime.replacesSessionId ?? a.replacesSessionId ?? null,
       agentId,
       companyId: a.companyId,
     };

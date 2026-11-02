@@ -127,7 +127,7 @@ describe("WASM 本地 sqld 配置与可信 backend（无数据库请求）", () 
     expect(await stores.boundSessionId(f.scope)).toBe("replacement-session");
     const reopened = await new WasmStoreDirectory({ root: f.root, provider: f.provider }).acquire(f.scope, "replacement-session");
     expect(reopened.sessionId).toBe("replacement-session");
-    expect(JSON.parse(await readFile(path, "utf8"))).toEqual({ ...binding, sessionId: "replacement-session" });
+    expect(JSON.parse(await readFile(path, "utf8"))).toEqual({ ...binding, sessionId: "replacement-session", replacesSessionId: "bound-session" });
     await expect(store.replaceBinding("wrong-old-id", "another")).rejects.toMatchObject({ code: "wasm_session_binding_mismatch" });
     const unchanged = await readFile(path, "utf8");
     expect(JSON.parse(unchanged).sessionId).toBe("replacement-session");

@@ -24,6 +24,7 @@ export const MODULE_OPERATIONS = {
     "withdrawDecision",
     "listPipelines",
     "savePreview",
+    "getPreview",
     "acceptPreview",
     "recordVerification",
     "workspace",
@@ -32,6 +33,29 @@ export const MODULE_OPERATIONS = {
 } as const;
 export type CompanyModule = keyof typeof MODULE_OPERATIONS;
 const str = z.string();
+const contextOptions = {
+  agentId: str.min(1).optional(),
+  cursor: str.min(1).max(1024).optional(),
+  limit: z.number().int().min(1).max(50).optional(),
+  includeHistory: z.boolean().optional(),
+  status: z
+    .array(
+      z.enum([
+        "triage",
+        "plan",
+        "code",
+        "ready_preview",
+        "preview",
+        "accepted",
+        "verifying",
+        "ready_merge",
+        "cancel",
+      ]),
+    )
+    .min(1)
+    .max(9)
+    .optional(),
+};
 /** Schemas describe application identifiers, never caller identity. Domain performs field/role/CAS checks. */
 export const schemas: Record<string, z.ZodType> = {
   organization: z.object({}),
@@ -71,7 +95,7 @@ export const schemas: Record<string, z.ZodType> = {
     expectedVersion: z.number(),
     requestId: str,
   }),
-  listIssues: z.object({ agentId: str.optional() }),
+  listIssues: z.object(contextOptions),
   getIssue: z.object({ issueId: str }),
   createIssue: z.looseObject({
     title: str,
@@ -151,6 +175,7 @@ export const schemas: Record<string, z.ZodType> = {
     expectedVersion: z.number().optional(),
     requestId: str,
   }),
+  getPreview: z.object({ batchId: str.min(1) }),
   acceptPreview: z.looseObject({
     batchId: str,
     issueId: str,
@@ -170,7 +195,11 @@ export const schemas: Record<string, z.ZodType> = {
     evidence: str,
     requestId: str,
   }),
-  workspace: z.object({ agentId: str }),
+  workspace: z.object({
+    ...contextOptions,
+    threadCursor: str.min(1).max(1024).optional(),
+    previewCursor: str.min(1).max(1024).optional(),
+  }),
   members: z.object({ query: str.optional() }),
   ask: z.looseObject({
     toAgentId: str,
@@ -198,6 +227,7 @@ export const READ_OPERATIONS = new Set([
   "organization",
   "listIssues",
   "getIssue",
+  "getPreview",
   "comments",
   "listPipelines",
   "workspace",

@@ -16,7 +16,8 @@ import { ChatReplica, type SessionView } from "@peri-code/sdk/view";
 import { mkdir, readFile, stat, writeFile, rename } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { InputReceiptCache, InputReceiptCacheError } from "./input-receipts";
 import { ProcessOwnershipStore } from "./session-store";
 import {
   FileStoreProvider,
@@ -167,6 +168,13 @@ interface BoundAgent {
   modelMeta: ModelResolutionMetadata | null;
   error?: string;
   nextCursor: string | null;
+  replacesSessionId?: string;
+}
+interface InputAdmission {
+  accepted: boolean;
+  inputId: string;
+  requestId: string;
+  sessionId: string | null;
 }
 export class RuntimeError extends Error {
   constructor(
@@ -304,18 +312,7 @@ export class PeriRuntime {
     { input: RuntimeAgent; sessionId: string }
   >();
   private locks = new Map<string, Promise<unknown>>();
-  private deliveries = new Map<
-    string,
-    {
-      fingerprint: string;
-      result: Promise<{
-        accepted: boolean;
-        inputId: string;
-        requestId: string;
-        sessionId: string | null;
-      }>;
-    }
-  >();
+  private deliveries = new InputReceiptCache<InputAdmission>();
   private initialized: Promise<void>;
   constructor(
     private options: {
@@ -556,10 +553,13 @@ export class PeriRuntime {
     input: RuntimeAgent,
     sessionId?: string,
     refreshConfiguration = false,
+    allowMissingReplacement = true,
   ) {
     await this.initialized;
     // 磁盘上的可信绑定优先于调用方可能过期的 sessionId；acquire 仍按绑定严格校验。
     const boundSessionId = await this.database.boundSessionId(input);
+    if (!allowMissingReplacement && sessionId && boundSessionId !== sessionId)
+      throw new RuntimeError("wasm_session_binding_mismatch", "provision 恢复确认与可信 Session 绑定不同；拒绝替代。");
     const existing = this.agents.get(this.key(input));
     if (existing) {
       if (existing.error)
@@ -614,7 +614,7 @@ export class PeriRuntime {
       // Model provider/base URL/API key/model IDs come from the trusted host
       // environment (and user-owned agent.yaml config) only. Reading the file here
       // would let an Agent redirect the host credential to an arbitrary endpoint on
-      // the next explicit restart. The sandbox also mounts this file read-only.
+      // the next explicit restart. This is a runtime rule; there is no OS sandbox.
       const provider = this.settings(input);
       const configuration = structuredClone(
         input.configuration ?? input.config ?? {},
@@ -681,6 +681,8 @@ export class PeriRuntime {
     // 创建新的固定 Session 并更新绑定；端点身份与 cwd/目录校验不放宽。
     let resumeSessionId = targetSessionId;
     if (targetSessionId && !(await store.getSession(targetSessionId))) {
+      if (!allowMissingReplacement)
+        throw new RuntimeError("wasm_session_missing", "provision 恢复确认的原 Session 不存在；拒绝自动重建。");
       console.warn(
         `[wasm_session_recovered] ${input.companyId}/${input.agentId}: bound session is absent in the current local sqld; creating a replacement session.`,
       );
@@ -688,20 +690,12 @@ export class PeriRuntime {
     }
     // Instructions are frozen at session/new. Restarting an existing Session
     // must not rebuild or resend them; a replacement Session is a creation and
-    // receives the currently applied profile.
+    // receives stable boundaries and a pointer to the current CLAUDE profile.
     const instructions = resumeSessionId
       ? undefined
       : composeSystemInstructions({
           agentId: appliedInput.agentId,
           companyId: appliedInput.companyId,
-          name: appliedInput.name,
-          role: appliedInput.role,
-          responsibilities: appliedInput.responsibilities,
-          systemPrompt: appliedInput.systemPrompt,
-          instructions:
-            typeof appliedInput.configuration?.instructions === "string"
-              ? appliedInput.configuration.instructions
-              : "",
         });
     const chat = manager.createChat({
       workspace: {
@@ -748,6 +742,7 @@ export class PeriRuntime {
       model: modelMeta?.model ?? modelInfo.model,
       modelMeta,
       nextCursor: null,
+      replacesSessionId: store.replacesSessionId,
     };
     const observe = (envelope: any) => {
       if (envelope.fact?.kind === "history-page")
@@ -780,6 +775,13 @@ export class PeriRuntime {
           }),
         );
         await store.replaceBinding(staleSessionId, chat.sessionId!);
+        bound.replacesSessionId = staleSessionId;
+        // The manifest is authoritative; do not retain a stale provisioning
+        // receipt in this process after the confirmed replacement.
+        if (this.provisioned.has(this.key(input)))
+          this.provisioned.set(this.key(input), {
+            input: structuredClone(input), sessionId: chat.sessionId!,
+          });
       } else {
         await store.beginCreation();
         await chat.execute(
@@ -869,7 +871,9 @@ export class PeriRuntime {
         }
         return { sessionId: prior.sessionId };
       }
-      const bound = await this.bind(input, input.sessionId, true);
+      // Retrying a partially completed business provision must confirm the
+      // exact persisted Session; it must not create another identity on loss.
+      const bound = await this.bind(input, input.sessionId, true, !input.sessionId);
       const sessionId = bound.chat.sessionId!;
       // 先持久化可信 binding，再关闭初次 activation；领域幂等重试恢复同一 Session。
       await this.closeBound(bound);
@@ -972,6 +976,10 @@ export class PeriRuntime {
   boundSession(input: { companyId: string; agentId: string }) {
     return this.database.boundSessionId(input);
   }
+  /** Current Session identity and the last replacement, without activating it. */
+  sessionBinding(input: { companyId: string; agentId: string }) {
+    return this.database.boundSessionInfo(input);
+  }
   /** 取得或激活该 Agent 的固定 Chat 句柄。 */
   async wakeChat(input: RuntimeAgent) {
     return (await this.wake(input)).chat;
@@ -1050,6 +1058,7 @@ export class PeriRuntime {
         input.sessionId ??
         this.provisioned.get(this.key(input))?.sessionId ??
         null,
+      replacesSessionId: bound?.replacesSessionId ?? null,
       // 旧派生字段：仅为兼容既有前端保留；恢复判断请用下方契约事实。
       busy: Boolean(
         view?.running ||
@@ -1183,53 +1192,52 @@ export class PeriRuntime {
       references?: unknown[];
     },
   ) {
-    const bound = await this.wake(input);
-    if (!bound.configured) {
-      const alias = bound.modelAlias ?? "sonnet";
-      const profile = bound.modelMeta?.profile ?? "default";
-      const missing = bound.modelMeta?.missing?.length
-        ? ` Missing: ${bound.modelMeta.missing.join(", ")}.`
-        : "";
-      throw new RuntimeError(
-        "model_not_configured",
-        `Model profile "${profile}" has no usable model, apiKey or baseUrl for alias "${alias}". Configure $COMPANY_HOME/model-library.yaml, then explicitly restart this Agent.${missing} No model input was sent.`,
-      );
-    }
     const text = composeUserSendText(payload);
     const requestId = payload.requestId ?? randomUUID();
     const key = `${this.key(input)}/${requestId}`;
-    const fingerprint = JSON.stringify(payload);
-    const previous = this.deliveries.get(key);
-    if (previous) {
-      if (previous.fingerprint !== fingerprint)
-        throw new RuntimeError(
-          "idempotency_conflict",
-          "The same input request ID was used with different content.",
-        );
-      return previous.result;
+    const fingerprint = createHash("sha256").update(text).digest("hex");
+    try {
+      return await this.deliveries.run(key, fingerprint, async () => {
+        let bound: BoundAgent;
+        try {
+          bound = await this.wake(input);
+          this.validateSendText(input, text);
+        } catch (error) {
+          // Activation/configuration can have its own uncertainty, but this
+          // input has not reached chat.execute yet and may safely be retried.
+          const failure = (error ?? {}) as { code?: string; message?: string; status?: number; details?: Record<string, unknown> };
+          throw new RuntimeError(
+            failure.code ?? "not_ready",
+            failure.message ?? "Agent 未就绪，输入未发送。",
+            failure.status ?? 503,
+            { ...failure.details, disposition: "not_sent" },
+            { cause: error },
+          );
+        }
+        return this.executeControl(async () => {
+          const receipt = bound.chat.execute(ChatUserAction.send({ text, requestId }));
+          await receipt.accepted;
+          // Queue recovery is best-effort after known admission. A replica or
+          // recovery failure cannot turn an accepted input into a retryable one.
+          await this.recoverStrandedInput(bound, receipt.inputId).catch(() => {});
+          return {
+            accepted: true,
+            inputId: receipt.inputId,
+            requestId: receipt.requestId,
+            sessionId: bound.chat.sessionId,
+          };
+        }, {
+          code: "send_failed",
+          message: "输入提交未获 SDK 确认；可能已入队，请先刷新会话与队列，不要自动重试。",
+        });
+      });
+    } catch (error) {
+      if (error instanceof InputReceiptCacheError)
+        throw new RuntimeError(error.code, error.message,
+          error.code === "idempotency_conflict" ? 409 : 503,
+          { disposition: "not_sent" });
+      throw error;
     }
-    const result = this.executeControl(
-      async () => {
-        const receipt = bound.chat.execute(
-          ChatUserAction.send({ text, requestId }),
-        );
-        await receipt.accepted;
-        await this.recoverStrandedInput(bound, receipt.inputId);
-        return {
-          accepted: true,
-          inputId: receipt.inputId,
-          requestId: receipt.requestId,
-          sessionId: bound.chat.sessionId,
-        };
-      },
-      {
-        code: "send_failed",
-        message:
-          "输入提交未获 SDK 确认；可能已入队，请先刷新会话与队列，不要自动重试。",
-      },
-    );
-    this.deliveries.set(key, { fingerprint, result });
-    return result;
   }
   /**
    * peri 的输入邮箱在“排队输入于 idle 边界被交接”后可能残留已取消的 active
@@ -1260,7 +1268,7 @@ export class PeriRuntime {
   private inputIsStranded(bound: BoundAgent, inputId: string) {
     const view = bound.replica.read();
     const queue = view.inputQueue;
-    if (!queue || queue.activeRequestId) return false;
+    if (!queue || queue.activeRequestId || queue.items.length !== 1) return false;
     if (view.running || view.executionBlocked || view.closed) return false;
     if (view.pendingInteractions.length > 0) return false;
     // cancelled/error 同样是已结算的终态；否则“停止后再发送”会永久留在队列里。
@@ -1370,6 +1378,8 @@ export class PeriRuntime {
       if (failed)
         throw new RuntimeError("wasm_cleanup_unconfirmed", "部分 WASM、Workspace 或 view 关闭未获确认；保留 handle，可重试 shutdown。");
       this.agents.clear();
+      this.provisioned.clear();
+      this.deliveries.clear();
       this.database.clear();
     })();
     this.shutdownPromise = shutdown;

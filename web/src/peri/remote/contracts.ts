@@ -52,6 +52,7 @@ export const chatHandleSchema = z.object({
   id: z.string().min(1),
   sessionId: z.string().min(1).nullable(),
   bindingRevision: z.number().int().nonnegative(),
+  replacesSessionId: z.string().min(1).optional(),
 });
 
 const sandboxStateSchema = z.enum([

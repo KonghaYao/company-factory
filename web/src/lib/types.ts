@@ -111,7 +111,10 @@ export type RuntimeActiveTurn = Omit<
 export type RuntimeQueueState = Pick<
   InputQueueView,
   "generation" | "revision"
-> & { activeRequestId: InputQueueView["activeRequestId"] | null; count: number };
+> & {
+  activeRequestId: InputQueueView["activeRequestId"] | null;
+  count: number;
+};
 export type Runtime = {
   state?: string;
   status?: string;
@@ -239,10 +242,20 @@ export type FileBuffer = {
   diskConflict?: string;
   conflictVersion?: string | number;
 };
+export type WorkNotice = {
+  id: string;
+  kind: "createIssue" | "assignIssue" | "answerDecision";
+  issueId: string;
+  agentId: string;
+  status: "saved" | "accepted" | "failed" | "unknown" | "skipped";
+  at: string;
+  error?: string | null;
+};
 export type Workspace = {
   issues: Issue[];
   previews: Preview[];
   threads: Thread[];
+  notices?: WorkNotice[];
   runtime?: Runtime;
 };
 export const scopeKey = (scope: Scope) => `${scope.companyId}:${scope.agentId}`;

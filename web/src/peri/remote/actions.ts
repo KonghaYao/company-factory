@@ -51,6 +51,8 @@ export interface RemoteChatHandle {
   id: string;
   sessionId: string | null;
   bindingRevision: number;
+  /** A lost fixed Session was replaced; history was not restored. */
+  replacesSessionId?: string;
 }
 
 export interface RemoteActionClientOptions {

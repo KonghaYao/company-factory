@@ -102,7 +102,7 @@ export function memoryTemplate(input: {
 # ${input.name} · 持续学习记忆
 
 ## 工作记录规则
-遇到问题，先记录现象、已知事实、当前假设和下一步验证，执行 Git commit，再继续。待验证内容明确标记；验证后修正结论。详细记录可引用 Issue 和固定 Session。
+按工作需要记录现象、已知事实、当前假设和验证结果，待验证内容明确标记；验证后修正结论。由你决定记录粒度、文件组织和 Git commit 时机。详细记录可引用 Issue、代码和固定 Session，避免反复复制完整正文。
 
 ## 多任务和协作
 使用 Peri 自带 multitasks / work 能力推进多个 Issue；Subagent 是外包，不是正式成员，不创建 Company 子 Issue 树。任务调整、交接、用户干预和外包协调复用 company_im 与默认 Workspace 的 work。迟到成果作为证据或评论，不自动复活 cancel 的任务。

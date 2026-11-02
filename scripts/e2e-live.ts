@@ -3413,19 +3413,19 @@ async function stepE07(run: RunState, runner: Runner) {
         run.companyId!,
         "events",
         "deliveries",
-        `${answerRequestId}.yaml`,
+        `${answered.notification.id}.yaml`,
       );
       const delivered = await waitFor(
         "decision delivery",
         async () => {
           if (!existsSync(deliveryPath)) return undefined;
           const row = readYamlFile(deliveryPath);
-          return row.status === "delivered" ? row : undefined;
+          return row.status === "accepted" ? row : undefined;
         },
         STEP_TIMEOUT_MS,
         500,
       );
-      if (delivered.status !== "delivered")
+      if (delivered.status !== "accepted")
         throw new StepError("delivery_not_confirmed", "Decision delivery is not confirmed");
       const issueBeforeResolve = await issueState(run, run.issueId!);
       const resolveRequestId = `e2e-resolve-${randomUUID()}`;
@@ -3472,7 +3472,7 @@ async function stepE07(run: RunState, runner: Runner) {
         checks: {
           pendingDecision: true,
           needsUserDuringPending: true,
-          deliveryStatus: "delivered",
+          deliveryStatus: "accepted",
           resolved: true,
           assignedToDev: final.agent_id === run.agents!.dev,
           handoffHistory: (final.history ?? []).some(

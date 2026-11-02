@@ -265,10 +265,10 @@ realRuntime(
         expect(JSON.stringify(requests)).not.toContain(
           "NEW_APPLIED_ROLE_SENTINEL",
         );
-        expect(JSON.stringify(requests)).toContain(
+        expect(JSON.stringify(requests)).not.toContain(
           "PER_AGENT_SYSTEM_PROMPT_SENTINEL",
         );
-        expect(JSON.stringify(requests)).toContain(
+        expect(JSON.stringify(requests)).not.toContain(
           "BASE_RESPONSIBILITIES_SENTINEL",
         );
         expect(JSON.stringify(requests)).not.toContain(
@@ -1015,13 +1015,14 @@ profiles:
         requestId: "isolated-first",
       });
       await waitForRequest(1);
-      expect(systemContent(requests[0])).toContain(
+      expect(systemContent(requests[0])).not.toContain(
         "BASE_RESPONSIBILITIES_SENTINEL",
       );
-      expect(systemContent(requests[0])).toContain(
+      expect(systemContent(requests[0])).not.toContain(
         "PER_AGENT_SYSTEM_PROMPT_SENTINEL",
       );
-      expect(systemContent(requests[0])).toContain("## Role");
+      expect(systemContent(requests[0])).toContain("CLAUDE.md");
+      expect(systemContent(requests[0])).toContain("You decide how to decompose work");
       expect(JSON.stringify(requests[0])).not.toContain(
         "[Company effective configuration",
       );
@@ -1042,10 +1043,10 @@ profiles:
         requestId: "isolated-second",
       });
       await waitForRequest(2);
-      expect(systemContent(requests[1])).toContain(
+      expect(systemContent(requests[1])).not.toContain(
         "BASE_RESPONSIBILITIES_SENTINEL",
       );
-      expect(systemContent(requests[1])).toContain(
+      expect(systemContent(requests[1])).not.toContain(
         "PER_AGENT_SYSTEM_PROMPT_SENTINEL",
       );
       expect(JSON.stringify(requests[1])).not.toContain(

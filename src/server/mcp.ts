@@ -35,7 +35,7 @@ export function createCompanyMcp(access: AccessControl, dispatch: Dispatch) {
           server.registerTool(
             operation,
             {
-              description: `Company ${operation}. Identity is bound to the host credential. Mutations require requestId; versioned edits require expectedVersion. Errors: forbidden, not_current_owner, version_conflict, idempotency_conflict.`,
+              description: `Company ${operation}. Identity is bound to the host credential. Mutations require requestId; versioned edits require expectedVersion. Errors: forbidden, not_current_owner, version_conflict, idempotency_conflict.${operation === "listIssues" ? " Returns {items,nextCursor}: bounded current-work summaries; use includeHistory/status for archived work and getIssue for full details." : operation === "workspace" ? " Returns a bounded profile and independent Issue, participating IM thread, and Preview summary indexes, including unanswered outgoing threads and accessible historical batches. Follow nextCursor as cursor, nextThreadCursor as threadCursor, and nextPreviewCursor as previewCursor. limit applies to each index; includeHistory/status filter Issues only. Read CLAUDE.md, getIssue, company_im.thread, and getPreview for details." : ""}`,
               inputSchema: schemas[operation],
               annotations: {
                 readOnlyHint: READ_OPERATIONS.has(operation),

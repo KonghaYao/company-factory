@@ -20,10 +20,7 @@ import { Button, ErrorBox, Spinner } from "./ui/primitives";
 import { OrganizationPanel } from "./features/org/OrganizationPanel";
 import { CreateCompany } from "./features/org/CreateCompany";
 import { OrganizationSheet } from "./features/org/OrganizationSheet";
-import {
-  AgentConfiguration,
-  AgentEditor,
-} from "./features/org/AgentSettings";
+import { AgentConfiguration, AgentEditor } from "./features/org/AgentSettings";
 import { WorkspacePanel } from "./features/workspace/WorkspacePanel";
 import { CreateIssue } from "./features/workspace/CreateIssue";
 import { ModelLibrarySheet } from "./features/models/ModelLibrarySheet";
@@ -142,12 +139,16 @@ export default function App() {
     refetchInterval: POLL_INTERVAL.organization,
   });
   const company: Company | undefined =
-    organization.data?.company || allCompanies.find((item) => item.id === companyId);
+    organization.data?.company ||
+    allCompanies.find((item) => item.id === companyId);
   const agents: Agent[] = organization.data?.agents || [];
   const groups: Group[] = organization.data?.groups || [];
 
   useEffect(() => {
-    if (agents.length && !agents.some((item) => agentId(item) === selectedAgent))
+    if (
+      agents.length &&
+      !agents.some((item) => agentId(item) === selectedAgent)
+    )
       setSelectedAgent(agentId(agents[0]));
   }, [organization.data, selectedAgent]);
 
@@ -408,6 +409,7 @@ export default function App() {
             issues={issues}
             previews={previews}
             threads={threads}
+            notices={workspace.data?.notices || []}
             agents={agents}
             tab={local.tab}
             selectedIssue={local.issueId}

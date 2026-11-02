@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import type {
   Transport,
   JsonRpcNotification,
@@ -18,6 +19,8 @@ export class StdioTransport implements Transport {
   private handler?: ReverseRequestHandler;
   private buffer = "";
   private stderr = "";
+  private readonly stdoutDecoder = new StringDecoder("utf8");
+  private readonly stderrDecoder = new StringDecoder("utf8");
   private ended = false;
   private exited: Promise<void>;
   constructor(
@@ -33,6 +36,8 @@ export class StdioTransport implements Transport {
     this.exited = new Promise((resolve) =>
       this.process.once("close", () => {
         this.ended = true;
+        this.receiveOutput(this.stdoutDecoder.end());
+        this.stderr = (this.stderr + this.stderrDecoder.end()).slice(-5000);
         this.fail(
           new Error(`Peri process exited. ${this.stderr.slice(-1600)}`),
         );
@@ -40,28 +45,33 @@ export class StdioTransport implements Transport {
       }),
     );
     this.process.once("error", (e) => this.fail(e));
+    // Consume raw chunks so Bun's pipe stream keeps draining even when one
+    // chunk ends inside a character. Each decoder retains those partial bytes.
     this.process.stderr.on("data", (chunk) => {
-      this.stderr = (this.stderr + chunk.toString()).slice(-5000);
+      this.stderr = (this.stderr + this.stderrDecoder.write(chunk)).slice(-5000);
     });
     this.process.stdout.on("data", (chunk) => {
-      this.buffer += chunk.toString();
-      let newline: number;
-      while ((newline = this.buffer.indexOf("\n")) >= 0) {
-        const line = this.buffer.slice(0, newline);
-        this.buffer = this.buffer.slice(newline + 1);
-        if (!line.trim()) continue;
-        try {
-          void this.receive(JSON.parse(line));
-        } catch (e) {
-          this.fail(new Error(`Invalid Peri JSON-RPC frame: ${String(e)}`));
-        }
-      }
+      this.receiveOutput(this.stdoutDecoder.write(chunk));
     });
     if (options.settings !== undefined) {
       const body = Buffer.from(JSON.stringify(options.settings));
       const length = Buffer.alloc(4);
       length.writeUInt32BE(body.length);
       this.process.stdin.write(Buffer.concat([length, body]));
+    }
+  }
+  private receiveOutput(chunk: string) {
+    this.buffer += chunk;
+    let newline: number;
+    while ((newline = this.buffer.indexOf("\n")) >= 0) {
+      const line = this.buffer.slice(0, newline);
+      this.buffer = this.buffer.slice(newline + 1);
+      if (!line.trim()) continue;
+      try {
+        void this.receive(JSON.parse(line));
+      } catch (e) {
+        this.fail(new Error(`Invalid Peri JSON-RPC frame: ${String(e)}`));
+      }
     }
   }
   private fail(error: Error) {
