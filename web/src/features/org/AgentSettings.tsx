@@ -1,9 +1,18 @@
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RotateCcw, Save } from "lucide-react";
-import type { Agent, Scope } from "../../lib/types";
+import type { Agent, Runtime, Scope } from "../../lib/types";
 import { agentId } from "../../lib/types";
 import { action, api, post, requestId, scoped } from "../../lib/api";
+import {
+  appliedTierRows,
+  libraryProfile,
+  libraryTierRows,
+  modelErrorLabel,
+  modelReason,
+  modelRevisionMismatch,
+  shortRevision,
+} from "../../lib/model";
 import {
   Button,
   ErrorBox,
@@ -11,6 +20,10 @@ import {
   Loading,
   Sheet,
 } from "../../ui/primitives";
+import { ModelChain } from "../models/ModelChain";
+import { ModelProfilePicker } from "../models/ModelProfilePicker";
+import { ModelTierTable } from "../models/ModelTierTable";
+import { useModelLibrary } from "../models/useModelLibrary";
 
 /** 配置保存与重启是两步：保存不打断工作，重启才应用。 */
 export function AgentConfiguration({
@@ -27,6 +40,11 @@ export function AgentConfiguration({
     queryKey: ["configuration", scope.companyId, scope.agentId],
     queryFn: () => api(scoped(scope, "configuration")),
   });
+  const runtime = useQuery<Runtime>({
+    queryKey: ["runtime", scope.companyId, scope.agentId],
+    queryFn: () => api(scoped(scope, "runtime")),
+  });
+  const library = useModelLibrary(true);
   const [value, setValue] = useState<string | null>(null);
   const [editVersion, setEditVersion] = useState<string | number | undefined>();
   const [success, setSuccess] = useState("");
@@ -66,6 +84,46 @@ export function AgentConfiguration({
   const serialized =
     value ??
     JSON.stringify(q.data?.saved || q.data?.configuration || {}, null, 2);
+  const savedConfig =
+    q.data?.saved && typeof q.data.saved === "object" ? q.data.saved : {};
+  let draftConfig: Record<string, unknown> = savedConfig;
+  try {
+    const parsed = JSON.parse(serialized);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
+      draftConfig = parsed;
+  } catch {
+    // JSON 草稿暂时无效时，选择器回落到已保存的配置。
+  }
+  const draftProfile =
+    typeof draftConfig.modelProfile === "string" ? draftConfig.modelProfile : "";
+  const draftAlias =
+    typeof draftConfig.modelAlias === "string" ? draftConfig.modelAlias : "";
+  /** 选择器只改 JSON 草稿；不会写库、保存或重启。 */
+  const applyModelDraft = (patch: {
+    modelProfile?: string;
+    modelAlias?: string;
+  }) => {
+    let parsed: Record<string, unknown>;
+    try {
+      const candidate = JSON.parse(serialized);
+      if (!candidate || typeof candidate !== "object" || Array.isArray(candidate))
+        throw new Error("configuration must be an object");
+      parsed = { ...candidate };
+    } catch {
+      setParseError(
+        "JSON 草稿格式有误，无法使用模型选择器更新；请先修正 JSON。",
+      );
+      return;
+    }
+    for (const [key, next] of Object.entries(patch)) {
+      if (!next) delete parsed[key];
+      else parsed[key] = next;
+    }
+    if (value === null) setEditVersion(q.data?.version);
+    setValue(JSON.stringify(parsed, null, 2));
+    setParseError("");
+    setSuccess("");
+  };
 
   return (
     <Sheet
@@ -79,6 +137,125 @@ export function AgentConfiguration({
         <Loading />
       ) : (
         <div className="sheet-form">
+          {(() => {
+            const savedProfile =
+              typeof savedConfig.modelProfile === "string"
+                ? savedConfig.modelProfile
+                : "";
+            const savedAlias =
+              typeof savedConfig.modelAlias === "string"
+                ? savedConfig.modelAlias
+                : "";
+            const applied = runtime.data;
+            const currentRevision = library.data?.revision ?? null;
+            const appliedRevision = applied?.modelLibraryRevision ?? null;
+            const revisionMismatch = modelRevisionMismatch(
+              currentRevision,
+              appliedRevision,
+            );
+            const appliedRows = appliedTierRows(applied);
+            const selectedProfile =
+              draftProfile || savedProfile || library.data?.activeProfile || "";
+            const selectedLibraryProfile = libraryProfile(
+              library.data,
+              selectedProfile,
+            );
+            return (
+              <section className="model-profile-summary">
+                <div className="identity-strip">
+                  <span>
+                    已保存 profile ·{" "}
+                    {savedProfile ||
+                      `继承模型库默认${
+                        library.data?.activeProfile
+                          ? `（${library.data.activeProfile}）`
+                          : ""
+                      }`}
+                  </span>
+                  <span>已保存 alias · {savedAlias || "继承 profile"}</span>
+                  <span>已应用 revision · {appliedRevision ? shortRevision(appliedRevision) : "—"}</span>
+                  <span>source · {applied?.modelSource ?? "—"}</span>
+                </div>
+                <div className="model-applied-chain">
+                  <span className="panel-kicker">已应用链路</span>
+                  <ModelChain
+                    profile={applied?.modelProfile}
+                    provider={applied?.modelProvider}
+                    model={applied?.model}
+                    alias={applied?.modelAlias}
+                    empty={applied?.configured === false ? "模型尚未配置" : "未配置"}
+                  />
+                </div>
+                {applied?.configured === false && (
+                  <div className="notice notice-warn">
+                    模型尚未配置：
+                    {modelReason(applied.modelError, applied.modelMissing)}。
+                    修改模型库后需重启 Agent。
+                  </div>
+                )}
+                {revisionMismatch && (
+                  <div className="notice notice-warn">
+                    模型库已更新（{shortRevision(currentRevision!)} ≠ 已应用{" "}
+                    {shortRevision(appliedRevision!)}）；重启 Agent 后生效。
+                  </div>
+                )}
+                {applied?.modelTierNotice && (
+                  <div className="notice notice-warn">
+                    {applied.modelTierNotice}。
+                  </div>
+                )}
+                {library.data && library.data.status !== "ok" && (
+                  <div className="notice notice-warn">
+                    模型库当前不可用：{modelErrorLabel(library.data.error)}
+                    {library.data.issues.length
+                      ? `（${library.data.issues.join("；")}）`
+                      : ""}
+                  </div>
+                )}
+                <ErrorBox error={library.error} />
+                <ModelProfilePicker
+                  profile={draftProfile}
+                  alias={draftAlias}
+                  library={library.data}
+                  onChange={applyModelDraft}
+                />
+                {(draftProfile !== savedProfile ||
+                  draftAlias !== savedAlias) && (
+                  <div className="notice">
+                    模型配置草稿已修改；保存并重启 Agent 后才会应用。
+                  </div>
+                )}
+                <div className="model-tier-blocks">
+                  {appliedRows ? (
+                    <div className="model-tier-block">
+                      <span className="model-tier-caption">已应用快照</span>
+                      <ModelTierTable rows={appliedRows} origin="applied" />
+                    </div>
+                  ) : (
+                    <p className="model-muted">
+                      当前快照没有四档明细；重启该 Agent 后显示。
+                    </p>
+                  )}
+                  {selectedLibraryProfile ? (
+                    <div className="model-tier-block">
+                      <span className="model-tier-caption">
+                        模型库文件 · profile {selectedLibraryProfile.id}
+                      </span>
+                      <ModelTierTable
+                        rows={libraryTierRows(selectedLibraryProfile)}
+                        origin="library"
+                        label={`profile ${selectedLibraryProfile.id} 四档`}
+                      />
+                    </div>
+                  ) : (
+                    <p className="model-muted">
+                      模型库中没有可显示的 profile 档位。
+                    </p>
+                  )}
+                </div>
+              </section>
+            );
+          })()}
           <Field label="保存的配置 · JSON">
             <textarea
               className="code-input"

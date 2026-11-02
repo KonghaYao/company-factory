@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { serveStatic } from "hono/bun";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
@@ -7,6 +7,7 @@ import { randomBytes } from "node:crypto";
 import { CompanyDomain, DomainError, type CallerContext } from "../domain";
 import { PeriRuntime, WorkspaceViewAdapter, FileStoreProvider, ExplicitFirstStoreProvider, sharedSqldProviderFromEnv, redactRuntimeMessage, toChatActionRuntimeError, type StoreProvider } from "../runtime";
 import { AccessControl, AccessError } from "./security";
+import { createPeriChatApi } from "./peri/chat-api";
 import { AgentService } from "./agent-service";
 import { createCompanyMcp } from "./mcp";
 import { MODULE_OPERATIONS, type CompanyModule } from "./operations";
@@ -267,6 +268,12 @@ export async function createApplication(options: ApplicationOptions = {}) {
     access.user(c.req.raw, "");
     return c.json({ companies: await domain.listCompanies() });
   });
+  // Owner-only, read-only model library projection. Never returns endpoint or
+  // credential values; the UI compares `revision` with the applied snapshot.
+  app.get("/api/model-library", async (c) => {
+    access.user(c.req.raw, "");
+    return c.json(runtime.modelLibrary());
+  });
   app.get("/api/companies/:companyId", async (c) => {
     const ctx = access.user(c.req.raw, c.req.param("companyId"));
     const org = await domain.organization(ctx);
@@ -307,6 +314,29 @@ export async function createApplication(options: ApplicationOptions = {}) {
     ),
     agentId: c.req.param("agentId") as string,
   });
+  /**
+   * Peri Chat 官方协议面：/api/chats、actions、payload、projects 与 /sync WS。
+   * 鉴权 → Agent 归属 → runtime 归属都在路由内部完成；必须先于 SPA 回退挂载。
+   */
+  const chatScope = async (c: Context) => {
+    const companyId = String(c.req.query("companyId") ?? "");
+    if (!companyId)
+      throw new AccessError("company_required", "companyId is required", 400);
+    const agentId = String(c.req.query("agentId") ?? "");
+    if (!agentId)
+      throw new AccessError("agent_required", "agentId is required", 400);
+    const caller = access.user(c.req.raw, companyId);
+    const agent = await agents.binding(caller, agentId);
+    return { caller, agent, input: agents.input(agent) };
+  };
+  app.route(
+    "/",
+    createPeriChatApi({
+      runtime,
+      scope: chatScope,
+      restart: (caller, agentId) => agents.restart(caller, agentId),
+    }),
+  );
   app.get("/api/agents/:agentId/workspace", async (c) => {
     const { caller, agentId } = scope(c);
     const workspace = await domain.workspace(caller, { agentId });
@@ -333,58 +363,8 @@ export async function createApplication(options: ApplicationOptions = {}) {
     const { caller, agentId } = scope(c, body);
     return c.json(await agents.restart(caller, agentId));
   });
-  app.get("/api/agents/:agentId/chat", async (c) => {
-    const { caller, agentId } = scope(c);
-    return c.json(
-      await agents.conversation(caller, agentId, c.req.query("cursor")),
-    );
-  });
-  app.post("/api/agents/:agentId/chat", async (c) => {
-    const body = await c.req.json();
-    const { caller, agentId } = scope(c, body);
-    return c.json(await agents.send(caller, agentId, body));
-  });
-  app.post("/api/agents/:agentId/stop", async (c) => {
-    const body = await c.req.json();
-    const { caller, agentId } = scope(c, body);
-    return c.json(await agents.stop(caller, agentId));
-  });
-  app.post("/api/agents/:agentId/queue/take-back", async (c) => {
-    const body = await c.req.json();
-    const { caller, agentId } = scope(c, body);
-    return c.json(
-      await agents.queue(
-        caller,
-        agentId,
-        String(body.inputId ?? ""),
-        "takeBack",
-      ),
-    );
-  });
-  app.post("/api/agents/:agentId/queue/force-send", async (c) => {
-    const body = await c.req.json();
-    const { caller, agentId } = scope(c, body);
-    return c.json(
-      await agents.queue(
-        caller,
-        agentId,
-        String(body.inputId ?? ""),
-        "forceSend",
-      ),
-    );
-  });
-  app.post("/api/agents/:agentId/answer", async (c) => {
-    const body = await c.req.json();
-    const { caller, agentId } = scope(c, body);
-    return c.json(
-      await agents.answer(
-        caller,
-        agentId,
-        String(body.interactionId ?? ""),
-        body.answer,
-      ),
-    );
-  });
+  // 旧聊天 HTTP 面已退役：chat 只经 /api/chats/* 与 /api/chats/:id/sync 驱动。
+  // AgentService 的 send/stop/queue/answer 仍保留给 IM/MCP 内部调用。
   app.get("/api/events", async (c) => {
     const caller = access.user(
       c.req.raw,

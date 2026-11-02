@@ -18,7 +18,7 @@ import {
   sign,
   type KeyObject,
 } from "node:crypto";
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { request } from "node:http";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
@@ -60,8 +60,11 @@ interface SharedState {
   dbPath: string;
 }
 interface Running {
-  child: ChildProcess;
+  /** 本实例 spawn 的子进程；热重载后复用既有 sqld 时为空。 */
+  child?: ChildProcess;
   port: number;
+  /** 不是本实例 spawn、但已确认是本进程直接子进程的既有 sqld。 */
+  adopted?: boolean;
 }
 
 function within(parent: string, child: string) {
@@ -364,12 +367,14 @@ export class SharedSqldProvider implements StoreProvider {
     const state = await this.loadState();
     if (this.running) {
       if (await healthy(this.running.port)) return this.running;
-      const stopped = await stopChild(this.running.child);
-      if (!stopped)
-        throw failure(
-          "shared_sqld_stop_failed",
-          "共享 sqld 未确认退出；拒绝启动第二个共享实例。",
-        );
+      if (this.running.child) {
+        const stopped = await stopChild(this.running.child);
+        if (!stopped)
+          throw failure(
+            "shared_sqld_stop_failed",
+            "共享 sqld 未确认退出；拒绝启动第二个共享实例。",
+          );
+      }
       this.running = undefined;
     }
     return this.start(state);
@@ -659,13 +664,58 @@ export class SharedSqldProvider implements StoreProvider {
       );
   }
 
+  /**
+   * 热重载复用：只接受本进程直接子进程、且 binary/db-path/listen 完全一致的 sqld。
+   * 不向候选进程发送任何凭据，也不终止无法确认归属的进程。
+   */
+  private async adoptRunning(state: SharedState): Promise<Running | undefined> {
+    const { config } = state;
+    const output = await new Promise<string>((resolveOutput) => {
+      execFile(
+        "ps",
+        ["-ww", "-axo", "pid=,ppid=,command="],
+        { encoding: "utf8", maxBuffer: 4 * 1024 * 1024 },
+        (error, stdout) => resolveOutput(error ? "" : stdout),
+      );
+    });
+    if (!output) return undefined;
+    const expected = `--db-path ${state.dbPath}`;
+    const listen = `--http-listen-addr 127.0.0.1:${config.port}`;
+    const matched = output.split("\n").some((line) => {
+      const match = line.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/);
+      if (!match || Number(match[2]) !== process.pid) return false;
+      const command = match[3];
+      return (
+        command.includes(config.binary) &&
+        command.includes(expected) &&
+        command.includes(listen)
+      );
+    });
+    if (!matched) return undefined;
+    // 直接子进程身份已确认；健康检查只用于平滑刚重启的窗口，不作为归属依据。
+    for (let attempt = 0; attempt < 10; attempt++) {
+      if (await healthy(config.port)) break;
+      await delay(100);
+    }
+    return { port: config.port, adopted: true };
+  }
+
   private async start(state: SharedState): Promise<Running> {
     const { config } = state;
-    if (!(await portAvailable(config.port)))
+    if (!(await portAvailable(config.port))) {
+      // `bun --watch` 在同一进程内重跑模块，上一实例 spawn 的 sqld 仍是本进程的
+      // 直接子进程。只承认命令、数据库路径与监听端口完全匹配的直接子进程；
+      // 不终止、不连接也无法确认归属的进程。
+      const adopted = await this.adoptRunning(state);
+      if (adopted) {
+        this.running = adopted;
+        return adopted;
+      }
       throw failure(
         "shared_sqld_port_conflict",
         "配置的共享 sqld 端口已被占用，且无法确认是本服务实例；不会连接或终止占用进程。",
       );
+    }
     let child: ChildProcess;
     try {
       child = spawn(
@@ -792,6 +842,15 @@ export class SharedSqldProvider implements StoreProvider {
         }
       }
       if (!this.running) return;
+      if (this.running.adopted) {
+        // 热重载复用的是上一模块实例 spawn 的进程；不越权终止它。
+        this.running = undefined;
+        return;
+      }
+      if (!this.running.child) {
+        this.running = undefined;
+        return;
+      }
       const stopped = await stopChild(this.running.child);
       if (!stopped)
         throw failure(

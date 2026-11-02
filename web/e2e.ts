@@ -1,11 +1,36 @@
 /** Real local browser verification. No network mocks, fake runtime, or model calls. */
 import { chromium, expect } from "@playwright/test";
-import { mkdtemp, readFile, appendFile, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, appendFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createApplication } from "../src/server/app";
 
 const root = await mkdtemp(join(tmpdir(), "company-browser-"));
+await writeFile(
+  join(root, "model-library.yaml"),
+  `version: 2
+activeProfile: default
+providers:
+  host-openai:
+    type: openai
+    baseUrlEnv: COMPANY_TEST_MODEL_BASE_URL
+    apiKeyEnv: COMPANY_TEST_MODEL_API_KEY
+profiles:
+  default:
+    activeAlias: sonnet
+    tiers:
+      opus:
+        provider: host-openai
+        modelEnv: COMPANY_TEST_MODEL_OPUS_ID
+      sonnet:
+        provider: host-openai
+        modelEnv: COMPANY_TEST_MODEL_ID
+      haiku:
+        provider: host-openai
+        modelEnv: COMPANY_TEST_MODEL_HAIKU_ID
+`,
+  { mode: 0o600 },
+);
 const base = "http://127.0.0.1:43219";
 const token = "browser-test-only-owner-token";
 const binary = process.env.PERI_BINARY ?? resolve(".tools/peri/peri");
@@ -195,7 +220,38 @@ try {
     "A08: explicit question ID answer saved; remains pending until current Agent processes it",
   );
   await page.screenshot({ path: "docs/ui-02-workbench.png", fullPage: true });
+
+  // Read-only model library: header sheet, right-panel tab, and config pickers.
+  await page.getByTestId("open-model-library").click();
+  const modelLibrary = page.getByRole("dialog", { name: "模型库", exact: true });
+  await expect(modelLibrary).toBeVisible();
+  await expect(modelLibrary.getByTestId("model-library-status")).toBeVisible();
+  await expect(modelLibrary.getByTestId("model-library-path")).toContainText(
+    "model-library.yaml",
+  );
+  await expect(modelLibrary.getByTestId("model-library-refresh")).toBeVisible();
+  await expect(
+    modelLibrary.getByTestId("model-tier-table-library").first(),
+  ).toBeVisible();
+  await expect(modelLibrary.getByText("COMPANY_TEST_MODEL_BASE_URL")).toBeVisible();
+  await expect(modelLibrary).not.toContainText("sk-");
+  await expect(modelLibrary).not.toContainText("https://");
+  await expect(modelLibrary).not.toContainText("COMPANY_TEST_MODEL_API_KEY=");
+  await modelLibrary.getByRole("button", { name: "关闭", exact: true }).click();
+  await expect(modelLibrary).toHaveCount(0);
+  await page.getByRole("tab", { name: "模型", exact: true }).click();
+  const modelView = page.getByTestId("model-view");
+  await expect(modelView.getByTestId("model-chain")).toBeVisible();
+  await expect(
+    modelView.locator('[data-testid^="model-tier-table-"]').first(),
+  ).toBeVisible();
+  await expect(modelView.getByTestId("open-global-model-library")).toBeVisible();
+  step("A09: header model-library sheet and right-panel model tab are read-only");
+
   await page.getByRole("button", { name: "Agent 配置", exact: true }).click();
+  await expect(page.getByTestId("model-profile-select")).toBeVisible();
+  await expect(page.getByTestId("model-profile-select")).toHaveValue("");
+  await expect(page.getByTestId("model-alias-select")).toHaveValue("");
   await page
     .getByLabel("保存的配置 · JSON")
     .fill(
@@ -224,7 +280,7 @@ try {
     "A03: save pending + explicit restart retain original Session and apply config",
   );
   await page.getByRole("button", { name: "文件", exact: true }).click();
-  await page.getByRole("button", { name: "claude.md", exact: true }).click();
+  await page.getByRole("button", { name: "CLAUDE.md", exact: true }).click();
   await expect(page.locator(".monaco-editor")).toBeVisible({ timeout: 60000 });
   const editor = page.locator(".monaco-editor textarea").first();
   await editor.focus();
@@ -234,7 +290,7 @@ try {
   await page.getByTestId("file-save").click();
   await expect(page.getByTestId("file-save")).toBeDisabled();
   expect(
-    await readFile(join(supervisor.directory, "claude.md"), "utf8"),
+    await readFile(join(supervisor.directory, "CLAUDE.md"), "utf8"),
   ).toContain("浏览器编辑器真实保存验证。");
   step(
     "A10/A11: default Workspace reads complete Agent tree and Monaco saves actual memory file",
@@ -261,7 +317,7 @@ try {
   await page.getByRole("button", { name: "清除搜索", exact: true }).click();
   await page
     .locator(".file-tabs")
-    .getByRole("button", { name: "claude.md", exact: true })
+    .getByRole("button", { name: "CLAUDE.md", exact: true })
     .click();
   step(
     "A10: native Workspace new-file creation and actual Grep search return persisted bytes",
@@ -271,7 +327,7 @@ try {
   await editor.press("Enter");
   await editor.type("尚未保存的浏览器草稿。");
   await appendFile(
-    join(supervisor.directory, "claude.md"),
+    join(supervisor.directory, "CLAUDE.md"),
     "\n磁盘外部修改保留。\n",
   );
   await expect(page.getByTestId("file-conflict")).toBeVisible({
@@ -279,7 +335,7 @@ try {
   });
   await expect(page.getByTestId("file-save")).toBeDisabled();
   expect(
-    await readFile(join(supervisor.directory, "claude.md"), "utf8"),
+    await readFile(join(supervisor.directory, "CLAUDE.md"), "utf8"),
   ).toContain("磁盘外部修改保留。");
   await page.screenshot({
     path: "docs/ui-03-file-conflict.png",

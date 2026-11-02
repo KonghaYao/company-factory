@@ -1,3 +1,4 @@
+import { websocket } from "@hono/bun";
 import { createApplication } from "./app";
 const hostname = process.env.COMPANY_HOST ?? "127.0.0.1";
 if (
@@ -15,6 +16,7 @@ const server = Bun.serve({
   hostname,
   port,
   fetch: application.app.fetch,
+  websocket,
   idleTimeout: 60,
 });
 console.log(

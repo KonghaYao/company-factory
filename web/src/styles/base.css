@@ -1,4 +1,7 @@
 /* 基础层：重置、排版、通用控件、弹层与登录/空公司页面。 */
+/* 元素级重置放入 base 层，让 Peri 子树的 Tailwind utilities 能覆盖它们；
+   类选择器保持未分层，公司组件外观不变。 */
+@layer base {
 *,
 *::before,
 *::after {
@@ -80,6 +83,7 @@ dd,
 dt {
   margin: 0;
 }
+}
 
 .app {
   display: flex;
@@ -159,6 +163,30 @@ dt {
   color: var(--muted);
   font-size: 11px;
   letter-spacing: 0.02em;
+}
+
+/* 顶栏「模型库」只读入口。移动端只保留图标。 */
+.header-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 550;
+  white-space: nowrap;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.header-action:hover {
+  color: var(--ink);
+  border-color: var(--line-strong);
 }
 
 .pulse-dot,

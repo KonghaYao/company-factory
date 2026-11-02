@@ -6,7 +6,7 @@
 
 **最终 live 验收（2026-10-31，计划 §11 字面口径）：`closure=true`。** Linux 容器内使用官方 Peri 4.4.1、sqld 0.24.32 与 bwrap 执行 Stage 2 `--mode=linux-full`，E00–E19 全部 passed；真实模型端点、真实 Session、Workspace、Git、Preview、CI/Review、重启与 IM 均实际执行，未用单测或 fixture 替代。证据：`/tmp/cf-e2e-delivery-round2.n5TgK726/`（run `91201b67`）。
 
-**测试与平台边界：** Linux 全量 `101 pass / 24 skip / 0 fail`；宿主 macOS 全量 `100 pass / 24 skip / 1 fail`，唯一失败是既有的 `sandbox_unavailable`（Agent Git 沙箱要求 Linux bubblewrap）。macOS 的 Workspace/File/Git/Preview/CI 仍 fail closed，不能算全业务通过。
+**测试与平台边界：** 宿主 macOS 全量 `138 pass / 24 skip / 1 fail`，唯一失败是既有的 `sandbox_unavailable`（Agent Git 沙箱要求 Linux bubblewrap）。Linux 全量在此前 live 验收中为 `101 pass / 24 skip / 0 fail`。macOS 的 Workspace/File/Git/Preview/CI 仍 fail closed，不能算全业务通过。
 
 **未验证项，不能声称：** 原始 `PERI_MODEL_ID_FABLE` 请求返回 HTTP 400，供应商 `/models` 无独立 fable 模型；live 测试用项目外临时 0600 env 将 fable 回退到 opus。四档 **alias 路由**已验证，但**独立 fable 模型未验证**，不能声称四档四模型全部通过。`agentCiExecuted=true` 来自真实 Session 中 Bash 调用的 args/result 匹配，不是密码学证明；宿主独立 CI digest 是权威，恶意 Agent 理论上可用 `echo` 伪造。多数步骤的 `toolCalls` 证据为空；E13 的 canonical JSON 未保存，无法仅凭交付文件独立重算 digest；E07 的 `resolveDecision` 返回 `invalid_state`（decision 已 answered），业务终态正确。
 
@@ -50,26 +50,42 @@ npm start
 | `COMPANY_WEB_TOKEN` | 可选：覆盖本地自动生成的所有者口令 |
 | `COMPANY_WORKSPACE` | 可选：仅 `disabled` 时关闭宿主 Workspace MCP（公司/会话/聊天可用，Agent 的 Workspace/Git 工具仍 fail closed；所有者「文件」视图不受影响）；缺省保持官方 Workspace |
 | `PERI_BINARY` | `.tools/peri/peri`；官方 4.4.1，仅用于 Workspace/MCP，不承载 Agent ACP |
-| `PERI_MODEL_PROVIDER` | `openai`；采用 Peri 支持的 provider 类型 |
-| `PERI_MODEL_BASE_URL` | 模型供应商兼容端点，例如你的 OpenAI-compatible `/v1` 地址 |
-| `PERI_MODEL_ID` | 兼容旧单模型配置的基础模型 ID；仅在没有任何 `PERI_MODEL_ID_<档位>`/`config.models` 时填充其他档位 |
-| `PERI_MODEL_ID_FABLE` | 可选：`fable` 档模型 ID；缺省回退 `PERI_MODEL_ID` |
-| `PERI_MODEL_ID_OPUS` | 可选：`opus` 档模型 ID；缺省回退 `PERI_MODEL_ID` |
-| `PERI_MODEL_ID_SONNET` | 可选：`sonnet` 档模型 ID；缺省回退 `PERI_MODEL_ID` |
-| `PERI_MODEL_ID_HAIKU` | 可选：`haiku` 档模型 ID；缺省回退 `PERI_MODEL_ID` |
-| `PERI_MODEL_API_KEY` | 你的模型凭据；只从可信宿主环境读取，不在源码包内 |
+| `COMPANY_MODEL_LIBRARY` | 可选：模型库 YAML 的绝对路径；默认 `$COMPANY_HOME/model-library.yaml`。不得位于 `agents/`、`companys/` 或 `runtime/workspace/` |
+| `OPENAI_BASE_URL` / `OPENAI_API_KEY` | 示例 provider 引用的端点与凭据环境变量**名**；实际名称由模型库的 `baseUrlEnv`/`apiKeyEnv` 指定 |
+| `OPENAI_DEFAULT_<TIER>_MODEL` | 示例模型库引用的档位模型环境变量**名**；实际名称由 `modelEnv` 指定 |
 
-例：在启动服务的终端中设置供应商配置，然后 `npm start`。模型凭据、端点和模型 ID **只从宿主进程环境读取**；Agent 目录下的 `.env` 对 Agent 只读，且 runtime 不会为模型解析读取它。**已有 Agent 需在工作台点击“重启 Agent”后应用。** 不要把凭据提交到本源码仓库。
+例：模型库是宿主私有 0600 YAML，profile 通过 provider 绑定模型；环境变量只保存名称，值始终来自启动服务的宿主进程环境。**已有 Agent 需在工作台点击“重启 Agent”后应用。**
 
-```bash
-export PERI_MODEL_BASE_URL='https://YOUR-PROVIDER/v1'
-export PERI_MODEL_ID='YOUR-MODEL'
-export PERI_MODEL_ID_FABLE='YOUR-FABLE-MODEL' # 可选
-export PERI_MODEL_API_KEY='YOUR-SECRET'
-npm start
+```yaml
+# $COMPANY_HOME/model-library.yaml · 必须 0600，普通文件、当前用户所有、无符号链接
+version: 2
+activeProfile: default
+providers:
+  host-openai:
+    type: openai                 # openai | anthropic
+    baseUrlEnv: OPENAI_BASE_URL
+    apiKeyEnv: OPENAI_API_KEY
+profiles:
+  default:
+    activeAlias: sonnet          # fable | opus | sonnet | haiku
+    tiers:
+      fable:
+        provider: host-openai
+        modelEnv: OPENAI_DEFAULT_FABLE_MODEL
+      opus:
+        provider: host-openai
+        modelEnv: OPENAI_DEFAULT_OPUS_MODEL
+      sonnet:
+        provider: host-openai
+        modelEnv: OPENAI_DEFAULT_SONNET_MODEL
+      haiku:
+        provider: host-openai
+        modelEnv: OPENAI_DEFAULT_HAIKU_MODEL
 ```
 
-**四档优先级与冻结边界。** 每个 Agent 由 `config.modelAlias` 选择活动档位（`fable` / `opus` / `sonnet` / `haiku`，默认 `sonnet`）。每一档按以下顺序解析：`config.models[档位]` → 活动档位的旧 `config.model` → `PERI_MODEL_ID_<档位>` → `PERI_MODEL_ID` → 未配置。只有完全没有四档来源（无 `config.models` 档位且无任何 `PERI_MODEL_ID_<档位>`）时，旧 `config.model` 才作为四档共同回退，保持单模型行为；一旦存在四档来源，`config.model` 只覆盖活动档位，不会污染其他档。`PERI_MODEL_ID_<档位>` 只接受全大写档位名；未知或大小写错误的 `PERI_MODEL_*` 名称会在 provision/显式重启时以 `invalid_model_configuration` 明确拒绝（错误只含变量名，不含值）。模型 provider、baseUrl、apiKey 与档位 env 只来自**可信宿主进程环境**；Agent 可写的 `.env` 永远不会被模型解析读取。`config.settings` 是保留字段，不会被合并进 Peri 配置。模型 env、四档矩阵、apiKey 与 baseUrl 只在 provision/显式重启时写入宿主私有 `runtime/effective-config/<agent>.json`（0600）；普通 cold wake 读取该快照，不重新读取 env。活动档位缺模型、apiKey 或 baseUrl 时，Session 仍可创建，但发送会在提交模型输入前以 `model_not_configured` 拒绝。运行时快照只暴露 `modelAlias` 与活动模型 ID，不暴露 apiKey/baseUrl。
+**profile → provider → model 与冻结边界。** v2 模型库按 id 嵌套 `providers` 与 `profiles`，没有顶层 `models`，也没有 `bindings`；每个 profile 的 `tiers.<tier>` 直接写 `{ provider, model | modelEnv }`。v1 文件（`version: 1` 或旧的顶层数组）不会被猜测迁移，而是以 `library_version_unsupported` 拒绝。Agent 配置只引用 profile：`config.modelProfile` 为显式 profile，缺失或 `""` 时继承模型库 `activeProfile`；显式 profile 不存在或已禁用时**不回退**，运行时为未配置并给出诊断。保存配置时显式拒绝已退役的 `model/models/provider/baseUrl/apiKeyEnv` 键（`invalid_input`，提示改用 `modelProfile`），其他未知键保持 passthrough 语义。每 Agent 仍可用 `config.modelAlias` 覆盖活动档位（缺省为 `profile.activeAlias`，再缺省 `sonnet`；非法值抛 `invalid_model_configuration`）。档位绑定的模型不可用时不会回退；未绑定的档位按活动 alias → `sonnet` → 其他已绑定档回退，四档始终有输出。模型库 schema 严格拒绝未知字段（包括误贴的 `apiKey: sk-...`）、重复 ID 与未知引用。provider 只接受 `baseUrlEnv`/`apiKeyEnv` 环境变量**名**，不再接受字面 `baseUrl`；`model` 与 `modelEnv` 每档二选一。解析出的 endpoint 与凭据值只存在于宿主内存和 0600 快照中，不写回库文件、不出现在 API/UI。文件缺失、权限不是 0600、符号链接/硬链接、owner 不符或位于 Agent 可见目录时，服务继续运行但状态为 `insecure/missing/invalid`，发送在提交模型输入前以 `model_not_configured` 拒绝。
+
+**只读展示与 revision。** 运行时快照暴露 `modelProfile/modelProvider/modelAlias/model/modelMissing/modelError/modelSource/modelLibraryRevision`，以及 v2 的 `modelTiers/modelTierProviders/modelTierSources/modelResolvedAt`；旧快照没有四档明细时给出 `modelTierNotice`，重启后补齐。`GET /api/model-library` 只返回 `status/error/issues/path/version/activeProfile/revision/profiles[]/providers[]`；profile 的四个档位带 `bound/provider/providerType/model/modelEnv/missing/ready`，provider 只返回 `baseUrlEnv/apiKeyEnv` 名称与 `endpointConfigured/credentialConfigured` 布尔，不返回任何值，也没有顶层 `models` 或 `bindings`。工作台顶栏「模型库」打开全局只读 Sheet（路径、短 revision、默认 profile、profile 四档与 provider 环境变量名）；右侧面板「模型」tab 显示当前 Agent 的已应用链路、已保存配置、四档表与库摘要；Agent 配置中的 profile/alias 选择器只修改 JSON 草稿，保存仍走现有 CAS，重启才应用。UI 不做写回，也不新增 PUT。
 
 未配置模型时，只要显式本地存储或单一共享 sqld 自动供给已配置、工具隔离可用，仍可创建组织/真实固定 Session、手动操作 Issue 和文件；Chat 提示模型配置缺失。存储缺配会明确失败，不以空 Session 替代。
 
@@ -115,9 +131,9 @@ npm start
 
 1. 创建 Company，自动生成总部、HR、任务主管和两个真实 Session。
 2. “组织设置”可创建部门；成员定义送入 HR 的固定 Chat 草稿，由 HR 的可信 MCP 身份创建成员。不会借用户界面伪装 HR。
-3. 侧栏员工行右侧的编辑按钮可修改姓名、职责和该员工专属的系统提示词；提示词从下一条消息起注入，不改变固定 Session，也不需要重启。
+3. 侧栏员工行右侧的编辑按钮可修改姓名、职责和该员工专属的系统提示词；变更会更新 `CLAUDE.md` 的 Company 托管块，作为长期职责权威。系统提示词只在 Session 创建时组装一次，已有固定 Session 不会被字面重建；Agent 开工前读取 `CLAUDE.md`，因此职责/记忆更新不需要新开 Session。
 4. 用户创建 Issue 后进入 `triage`，负责人是任务主管。主管分类、选择 `software-delivery`、指派；Dev 独立维护计划/代码/worktree。
-5. 为需要代码仓库的成员，在配置中设置 `workspaceRoots` 为**公司数据目录之外、由用户授权的真实 Git 仓库**绝对路径，保存后手动重启。同一配置面可设置 `modelAlias` 与 `models` 档位覆盖。HR 可定义成员的模型档位与职责/指导，但不能自行授予 provider、baseUrl、apiKeyEnv、MCP 或文件系统挂载。
+5. 为需要代码仓库的成员，在配置中设置 `workspaceRoots` 为**公司数据目录之外、由用户授权的真实 Git 仓库**绝对路径，保存后手动重启。同一配置面可设置 `modelProfile`（模型库 profile）与 `modelAlias`（活动档位覆盖）。HR 可定义成员的 profile 档位与职责/指导，但不能自行授予 provider、baseUrl、apiKeyEnv、MCP 或文件系统挂载。
 6. Preview Agent 经默认 Workspace 创建本地集成分支/启动 Dev 环境，通过 `company_tasks` 记录批次、代码、环境入口和逐 Issue 清单。用户针对明确 Issue/代码验收；之后记录 CI 与 Code Review，二者均通过才可 `ready_merge`。本期不自动合入/发布。
 7. 黄色行对应未处理的具体裁定问题。答复先落盘，再向当前 Agent 投递处理提示；问题由该 Agent 标记 answered，其他 pending 继续保留。
 8. 文件页提供完整树、搜索、Monaco 编辑、Git Diff/commit、代码选区引用、外部修改冲突保留。个人记忆、知识和项目文件可用；Company 业务源文件和可信身份配置不能借文件编辑绕过服务。
@@ -126,7 +142,7 @@ npm start
 
 - `agentId`、活动目录、`sessionId` 固定。并发唤醒复用同一实例；初始化 Session 后可无存活实例。
 - 保存只改 `config`，普通唤醒仍使用 `effectiveConfig`。手动重启应用新配置且保留 Session。
-- 当前 Peri 的 **frozen system context 不支持在同一 Session 上重建**。本适配不篡改 Peri SQLite，也不偷偷新开会话：后续输入由宿主显式附加“当前已应用职责/指导”，旧 frozen context 保留为历史；当前学习记忆通过实际 Workspace 读取。模型/MCP 连接按官方 Session load 路径重绑。请阅读 [SDK 接入依据](docs/SDK-INTEGRATION.md)，不要把“固定 Session 重启”理解为删除/重写历史系统消息。
+- 当前 Peri 的 **frozen system context 不支持在同一 Session 上重建**，且 `session/load` 不会替换创建时的 instructions。本适配不篡改 Peri SQLite，也不偷偷新开会话：只在 provision 或目标 Session 缺失需替代创建时组装完整系统提示词（role、responsibilities、Agent 专属 systemPrompt、`config.instructions`、Company 硬约束与 `CLAUDE.md` 指针）；已有 Session 的普通 wake/显式 restart 继续使用同一冻结提示词。可变职责、记忆和最新岗位档案由 `CLAUDE.md` 承载，Agent 开工前读取。旧消息中曾注入的上下文保留为历史，新发送的用户正文不再包含宿主注入块。模型/MCP 连接按官方 Session load 路径重绑。请阅读 [SDK 接入依据](docs/SDK-INTEGRATION.md)，不要把“固定 Session 重启”理解为删除/重写历史系统消息。
 - 运行时授权/问答与 Company 决策分开；停止和输入队列使用 SDK 原生控制。未接通的附件上传能力不开放。
 
 ## 4. 数据和安全边界
@@ -134,12 +150,13 @@ npm start
 ```text
 ~/.company/
   owner-token                   # 本地用户访问口令，不挂给 Agent
+  model-library.yaml            # 宿主私有模型库，必须 0600；只存环境变量名，不存密钥
   companys/<company-id>/         # 此拼写按任务书保留
     company.yaml  groups.yaml  roster.yaml
     tasks/  comments/  pipelines/  previews/  knowledgebase/
     im/threads/  im/messages/  events/
   agents/<agent-id>/
-    agent.yaml  claude.md  .mcp.json  .env  tasks/  .git/   # .env 对 Agent 只读，不用于模型配置
+    agent.yaml  CLAUDE.md  .mcp.json  .env  tasks/  .git/   # .env 对 Agent 只读，不用于模型配置
   runtime/effective-config/<agent-id>.json  # host-only 已生效模型/MCP快照，0600
   runtime/agents/<agent-id>/
     sessions.db                 # 仅旧 native 数据，原样保留，不读写迁移
@@ -154,6 +171,8 @@ $COMPANY_SQLD_ROOT/sqld/shared/
 ```
 
 WASM Session/消息由本地 sqld 落盘：显式模式由所有者准备端点，自动模式使用单一共享实例（宿主按 Agent cwd/scope 隔离 Session）；既有库不会由 Company 服务自动迁移。
+
+旧 Agent 的小写 `claude.md` 可用 `bun scripts/migrate-agent-memory.ts --dry-run` 预览，再运行一次完成迁移；脚本把 `agent.yaml` 的当前档案写入托管块、保留自由记忆区，遇到同名 `CLAUDE.md` 与 `claude.md` 共存时只报告冲突而不覆盖，也不会自动提交 Agent 仓库。
 
 恰好三个自定义 MCP：`/company_org/mcp`、`/company_tasks/mcp`、`/company_im/mcp`，使用 `@peri-code/mcpp` 的 MCP **2026-07-28** mono 路由、资源与订阅。Workspace 沿用官方实际 stdio 传输，不虚构 Company Workspace URL。AgentSystem 只在服务内部。
 

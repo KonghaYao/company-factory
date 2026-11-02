@@ -1,6 +1,8 @@
 @import "./tokens.css";
 @import "./base.css";
 @import "./workbench.css";
+@import "./peri-chat.css";
+@import "../peri/styles/chat-tokens.css";
 @import "./chat.css";
 @import "./workspace.css";
 @import "./markdown.css";

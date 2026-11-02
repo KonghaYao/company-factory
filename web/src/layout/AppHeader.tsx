@@ -1,4 +1,4 @@
-import { Boxes, ChevronRight } from "lucide-react";
+import { Boxes, ChevronRight, Cpu } from "lucide-react";
 
 /**
  * 全局顶栏只承担三件事：品牌、当前上下文、本地状态。
@@ -7,9 +7,11 @@ import { Boxes, ChevronRight } from "lucide-react";
 export function AppHeader({
   companyName,
   agentName,
+  onOpenModels,
 }: {
   companyName?: string;
   agentName?: string;
+  onOpenModels: () => void;
 }) {
   return (
     <header className="app-header">
@@ -35,6 +37,17 @@ export function AppHeader({
         )}
       </nav>
       <div className="header-status">
+        <button
+          type="button"
+          className="header-action"
+          data-testid="open-model-library"
+          aria-label="模型库"
+          title="模型库"
+          onClick={onOpenModels}
+        >
+          <Cpu size={14} />
+          <span className="header-action-label">模型库</span>
+        </button>
         <span className="pulse-dot" aria-hidden="true" />
         本地优先
         <span className="status-sep" />

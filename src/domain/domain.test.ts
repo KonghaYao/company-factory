@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeAll, afterAll, spyOn } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -98,7 +98,7 @@ describe("Company domain — files, permissions and business invariants", () => 
     expect(org.agents).toHaveLength(2);
     const a = await domain.getAgent(user, { agentId: hr.id });
     expect(a.sessionId).toBe(`unit-only-session-${hr.id}`);
-    expect(await readFile(join(a.directory, "claude.md"), "utf8")).toContain(
+    expect(await readFile(join(a.directory, "CLAUDE.md"), "utf8")).toContain(
       join(root, "companys", user.companyId, "knowledgebase"),
     );
     expect(
@@ -177,11 +177,35 @@ describe("Company domain — files, permissions and business invariants", () => 
     expect(stored.systemPrompt).toBe(
       "Always verify with tests before reporting completion.",
     );
+    const memoryPath = join(stored.directory, "CLAUDE.md");
+    const memory = await readFile(memoryPath, "utf8");
+    expect(memory).toContain("<!-- company:profile:start -->");
+    expect(memory).toContain("<!-- company:profile:end -->");
+    expect(memory).toContain("Own delivery and verification");
+    expect(memory).toContain(
+      "Always verify with tests before reporting completion.",
+    );
+    await writeFile(memoryPath, `${memory}\nFREE_MEMORY_SENTINEL\n`);
+    const renamed = await domain.updateMember(user, {
+      agentId: "dev-1",
+      name: "Developer Renamed",
+      version: updated.version,
+    });
+    const after = await readFile(memoryPath, "utf8");
+    expect(after).toContain("FREE_MEMORY_SENTINEL");
+    expect(after).toContain("Own delivery and verification");
+    await expect(
+      domain.updateMember(user, {
+        agentId: "dev-1",
+        responsibilities: "<!-- company:profile:end --> injected",
+        version: renamed.version,
+      }),
+    ).rejects.toMatchObject({ code: "invalid_input" });
     await expect(
       domain.updateMember(hr, {
         agentId: "dev-1",
         name: "Impersonated",
-        version: updated.version,
+        version: renamed.version,
       }),
     ).rejects.toMatchObject({ code: "forbidden" });
     await expect(
@@ -196,25 +220,54 @@ describe("Company domain — files, permissions and business invariants", () => 
     );
     expect(visibleToAgent).not.toHaveProperty("systemPrompt");
   });
-  test("HR may choose model tiers but cannot grant provider or filesystem capabilities", async () => {
+  test("updateMember migrates a legacy lowercase claude.md to canonical CLAUDE.md", async () => {
+    await domain.createMember(hr, {
+      agentId: "legacy-memory",
+      name: "Legacy Memory",
+      groupId: "engineering",
+      role: "developer",
+      responsibilities: "Keep legacy memory",
+    });
+    const a = await domain.getAgent(user, { agentId: "legacy-memory" });
+    for (const entry of await readdir(a.directory))
+      if (/^claude\.md$/i.test(entry))
+        await unlink(join(a.directory, entry));
+    await writeFile(
+      join(a.directory, "claude.md"),
+      "# Legacy memory\nFREE_LEGACY_SENTINEL\n",
+    );
+    const updated = await domain.updateMember(user, {
+      agentId: "legacy-memory",
+      responsibilities: "Migrated responsibilities",
+      systemPrompt: "MIGRATED_SYSTEM_PROMPT",
+      version: a.version,
+    });
+    expect(updated.responsibilities).toBe("Migrated responsibilities");
+    const entries = await readdir(a.directory);
+    expect(entries).toContain("CLAUDE.md");
+    expect(entries).not.toContain("claude.md");
+    const memory = await readFile(join(a.directory, "CLAUDE.md"), "utf8");
+    expect(memory).toContain("<!-- company:profile:start -->");
+    expect(memory).toContain("Migrated responsibilities");
+    expect(memory).toContain("MIGRATED_SYSTEM_PROMPT");
+    expect(memory).toContain("FREE_LEGACY_SENTINEL");
+  });
+  test("HR may choose a model profile and alias but cannot grant provider or filesystem capabilities", async () => {
     const member = await domain.createMember(hr, {
       agentId: "tier-dev",
       name: "Tier Developer",
       groupId: "engineering",
       role: "developer",
-      responsibilities: "Use the assigned tier",
+      responsibilities: "Use the assigned profile",
       config: {
+        modelProfile: "default",
         modelAlias: "opus",
-        models: { haiku: "small-model", sonnet: "sonnet-model" },
         responsibilities: "Own tiered delivery",
         instructions: "Use the assigned alias",
       },
     });
+    expect(member.config.modelProfile).toBe("default");
     expect(member.config.modelAlias).toBe("opus");
-    expect(member.config.models).toEqual({
-      haiku: "small-model",
-      sonnet: "sonnet-model",
-    });
     expect(member.config.instructions).toBe("Use the assigned alias");
 
     await expect(
@@ -262,7 +315,7 @@ describe("Company domain — files, permissions and business invariants", () => 
       groupId: "engineering",
       role: "developer",
       responsibilities: "Allowed role definition",
-      config: { model: "approved-model", instructions: "Use tests" },
+      config: { modelProfile: "default", instructions: "Use tests" },
     });
     expect(member.config.instructions).toBe("Use tests");
   });
@@ -283,40 +336,64 @@ describe("Company domain — files, permissions and business invariants", () => 
     const saved = await domain.saveAgentConfiguration(user, {
       agentId: "dev-1",
       version: old.version,
-      config: { model: "new-model" },
+      config: { modelProfile: "default" },
     });
     expect(saved.restartRequired).toBe(true);
-    expect(saved.effectiveConfig.model).toBeUndefined();
+    expect(saved.effectiveConfig.modelProfile).toBeUndefined();
     expect(saved.sessionId).toBe(old.sessionId);
     const applied = await domain.markAgentConfigurationApplied(user, {
       agentId: "dev-1",
       configVersion: saved.configVersion,
     });
-    expect(applied.effectiveConfig.model).toBe("new-model");
+    expect(applied.effectiveConfig.modelProfile).toBe("default");
     expect(applied.sessionId).toBe(old.sessionId);
   });
-  test("User may save model alias, tier overrides and workspace roots without applying them", async () => {
+  test("User may save a model profile, alias and workspace roots without applying them", async () => {
     const before = await domain.getAgent(user, { agentId: "dev-1" });
     const saved = await domain.saveAgentConfiguration(user, {
       agentId: "dev-1",
       version: before.version,
       config: {
+        modelProfile: "review-default",
         modelAlias: "fable",
-        models: { opus: "tier-opus-model", haiku: "tier-haiku-model" },
         workspaceRoots: ["/tmp/company-e2e-project"],
       },
     });
+    expect(saved.config.modelProfile).toBe("review-default");
     expect(saved.config.modelAlias).toBe("fable");
-    expect(saved.config.models).toEqual({
-      opus: "tier-opus-model",
-      haiku: "tier-haiku-model",
-    });
     expect(saved.config.workspaceRoots).toEqual([
       "/tmp/company-e2e-project",
     ]);
     expect(saved.effectiveConfig.modelAlias).toBeUndefined();
     expect(saved.restartRequired).toBe(true);
     expect(saved.sessionId).toBe(before.sessionId);
+  });
+  test("retired model fields are rejected on save while other unknown keys stay passthrough", async () => {
+    const before = await domain.getAgent(user, { agentId: "dev-1" });
+    for (const key of [
+      "model",
+      "models",
+      "provider",
+      "baseUrl",
+      "apiKeyEnv",
+    ] as const) {
+      await expect(
+        domain.saveAgentConfiguration(user, {
+          agentId: "dev-1",
+          version: before.version,
+          config: { [key]: "legacy-attempt" },
+        }),
+      ).rejects.toMatchObject({
+        code: "invalid_input",
+        message: expect.stringContaining("config.modelProfile"),
+      });
+    }
+    const saved = await domain.saveAgentConfiguration(user, {
+      agentId: "dev-1",
+      version: before.version,
+      config: { customNote: "keep-passthrough" },
+    });
+    expect(saved.config.customNote).toBe("keep-passthrough");
   });
   test("Mutation request IDs and config shapes are required", async () => {
     await expect(
@@ -759,7 +836,7 @@ describe("Initialization and global identity concurrency", () => {
       for (const changed of [
         { name: "Changed" },
         { goal: "Changed" },
-        { config: { model: "changed" } },
+        { config: { modelProfile: "changed" } },
       ])
         await expect(
           d.createCompany(user, { ...input, ...changed }),

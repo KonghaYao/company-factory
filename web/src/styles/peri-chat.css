@@ -1,0 +1,292 @@
+/*
+ * Peri Chat 的 Tailwind v4 入口（仅主题 + utilities，不含 preflight）。
+ *
+ * 来源：Peri `frontend/tailwind.css`；差异只在接入方式：
+ * - utilities 放 @layer，让公司未分层 CSS 的元素重置先失效（见 styles/base.css）；
+ * - 主题变量收敛到 `.peri-chat`，避免覆盖公司工作台的 --accent/--border 等 token；
+ * - 作用域 preflight 子集放在 base 层，只影响 Peri 子树。
+ */
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+@import "tw-animate-css";
+/* tw-shimmer 提供 `shimmer` 工具类，运行态状态行使用它 */
+@import "tw-shimmer";
+
+/* Peri Chat 子树与 Streamdown dist 需要被扫描。 */
+@source "../peri";
+@source "../../../node_modules/streamdown/dist/*.js";
+
+@custom-variant dark (&:is(.dark *));
+
+/* 折叠组件状态变体：同时匹配 Radix（data-state）与 Base UI（data-open / data-closed）的 DOM 约定 */
+@custom-variant data-open (&:where([data-state="open"], [data-open]:not([data-open="false"])));
+@custom-variant data-closed (&:where([data-state="closed"], [data-closed]:not([data-closed="false"])));
+@custom-variant data-active (&:where([data-active="true"], [data-active]:not([data-active="false"])));
+
+@theme inline {
+  --font-sans: "Noto Sans SC", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+  --font-heading: var(--font-sans);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+
+  /* 折叠动画（vendored 组件沿用 registry 的动画变量）；高度变量同时兼容 Radix 与 Base UI */
+  @keyframes collapsible-down {
+    from {
+      height: 0;
+    }
+    to {
+      height: var(--radix-collapsible-content-height, var(--collapsible-panel-height, auto));
+    }
+  }
+
+  @keyframes collapsible-up {
+    from {
+      height: var(--radix-collapsible-content-height, var(--collapsible-panel-height, auto));
+    }
+    to {
+      height: 0;
+    }
+  }
+}
+
+.peri-chat {
+  --radius: 0.625rem;
+  /* 公司 tokens.css 在 :root 定义了同名变量；子树内必须覆盖，Peri 圆角才一致。 */
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
+}
+
+/*
+ * 作用域内 preflight 子集：不引 Tailwind preflight，避免影响公司其余页面。
+ * 放在 base 层，utilities 仍可覆盖边框与背景。
+ */
+@layer base {
+  .peri-chat,
+  .peri-chat *,
+  .peri-chat *::before,
+  .peri-chat *::after {
+    border-width: 0;
+    border-style: solid;
+    box-sizing: border-box;
+  }
+  .peri-chat {
+    font-family: var(--font-sans);
+    color: var(--foreground);
+    background-color: var(--background);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    color-scheme: light;
+  }
+  .peri-chat :where(button, input, textarea, select) {
+    font: inherit;
+    color: inherit;
+  }
+  .peri-chat :where(button) {
+    cursor: pointer;
+    background: none;
+  }
+}
+
+/*
+ * Company Composer 皮肤（作用域：.peri-chat + Composer data-slot）。
+ *
+ * 不放 @layer：styles/base.css 的 `textarea` 规则未分层，会压过 Peri 的
+ * utilities（bg-transparent / outline-none），造成内层白底、灰边框与
+ * accent-soft focus ring。这里用未分层的、更高 specificity 的作用域规则
+ * 统一面板外观：外框是唯一焦点指示，textarea 自身无边框、无背景、无 ring。
+ */
+.peri-chat [data-slot="composer-shell"] {
+  background: var(--panel, var(--surface, #fff));
+  border: 1px solid var(--line-strong, var(--border, #d6d2c9));
+  border-radius: var(--radius-lg, 14px);
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(32, 36, 42, 0.05));
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.peri-chat [data-slot="composer-shell"]:focus-within {
+  border-color: var(--accent-strong, var(--accent, #2d47b2));
+  box-shadow:
+    0 0 0 3px var(--accent-soft, #eef2ff),
+    var(--shadow-sm, 0 1px 2px rgba(32, 36, 42, 0.05));
+}
+
+.peri-chat [data-slot="peri-composer-input"] {
+  min-width: 0;
+  padding: 10px 12px 0;
+}
+
+.peri-chat [data-slot="peri-composer-textarea"] {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 6px 2px;
+  border: 0;
+  border-radius: 0;
+  outline: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink, var(--foreground));
+  caret-color: var(--accent-strong, var(--accent, #2d47b2));
+  font-size: 14px;
+  line-height: 1.5;
+  resize: none;
+  transition: none;
+}
+
+.peri-chat [data-slot="peri-composer-textarea"]:focus,
+.peri-chat [data-slot="peri-composer-textarea"]:focus-visible {
+  border: 0;
+  outline: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.peri-chat [data-slot="peri-composer-textarea"]::placeholder {
+  color: var(--faint, #98a0aa);
+  opacity: 1;
+}
+
+.peri-chat [data-slot="peri-composer-status"] {
+  min-width: 0;
+  padding: 2px 12px 10px;
+}
+
+.peri-chat [data-slot="peri-composer-send"] {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  background: var(--accent-strong, var(--accent, #2d47b2));
+  color: #fff;
+  opacity: 1;
+  box-shadow: 0 1px 2px rgba(32, 36, 42, 0.18);
+  transition:
+    background-color 0.15s ease,
+    opacity 0.15s ease;
+}
+
+.peri-chat [data-slot="peri-composer-send"]:not(:disabled):hover {
+  opacity: 0.88;
+}
+
+.peri-chat [data-slot="peri-composer-send"]:disabled {
+  background: var(--surface-strong, #f0eee8);
+  color: var(--faint, #98a0aa);
+  opacity: 1;
+  box-shadow: inset 0 0 0 1px var(--line, #e7e4dd);
+}
+
+.peri-chat [data-slot="peri-composer-send"]:focus-visible {
+  outline: 2px solid var(--accent-strong, var(--accent, #2d47b2));
+  outline-offset: 2px;
+}

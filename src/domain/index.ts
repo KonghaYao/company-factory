@@ -1,9 +1,17 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { CompanyStore, safeId, digest } from "../storage/company-store";
 import { z } from "zod";
-import { memoryTemplate, softwarePipeline } from "./templates";
+import {
+  LEGACY_MEMORY_FILE,
+  MEMORY_FILE,
+  assertNoManagedMarkers,
+  memoryManagedBlock,
+  memoryTemplate,
+  mergeManagedBlock,
+  softwarePipeline,
+} from "./templates";
 import {
   DomainError,
   requireValue,
@@ -37,41 +45,57 @@ const statuses: IssueStatus[] = [
   "ready_merge",
   "cancel",
 ];
+const RETIRED_MODEL_CONFIG_KEYS = [
+  "model",
+  "models",
+  "provider",
+  "baseUrl",
+  "apiKeyEnv",
+] as const;
 const configSchema = z
   .object({
-    model: z.string().max(500).optional(),
-    modelAlias: z.enum(["fable", "opus", "sonnet", "haiku"]).optional(),
-    models: z
-      .object({
-        fable: z.string().max(500).optional(),
-        opus: z.string().max(500).optional(),
-        sonnet: z.string().max(500).optional(),
-        haiku: z.string().max(500).optional(),
-      })
-      .strict()
-      .optional(),
-    provider: z.string().max(100).optional(),
-    apiKeyEnv: z
+    modelProfile: z
       .string()
-      .regex(/^[A-Za-z_][A-Za-z0-9_]*$/)
+      .max(96)
+      .regex(/^(?:[a-zA-Z0-9][a-zA-Z0-9_-]{0,95})?$/)
       .optional(),
-    baseUrl: z.url().optional(),
+    modelAlias: z.enum(["fable", "opus", "sonnet", "haiku"]).optional(),
     responsibilities: z.string().max(100000).optional(),
     instructions: z.string().max(100000).optional(),
     workspaceRoots: z.array(z.string().max(2000)).max(20).optional(),
     mcp: z.record(z.string(), z.unknown()).optional(),
     settings: z.record(z.string(), z.unknown()).optional(),
   })
-  .passthrough();
+  .passthrough()
+  .superRefine((value, ctx) => {
+    for (const key of RETIRED_MODEL_CONFIG_KEYS)
+      if (Object.hasOwn(value, key))
+        ctx.addIssue({
+          code: "custom",
+          path: [key],
+          message: `config.${key} is retired; use config.modelProfile with the model library instead`,
+        });
+  });
 function validatedConfig(input: unknown): AgentConfig {
   const result = configSchema.safeParse(input);
-  if (!result.success)
+  if (!result.success) {
+    const retired = result.error.issues.some(
+      (issue) =>
+        issue.code === "custom" &&
+        issue.path.length === 1 &&
+        (RETIRED_MODEL_CONFIG_KEYS as readonly string[]).includes(
+          String(issue.path[0]),
+        ),
+    );
     throw new DomainError(
       "invalid_input",
-      "Invalid Agent configuration",
+      retired
+        ? "Agent configuration no longer accepts model/models/provider/baseUrl/apiKeyEnv; use config.modelProfile with the model library instead"
+        : "Invalid Agent configuration",
       400,
       result.error.issues,
     );
+  }
   const reserved = [
     "company_org",
     "company_tasks",
@@ -576,6 +600,12 @@ export class CompanyDomain {
     );
     const systemPrompt =
       input.systemPrompt === undefined ? "" : promptText(input.systemPrompt);
+    assertNoManagedMarkers({
+      name,
+      responsibilities,
+      systemPrompt,
+      "config.instructions": input.config?.instructions,
+    });
     const config: AgentConfig = validatedConfig(input.config ?? {});
     const token = randomBytes(32).toString("hex");
     const knowledgeDirectory = this.path(ctx, "knowledgebase");
@@ -594,8 +624,16 @@ export class CompanyDomain {
     };
     await mkdir(join(dir, "tasks"), { recursive: true });
     await this.store.atomic(
-      join(dir, "claude.md"),
-      memoryTemplate({ name, role, responsibilities, knowledgeDirectory }),
+      join(dir, MEMORY_FILE),
+      memoryTemplate({
+        name,
+        role,
+        responsibilities,
+        systemPrompt,
+        instructions:
+          typeof config.instructions === "string" ? config.instructions : "",
+        knowledgeDirectory,
+      }),
     );
     await this.store.atomic(
       join(dir, ".mcp.json"),
@@ -661,20 +699,24 @@ export class CompanyDomain {
   async createMember(ctx: CallerContext, input: Input) {
     return this.mutate(ctx, "createMember", input, async () => {
       await this.role(ctx, ["hr"], false);
-      const config = validatedConfig(input.config ?? {});
+      const rawConfig = input.config ?? {};
       const agentEditable = new Set([
-        "model",
+        "modelProfile",
         "modelAlias",
-        "models",
         "responsibilities",
         "instructions",
       ]);
+      const rawKeys =
+        rawConfig && typeof rawConfig === "object" && !Array.isArray(rawConfig)
+          ? Object.keys(rawConfig)
+          : [];
       requireValue(
-        Object.keys(config).every((key) => agentEditable.has(key)),
+        rawKeys.every((key) => agentEditable.has(key)),
         "forbidden",
-        "HR may define model tiers and role instructions only. Provider credentials, endpoints, MCPs and filesystem capabilities require user configuration.",
+        "HR may define a model profile/alias and role instructions only. Provider credentials, endpoints, MCPs and filesystem capabilities require user configuration.",
         403,
       );
+      const config = validatedConfig(rawConfig);
       return this.provision(ctx, { ...input, config });
     });
   }
@@ -694,6 +736,11 @@ export class CompanyDomain {
         403,
       );
       this.version(a, input);
+      assertNoManagedMarkers({
+        name: input.name,
+        responsibilities: input.responsibilities,
+        systemPrompt: input.systemPrompt,
+      });
       if (input.name !== undefined) a.name = cleanText(input.name, "name", 200);
       if (input.responsibilities !== undefined)
         a.responsibilities = cleanText(
@@ -708,9 +755,61 @@ export class CompanyDomain {
         a,
         input.version,
       );
+      const existing = await this.readAgentMemory(a.directory);
+      const block = memoryManagedBlock({
+        role: a.role,
+        responsibilities: a.responsibilities,
+        systemPrompt: a.systemPrompt,
+        instructions:
+          typeof a.config.instructions === "string" ? a.config.instructions : "",
+      });
+      const memory = existing
+        ? mergeManagedBlock(existing.content, block)
+        : memoryTemplate({
+            name: a.name,
+            role: a.role,
+            responsibilities: a.responsibilities,
+            systemPrompt: a.systemPrompt,
+            instructions:
+              typeof a.config.instructions === "string"
+                ? a.config.instructions
+                : "",
+            knowledgeDirectory: this.path(ctx, "knowledgebase"),
+          });
+      await this.store.atomic(join(a.directory, MEMORY_FILE), memory);
+      // Only migrate when the legacy file was the sole memory entry. If both
+      // names already existed, leave the conflict untouched for the user.
+      if (existing?.legacy) {
+        const entries = await readdir(a.directory);
+        if (entries.includes(LEGACY_MEMORY_FILE)) {
+          if (entries.includes(MEMORY_FILE))
+            await unlink(join(a.directory, LEGACY_MEMORY_FILE));
+          else
+            await rename(
+              join(a.directory, LEGACY_MEMORY_FILE),
+              join(a.directory, MEMORY_FILE),
+            );
+        }
+      }
       await this.store.commit(a.directory, "Update member definition");
       return publicAgent(a);
     });
+  }
+  private async readAgentMemory(directory: string) {
+    // Use exact directory entries rather than existsSync/readFile so a legacy
+    // lowercase name is not mistaken for the canonical one on macOS.
+    const entries = await readdir(directory);
+    if (entries.includes(MEMORY_FILE))
+      return {
+        content: await readFile(join(directory, MEMORY_FILE), "utf8"),
+        legacy: false,
+      };
+    if (entries.includes(LEGACY_MEMORY_FILE))
+      return {
+        content: await readFile(join(directory, LEGACY_MEMORY_FILE), "utf8"),
+        legacy: true,
+      };
+    return null;
   }
   async setRolePermissions(ctx: CallerContext, input: Input) {
     return this.mutate(ctx, "setRolePermissions", input, async () => {

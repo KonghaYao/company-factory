@@ -4,7 +4,7 @@ import { scopeKey } from "./types";
 export type LocalScope = {
   draft: string;
   issueId?: string;
-  tab: "run" | "tasks" | "files" | "messages";
+  tab: "run" | "model" | "tasks" | "files" | "messages";
   references: FileReference[];
   files: Record<string, FileBuffer>;
   activeFile?: string;

@@ -1,14 +1,19 @@
 import {
   ChatActionError,
+  ChatCloseIncompleteError,
   ChatManager,
   ChatUserAction,
   ChatViewRegistry,
   BareHarnessConfig,
   type ChatService,
+  type ChatFactEnvelope,
+  type ChatFactObserver,
+  type ChatFactSource,
+  type ChatSessionDirectoryEntry,
   type AcpMcpServer,
 } from "@peri-code/sdk";
 import { ChatReplica, type SessionView } from "@peri-code/sdk/view";
-import { mkdir, readFile, writeFile, rename } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile, rename } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -25,23 +30,38 @@ import { createAgentWasmModules } from "./wasm-runtime";
 import { createWorkspaceMcpServerFactory } from "./workspace";
 import {
   ModelConfigurationError,
-  buildModelConfig,
   modelInfoFromSettings,
-  resolveTrustedModelMatrix,
   type ModelTier,
 } from "./model-settings";
+import {
+  loadModelLibrary,
+  publicModelLibraryView,
+  resolveModel,
+  type ModelResolutionMetadata,
+} from "./model-library";
+import {
+  SystemPromptError,
+  composeSystemInstructions,
+} from "./system-prompt";
 export {
   DEFAULT_MODEL_ALIAS,
   MODEL_PLACEHOLDER_BASE_URL,
   MODEL_TIERS,
   ModelConfigurationError,
-  buildModelConfig,
   modelInfoFromSettings,
-  resolveModelMatrix,
-  resolveTrustedModelMatrix,
   type ModelTier,
-  type ResolvedModelMatrix,
 } from "./model-settings";
+export {
+  MODEL_LIBRARY_VERSION,
+  loadModelLibrary,
+  modelLibraryPath,
+  publicModelLibraryView,
+  resolveModel,
+  type ModelResolutionMetadata,
+  type ModelLibraryState,
+  type PublicModelLibrary,
+  type ResolvedModel,
+} from "./model-library";
 export type { StoreProvider, StoreScope, WasmStoreConfiguration } from "./wasm-store";
 export { FileStoreProvider } from "./wasm-store";
 export {
@@ -66,13 +86,76 @@ export interface RuntimeAgent {
   configuration?: Record<string, any>;
   sessionId?: string;
 }
-interface EffectiveConfiguration {
+export interface EffectiveConfiguration {
   settings: unknown;
   configured: boolean;
   mcpServers: Record<string, AcpMcpServer>;
   configuration: Record<string, any>;
   role?: string;
   responsibilities?: string;
+  systemPrompt?: string;
+  model?: ModelResolutionMetadata;
+}
+/**
+ * Bind-time snapshot reconciliation. A frozen snapshot that is already usable
+ * never drifts. A legacy snapshot without `model` metadata is rebuilt from the
+ * current library; a library-aware snapshot whose model was unusable is
+ * repaired only when the current resolution is usable.
+ */
+export function reconcileEffectiveConfiguration(
+  effective: EffectiveConfiguration,
+  candidate: {
+    settings: unknown;
+    configured: boolean;
+    model: ModelResolutionMetadata;
+  },
+): { effective: EffectiveConfiguration; repaired: boolean } {
+  if (effective.model && effective.configured)
+    return { effective, repaired: false };
+  if (effective.model && !candidate.configured)
+    return { effective, repaired: false };
+  return {
+    effective: {
+      ...effective,
+      settings: candidate.settings,
+      configured: candidate.configured,
+      model: candidate.model,
+    },
+    repaired: true,
+  };
+}
+/** User input plus this turn's explicit metadata; never host role context. */
+export function composeUserSendText(payload: {
+  text: string;
+  issueId?: string;
+  references?: unknown[];
+}) {
+  return [
+    payload.issueId
+      ? `[Company Issue context: ${payload.issueId}; same fixed Session]`
+      : "",
+    payload.references?.length
+      ? `[File references]\n${JSON.stringify(payload.references)}`
+      : "",
+    payload.text,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+/** Atomically persist a host-only snapshot: parent 0700, file 0600. */
+export async function writeEffectiveConfiguration(
+  snapshotPath: string,
+  effective: EffectiveConfiguration,
+) {
+  await mkdir(resolve(snapshotPath, ".."), {
+    recursive: true,
+    mode: 0o700,
+  });
+  const temporary = snapshotPath + "." + randomUUID() + ".tmp";
+  await writeFile(temporary, JSON.stringify(effective) + "\n", {
+    mode: 0o600,
+  });
+  await rename(temporary, snapshotPath);
 }
 interface BoundAgent {
   input: RuntimeAgent;
@@ -82,6 +165,7 @@ interface BoundAgent {
   configured: boolean;
   modelAlias: ModelTier | null;
   model: string | null;
+  modelMeta: ModelResolutionMetadata | null;
   error?: string;
   nextCursor: string | null;
 }
@@ -96,6 +180,18 @@ export class RuntimeError extends Error {
     super(message, options);
     this.name = "RuntimeError";
   }
+}
+/** 关闭失败的可诊断摘要；不展开完整栈，避免可重试场景刷屏。 */
+function summarizeCloseFailure(error: unknown): string {
+  if (error instanceof ChatCloseIncompleteError)
+    return error.failures
+      .map((failure) =>
+        failure instanceof Error
+          ? `${failure.name}: ${failure.message}`
+          : String(failure),
+      )
+      .join(" | ");
+  return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 }
 /** SDK chat 动作码 → HTTP 状态；未知/内部错误一律 500，不得由状态反推 disposition。 */
 const CHAT_ACTION_STATUS: Record<string, number> = {
@@ -198,6 +294,11 @@ export class PeriRuntime {
   private shutdownPromise?: Promise<void>;
   private storeLock: Promise<unknown> = Promise.resolve();
   private views = new ChatViewRegistry();
+  /** 每个 Chat 的脱敏代理保持同一对象身份：ViewRegistry 按身份拒绝重复 attach。 */
+  private viewSources = new Map<
+    string,
+    { chat: ChatService; source: ChatFactSource & { readonly id: string } }
+  >();
   private agents = new Map<string, BoundAgent>();
   private provisioned = new Map<
     string,
@@ -224,6 +325,8 @@ export class PeriRuntime {
       storeProvider?: StoreProvider;
       storesFile?: string;
       privatePaths?: string[];
+      /** Explicit test/deployment override; defaults to COMPANY_MODEL_LIBRARY or <root>/model-library.yaml. */
+      modelLibraryPath?: string;
       onChange?: (scope: { companyId: string; agentId: string }) => void;
     },
   ) {
@@ -309,6 +412,17 @@ export class PeriRuntime {
       agentId + ".json",
     );
   }
+  private modelLibraryState() {
+    return loadModelLibrary({
+      root: this.options.root,
+      environment: process.env,
+      overridePath: this.options.modelLibraryPath,
+    });
+  }
+  /** Owner-only browser projection of the model library; never returns values. */
+  modelLibrary() {
+    return publicModelLibraryView(this.modelLibraryState(), process.env);
+  }
   private appliedRuntimeState(agentId: string) {
     const path = this.configurationPath(agentId);
     if (!existsSync(path))
@@ -316,14 +430,69 @@ export class PeriRuntime {
         configured: false,
         modelAlias: null as ModelTier | null,
         model: null as string | null,
+        modelMeta: null as ModelResolutionMetadata | null,
       };
-    const snapshot = JSON.parse(
-      readFileSync(path, "utf8"),
-    ) as EffectiveConfiguration;
-    return {
-      configured: Boolean(snapshot.configured),
-      ...modelInfoFromSettings(snapshot.settings),
+    let snapshot: EffectiveConfiguration;
+    try {
+      snapshot = JSON.parse(readFileSync(path, "utf8")) as EffectiveConfiguration;
+    } catch {
+      return {
+        configured: false,
+        modelAlias: null as ModelTier | null,
+        model: null as string | null,
+        modelMeta: null as ModelResolutionMetadata | null,
+      };
+    }
+    const current = () => {
+      try {
+        return resolveModel({
+          config: snapshot.configuration ?? {},
+          library: this.modelLibraryState(),
+          environment: process.env,
+        }).metadata;
+      } catch {
+        return null;
+      }
     };
+
+    if (snapshot.model) {
+      if (snapshot.configured)
+        return {
+          configured: true,
+          modelAlias: snapshot.model.activeAlias,
+          model: snapshot.model.model,
+          modelMeta: snapshot.model,
+        };
+      // The snapshot was frozen while no model was usable. Apply the same
+      // library resolution bind() would use, display-only: never write here.
+      const repaired = current();
+      if (repaired?.configured)
+        return {
+          configured: true,
+          modelAlias: repaired.activeAlias,
+          model: repaired.model,
+          modelMeta: repaired,
+        };
+      return {
+        configured: false,
+        modelAlias: snapshot.model.activeAlias,
+        model: null,
+        modelMeta: snapshot.model,
+      };
+    }
+
+    // Legacy snapshot without model metadata: incompatible with the library
+    // runtime. Show what bind() would rebuild; bind() writes it back.
+    const resolved = current();
+    if (resolved)
+      return {
+        configured: resolved.configured,
+        modelAlias: resolved.activeAlias,
+        model: resolved.model,
+        modelMeta: resolved,
+      };
+    const info = modelInfoFromSettings(snapshot.settings);
+    return { configured: false, ...info, modelMeta: null };
   }
   private key(input: { companyId: string; agentId: string }) {
     return `${input.companyId}/${input.agentId}`;
@@ -346,16 +515,18 @@ export class PeriRuntime {
   }
   private settings(input: RuntimeAgent) {
     const config = input.configuration ?? input.config ?? {};
-    // Model selection is a whitelisted matrix. Arbitrary config.settings is reserved
-    // and must never be spread into PeriConfig. Only the trusted host process
-    // environment is read; an Agent-writable `<agent>/.env` is never merged here.
-    const matrix = resolveTrustedModelMatrix({
+    // Model selection is a whitelisted profile resolution. Arbitrary config.settings
+    // is reserved and must never be spread into PeriConfig. Only the trusted host
+    // process environment is read for endpoint/credential values; an Agent-writable
+    // `<agent>/.env` is never merged here.
+    const resolved = resolveModel({
       config,
-      hostEnvironment: process.env,
+      library: this.modelLibraryState(),
+      environment: process.env,
     });
     const settings = {
       config: {
-        ...buildModelConfig(matrix),
+        ...resolved.config,
         meta_harness: {
           ...BareHarnessConfig,
           "01_intro": true,
@@ -377,7 +548,11 @@ export class PeriRuntime {
         },
       },
     };
-    return { settings, configured: matrix.configured };
+    return {
+      settings,
+      configured: resolved.metadata.configured,
+      model: resolved.metadata,
+    };
   }
   private async bind(
     input: RuntimeAgent,
@@ -403,7 +578,6 @@ export class PeriRuntime {
       this.options.root, "runtime", "workspace", storeScopeId(input),
     );
     await mkdir(join(runtimeDirectory, "home"), { recursive: true, mode: 0o700 });
-    const memory = await readFile(join(input.directory, "claude.md"), "utf8");
     const snapshotPath = this.configurationPath(input.agentId);
     let effective: EffectiveConfiguration;
     let repairedConfiguration = false;
@@ -416,15 +590,18 @@ export class PeriRuntime {
           "Applied runtime settings snapshot is missing; explicitly restart this Agent to assemble current settings.",
         );
       effective = JSON.parse(await readFile(snapshotPath, "utf8"));
-      // 快照在模型环境可用前冻结时 Agent 永久不可用。仅在这种情况下用同一受信
-      // 宿主环境重算模型矩阵（不读 <agent>/.env、不重读 .mcp.json），并像显式
-      // 重启一样写回快照；快照本来可用时绝不自动漂移。
-      if (!effective.configured) {
-        const candidate = this.settings(input);
-        if (candidate.configured) {
-          effective = { ...effective, settings: candidate.settings, configured: true };
-          repairedConfiguration = true;
-        }
+      // A snapshot without model metadata predates the model library and is not
+      // compatible with it: rebuild it from the library (never from <agent>/.env)
+      // and write it back like an explicit restart. A library-aware snapshot whose
+      // model was unusable is repaired only when the current resolution is usable;
+      // an already-usable snapshot never silently drifts.
+      const candidate = !effective.model || !effective.configured
+        ? this.settings(input)
+        : null;
+      if (candidate) {
+        const reconciled = reconcileEffectiveConfiguration(effective, candidate);
+        effective = reconciled.effective;
+        repairedConfiguration = reconciled.repaired;
       }
     } else {
       let file: { mcpServers?: Record<string, AcpMcpServer> } = {};
@@ -467,6 +644,9 @@ export class PeriRuntime {
         ...(input.responsibilities
           ? { responsibilities: input.responsibilities }
           : {}),
+        ...(input.systemPrompt !== undefined
+          ? { systemPrompt: input.systemPrompt }
+          : {}),
       };
     }
     // Workspace 工厂仅注入当前 activation，不进入 JSON 配置快照。
@@ -480,6 +660,7 @@ export class PeriRuntime {
     effective.settings = settings;
     const configured = effective.configured;
     const modelInfo = modelInfoFromSettings(effective.settings);
+    const modelMeta = effective.model ?? null;
     const mcpServers = { ...effective.mcpServers };
     if (Object.hasOwn(mcpServers, "workspace"))
       throw new RuntimeError("reserved_mcp_server", "workspace 是宿主保留 MCP 名称，不能通过 .mcp.json 替换。");
@@ -490,8 +671,9 @@ export class PeriRuntime {
     const appliedInput = {
       ...input,
       configuration: effective.configuration,
-      role: effective.role,
-      responsibilities: effective.responsibilities,
+      role: effective.role ?? input.role,
+      responsibilities: effective.responsibilities ?? input.responsibilities,
+      systemPrompt: input.systemPrompt ?? effective.systemPrompt ?? "",
     };
     // 显式降级：仅关闭宿主 Workspace MCP；File/Git 仍由 fail-closed 沙箱决定。
     const workspaceEnabled = process.env.COMPANY_WORKSPACE !== "disabled";
@@ -520,6 +702,23 @@ export class PeriRuntime {
       );
       resumeSessionId = undefined;
     }
+    // Instructions are frozen at session/new. Restarting an existing Session
+    // must not rebuild or resend them; a replacement Session is a creation and
+    // receives the currently applied profile.
+    const instructions = resumeSessionId
+      ? undefined
+      : composeSystemInstructions({
+          agentId: appliedInput.agentId,
+          companyId: appliedInput.companyId,
+          name: appliedInput.name,
+          role: appliedInput.role,
+          responsibilities: appliedInput.responsibilities,
+          systemPrompt: appliedInput.systemPrompt,
+          instructions:
+            typeof appliedInput.configuration?.instructions === "string"
+              ? appliedInput.configuration.instructions
+              : "",
+        });
     const chat = manager.createChat({
       workspace: {
         id: input.agentId,
@@ -528,7 +727,7 @@ export class PeriRuntime {
       },
       agent: { settings },
       session: {
-        instructions: `${memory}\n\nInitial effective responsibilities: ${(input.configuration ?? input.config ?? {}).responsibilities ?? input.responsibilities ?? ""}\n${(input.configuration ?? input.config ?? {}).instructions ?? ""}\nThe host supplies current effective role context and the per-Agent system prompt with every new input; earlier role definitions are historical after an explicit restart.\n\nCompany member: ${input.agentId}; company: ${input.companyId}.\nKeep this one fixed Session across all Issues. Use Peri multitasks for concurrent work, not new Company members. Company business records must be changed with company_org/company_tasks/company_im, not filesystem writes.`,
+        ...(instructions ? { instructions } : {}),
         mcpServers: {
           ...mcpServers,
           ...(workspaceEnabled
@@ -547,7 +746,7 @@ export class PeriRuntime {
       },
     });
     const replica = new ChatReplica();
-    const view = this.views.attach(chat);
+    const view = this.attachView(chat);
     const [server, client] = channelPair();
     view.sync(server);
     replica.connect(client);
@@ -557,8 +756,9 @@ export class PeriRuntime {
       chat,
       replica,
       configured,
-      modelAlias: modelInfo.modelAlias,
-      model: modelInfo.model,
+      modelAlias: modelMeta?.activeAlias ?? modelInfo.modelAlias,
+      model: modelMeta?.model ?? modelInfo.model,
+      modelMeta,
       nextCursor: null,
     };
     const observe = (envelope: any) => {
@@ -601,17 +801,8 @@ export class PeriRuntime {
         );
         await store.bindSession(chat.sessionId!);
       }
-      if (refreshConfiguration || repairedConfiguration) {
-        await mkdir(resolve(snapshotPath, ".."), {
-          recursive: true,
-          mode: 0o700,
-        });
-        const temporary = snapshotPath + "." + randomUUID() + ".tmp";
-        await writeFile(temporary, JSON.stringify(effective) + "\n", {
-          mode: 0o600,
-        });
-        await rename(temporary, snapshotPath);
-      }
+      if (refreshConfiguration || repairedConfiguration)
+        await writeEffectiveConfiguration(snapshotPath, effective);
       this.agents.set(this.key(input), bound);
       return bound;
     } catch (e) {
@@ -627,7 +818,8 @@ export class PeriRuntime {
       if (
         e instanceof RuntimeError ||
         e instanceof WasmStoreError ||
-        e instanceof ModelConfigurationError
+        e instanceof ModelConfigurationError ||
+        e instanceof SystemPromptError
       )
         throw e;
       // bind 阶段的 SDK chat 动作错误（如 binding_conflict）同样不得被折叠。
@@ -637,16 +829,41 @@ export class PeriRuntime {
     }
   }
   private async closeBound(bound: BoundAgent) {
-    try {
-      await bound.manager.closeChat(bound.chat.id);
-      const results = await Promise.allSettled([
-        this.views.dispose(bound.chat.id), bound.replica.dispose(),
-      ]);
-      if (results.some((result) => result.status === "rejected")) throw new Error();
-    } catch {
+    // SDK 契约：ChatCloseIncompleteError 表示资源与所有权已保留，可重试。
+    // 典型场景：空闲 Chat 的宿主存储流被 sqld 以 400 过期；重试会重建流。
+    let closeFailure: unknown;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        await bound.manager.closeChat(bound.chat.id);
+        closeFailure = undefined;
+        break;
+      } catch (error) {
+        closeFailure = error;
+        if (!(error instanceof ChatCloseIncompleteError) || attempt > 0) break;
+        console.warn(
+          "[runtime] closeBound chat close retry:",
+          summarizeCloseFailure(error),
+        );
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+    if (closeFailure !== undefined) {
+      console.error("[runtime] closeBound chat close failed", closeFailure);
       bound.error = "WASM/Workspace/view 关闭未获确认；保留 handle 供重试。";
       throw new RuntimeError("wasm_cleanup_unconfirmed", bound.error);
     }
+    const [view, replica] = await Promise.allSettled([
+      this.views.dispose(bound.chat.id), bound.replica.dispose(),
+    ]);
+    if (view.status === "rejected")
+      console.error("[runtime] closeBound view dispose failed", view.reason);
+    if (replica.status === "rejected")
+      console.error("[runtime] closeBound replica dispose failed", replica.reason);
+    if (view.status === "rejected" || replica.status === "rejected") {
+      bound.error = "WASM/Workspace/view 关闭未获确认；保留 handle 供重试。";
+      throw new RuntimeError("wasm_cleanup_unconfirmed", bound.error);
+    }
+    this.viewSources.delete(bound.chat.id);
   }
   async provision(input: RuntimeAgent) {
     return this.serialized(input, async () => {
@@ -710,10 +927,131 @@ export class PeriRuntime {
       return this.snapshot(input);
     });
   }
+  /**
+   * 事实源 → 只读视图的脱敏代理。
+   *
+   * Yjs 帧是文档增量，无法逐帧脱敏；因此所有投影（服务端 replica 与浏览器
+   * WebSocket）都从同一个代理读取事实，`database.redact` 是唯一入口。
+   */
+  private redactedSource(source: ChatService): ChatFactSource & { readonly id: string } {
+    const redact = (envelope: ChatFactEnvelope): ChatFactEnvelope => ({
+      ...envelope,
+      fact: this.database.redact(envelope.fact),
+    });
+    return {
+      id: source.id,
+      get binding() {
+        return source.binding;
+      },
+      subscribeFacts: (observer: ChatFactObserver) =>
+        source.subscribeFacts({
+          onBinding: (binding, replay) =>
+            observer.onBinding(binding, replay.map(redact)),
+          onFact: (envelope) => observer.onFact(redact(envelope)),
+          onClosed: (reason) => observer.onClosed(reason),
+        }),
+    };
+  }
+  /** 同 Chat 的所有同步连接共享一个脱敏 View。 */
+  attachView(source: ChatService) {
+    let entry = this.viewSources.get(source.id);
+    if (!entry || entry.chat !== source) {
+      entry = { chat: source, source: this.redactedSource(source) };
+      this.viewSources.set(source.id, entry);
+    }
+    return this.views.attach(entry.source);
+  }
+  /**
+   * 按 Agent scope 解析活动 Chat；地址可以是句柄 chatId 或固定 sessionId。
+   * 未激活或清理未确认时返回 undefined，绝不跨 Agent 命中。
+   */
+  chatForScope(
+    input: { companyId: string; agentId: string },
+    address?: string,
+  ): ChatService | undefined {
+    const bound = this.agents.get(this.key(input));
+    if (!bound || bound.error) return undefined;
+    if (!address) return bound.chat;
+    return bound.chat.id === address || bound.chat.sessionId === address
+      ? bound.chat
+      : undefined;
+  }
+  /** DELETE 句柄前判定：运行中的会话不允许“重启”。 */
+  chatRunning(input: { companyId: string; agentId: string }) {
+    return Boolean(this.agents.get(this.key(input))?.replica.read().running);
+  }
+  /** 已持久化的固定 Session；只读，不 wake。 */
+  boundSession(input: { companyId: string; agentId: string }) {
+    return this.database.boundSessionId(input);
+  }
+  /** 取得或激活该 Agent 的固定 Chat 句柄。 */
+  async wakeChat(input: RuntimeAgent) {
+    return (await this.wake(input)).chat;
+  }
+  /** 目录只读事实；不 wake、不启动 WASM。 */
+  async chatDirectory(
+    input: RuntimeAgent,
+  ): Promise<(ChatSessionDirectoryEntry & { projectId: string })[]> {
+    const bound = this.agents.get(this.key(input));
+    const sessionId =
+      bound?.chat.sessionId ?? (await this.database.boundSessionId(input));
+    if (!sessionId) return [];
+    const stamps = await this.directoryStamps(input.directory);
+    return [
+      {
+        sessionId,
+        title: input.name ?? null,
+        cwd: input.directory,
+        messageCount: bound?.replica.read().entries.length ?? 0,
+        createdAt: stamps.createdAt,
+        updatedAt: stamps.updatedAt,
+        projectId: input.agentId,
+      },
+    ];
+  }
+  private async directoryStamps(directory: string) {
+    try {
+      const info = await stat(join(directory, "agent.yaml"));
+      return {
+        createdAt: info.birthtime.toISOString(),
+        updatedAt: info.mtime.toISOString(),
+      };
+    } catch {
+      const epoch = new Date(0).toISOString();
+      return { createdAt: epoch, updatedAt: epoch };
+    }
+  }
+  /** 与 REST send 相同的模型配置前置；不注入角色/配置正文。 */
+  validateSendText(input: RuntimeAgent, text: string) {
+    const bound = this.agents.get(this.key(input));
+    if (!bound || bound.error)
+      throw new RuntimeError(
+        "not_ready",
+        "Agent 会话尚未就绪，消息未发送。",
+        409,
+      );
+    if (!bound.configured) {
+      const alias = bound.modelAlias ?? "sonnet";
+      const profile = bound.modelMeta?.profile ?? "default";
+      const missing = bound.modelMeta?.missing?.length
+        ? ` Missing: ${bound.modelMeta.missing.join(", ")}.`
+        : "";
+      throw new RuntimeError(
+        "model_not_configured",
+        `Model profile "${profile}" has no usable model, apiKey or baseUrl for alias "${alias}". Configure $COMPANY_HOME/model-library.yaml, then explicitly restart this Agent.${missing} No model input was sent.`,
+        409,
+      );
+    }
+    return text;
+  }
   snapshot(input: { companyId: string; agentId: string; sessionId?: string }) {
     const bound = this.agents.get(this.key(input));
     const view = bound?.replica.read();
     const applied = bound ? null : this.appliedRuntimeState(input.agentId);
+    const modelMeta = bound?.modelMeta ?? applied?.modelMeta ?? null;
+    const hasTierDetail = Boolean(
+      modelMeta?.tiers && modelMeta?.tierProviders && modelMeta?.tierSources,
+    );
     const activeTurn =
       view?.turns.find((turn) => turn.turnId === view.activeTurnId) ?? null;
     return this.database.redact({
@@ -759,8 +1097,26 @@ export class PeriRuntime {
         : null,
       configured: bound?.configured ?? applied?.configured ?? false,
       // Non-secret diagnostics only; never expose apiKey/baseUrl.
-      modelAlias: bound?.modelAlias ?? applied?.modelAlias ?? null,
-      model: bound?.model ?? applied?.model ?? null,
+      modelAlias:
+        bound?.modelAlias ??
+        applied?.modelAlias ??
+        modelMeta?.activeAlias ??
+        null,
+      model: bound?.model ?? applied?.model ?? modelMeta?.model ?? null,
+      modelProfile: modelMeta?.profile ?? null,
+      modelProvider: modelMeta?.provider ?? null,
+      modelMissing: modelMeta?.missing ?? [],
+      modelError: modelMeta?.error ?? null,
+      modelSource: modelMeta?.source ?? null,
+      modelLibraryRevision: modelMeta?.libraryRevision ?? null,
+      // Per-tier detail is non-secret. Older frozen snapshots keep their active
+      // chain and are not rebuilt just to fill these fields.
+      modelTiers: hasTierDetail ? modelMeta!.tiers : null,
+      modelTierProviders: hasTierDetail ? modelMeta!.tierProviders : null,
+      modelTierSources: hasTierDetail ? modelMeta!.tierSources : null,
+      modelResolvedAt: modelMeta?.resolvedAt ?? null,
+      modelTierNotice:
+        modelMeta && !hasTierDetail ? "重启后显示四档明细" : null,
       error:
         bound?.error ??
         view?.turns.find((t) => t.turnId === view.activeTurnId)?.error
@@ -842,37 +1198,16 @@ export class PeriRuntime {
     const bound = await this.wake(input);
     if (!bound.configured) {
       const alias = bound.modelAlias ?? "sonnet";
+      const profile = bound.modelMeta?.profile ?? "default";
+      const missing = bound.modelMeta?.missing?.length
+        ? ` Missing: ${bound.modelMeta.missing.join(", ")}.`
+        : "";
       throw new RuntimeError(
         "model_not_configured",
-        `Active model alias "${alias}" has no usable model, apiKey or baseUrl. Set PERI_MODEL_ID_${alias.toUpperCase()} (or PERI_MODEL_ID), PERI_MODEL_BASE_URL and PERI_MODEL_API_KEY, then explicitly restart this Agent. No model input was sent.`,
+        `Model profile "${profile}" has no usable model, apiKey or baseUrl for alias "${alias}". Configure $COMPANY_HOME/model-library.yaml, then explicitly restart this Agent.${missing} No model input was sent.`,
       );
     }
-    const effective = bound.input.configuration ?? bound.input.config ?? {};
-    const systemPrompt = String(
-      input.systemPrompt ?? bound.input.systemPrompt ?? "",
-    ).trim();
-    const context = [
-      "[Company effective configuration — applied by explicit restart]",
-      `Role: ${input.role ?? bound.input.role ?? ""}`,
-      `Responsibilities: ${input.responsibilities ?? effective.responsibilities ?? ""}`,
-      systemPrompt ? `[Agent system prompt]\n${systemPrompt}` : "",
-      effective.instructions ?? "",
-      "Read current claude.md for learning memory; older role text in conversation is historical.",
-    ]
-      .filter(Boolean)
-      .join("\n");
-    const text = [
-      context,
-      payload.issueId
-        ? `[Company Issue context: ${payload.issueId}; same fixed Session]`
-        : "",
-      payload.references?.length
-        ? `[File references]\n${JSON.stringify(payload.references)}`
-        : "",
-      payload.text,
-    ]
-      .filter(Boolean)
-      .join("\n\n");
+    const text = composeUserSendText(payload);
     const requestId = payload.requestId ?? randomUUID();
     const key = `${this.key(input)}/${requestId}`;
     const fingerprint = JSON.stringify(payload);
@@ -926,17 +1261,30 @@ export class PeriRuntime {
     }
   }
 
+  /**
+   * actions send 受理后与 REST send 共用：修复官方输入邮箱的 stranded 输入。
+   * 不阻塞 HTTP 202，失败留给队列 UI 的“立即投递”重试。
+   */
+  async recoverChatInput(input: RuntimeAgent, inputId: string) {
+    const bound = this.agents.get(this.key(input));
+    if (bound) await this.recoverStrandedInput(bound, inputId);
+  }
   private inputIsStranded(bound: BoundAgent, inputId: string) {
     const view = bound.replica.read();
     const queue = view.inputQueue;
     if (!queue || queue.activeRequestId) return false;
     if (view.running || view.executionBlocked || view.closed) return false;
     if (view.pendingInteractions.length > 0) return false;
-    if (view.activeTurnStatus && !["completed", "idle"].includes(view.activeTurnStatus))
+    // cancelled/error 同样是已结算的终态；否则“停止后再发送”会永久留在队列里。
+    if (
+      view.activeTurnStatus &&
+      !["completed", "cancelled", "error", "idle"].includes(
+        view.activeTurnStatus,
+      )
+    )
       return false;
-    if (queue.items.length !== 1) return false;
-    const item = queue.items[0];
-    return item.inputId === inputId && item.state === "queued";
+    const item = queue.items.find((entry) => entry.inputId === inputId);
+    return item?.state === "queued";
   }
   async deliver(
     input: RuntimeAgent,

@@ -1,7 +1,9 @@
 import { Activity, ArrowUpRight, GitBranch, Hash, Terminal } from "lucide-react";
 import type { Agent, Issue, Preview, Runtime } from "../../lib/types";
 import { statusLabel, statusTone } from "../../lib/format";
+import { modelReason } from "../../lib/model";
 import { Badge, EmptyState, ErrorBox } from "../../ui/primitives";
+import { ModelChain } from "../models/ModelChain";
 
 /** 概览回答「现在发生了什么」：运行态、待裁定、任务与交付物。 */
 export function RunView({
@@ -10,12 +12,14 @@ export function RunView({
   issues,
   previews,
   onIssue,
+  onModel,
 }: {
   agent: Agent;
   runtime?: Runtime;
   issues: Issue[];
   previews: Preview[];
   onIssue: (id: string) => void;
+  onModel: () => void;
 }) {
   const pending = issues.flatMap((issue) =>
     (issue.decisions || [])
@@ -49,7 +53,22 @@ export function RunView({
         <dl className="runtime-facts">
           <div>
             <dt>模型</dt>
-            <dd>{runtime?.model || "未配置"}</dd>
+            <dd className="runtime-model">
+              <ModelChain
+                profile={runtime?.modelProfile}
+                provider={runtime?.modelProvider}
+                model={runtime?.model}
+                alias={runtime?.modelAlias}
+              />
+              <button
+                type="button"
+                className="model-detail-link"
+                data-testid="model-detail"
+                onClick={onModel}
+              >
+                详情
+              </button>
+            </dd>
           </div>
           <div>
             <dt>当前回合</dt>
@@ -65,8 +84,8 @@ export function RunView({
       <ErrorBox error={runtime?.error} />
       {runtime?.configured === false && (
         <div className="notice notice-warn">
-          模型尚未配置。组织、任务和文件功能仍可使用；开始推理前请按 README
-          配置模型服务。
+          模型尚未配置：{modelReason(runtime.modelError, runtime.modelMissing)}。
+          组织、任务和文件功能仍可使用；请检查模型库后手动重启该 Agent。
         </div>
       )}
 

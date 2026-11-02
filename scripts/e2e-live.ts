@@ -43,10 +43,12 @@ import { homedir, userInfo } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { parseEnv } from "node:util";
 import { parse as parseYaml } from "yaml";
+import { ModelConfigurationError } from "../src/runtime/model-settings";
 import {
-  ModelConfigurationError,
-  resolveModelMatrix,
-} from "../src/runtime/model-settings";
+  modelLibrarySchema,
+  resolveModel,
+  type ModelLibraryState,
+} from "../src/runtime/model-library";
 import { sandboxProbe } from "../src/runtime/sandbox";
 import {
   extractAgentToolCalls,
@@ -173,8 +175,10 @@ Modes:
                and Agent configuration restart. Requires E2E_PROJECT_ROOT.
 
 Required process environment for live modes:
-  PERI_ENV_FILE            Path to the peri-cf .env file. Only model keys are read.
-                           Required model names:
+  PERI_ENV_FILE            Path to the peri-cf .env file. The harness writes a
+                           0600 model library whose provider/model entries reference
+                           these host variables by name.
+                           Required names:
                              PERI_MODEL_BASE_URL, PERI_MODEL_API_KEY, PERI_MODEL_ID
                            Optional (fallback to PERI_MODEL_ID):
                              PERI_MODEL_ID_FABLE, PERI_MODEL_ID_OPUS,
@@ -580,6 +584,15 @@ function readModelEnvironment(file: string | undefined): ModelEnvironment {
       present[name] = true;
     }
   }
+  // The generated model library binds every tier to an explicit env name. Fill
+  // omitted per-tier IDs from the required base ID without changing `present`.
+  for (const name of [
+    "PERI_MODEL_ID_FABLE",
+    "PERI_MODEL_ID_OPUS",
+    "PERI_MODEL_ID_SONNET",
+    "PERI_MODEL_ID_HAIKU",
+  ])
+    values[name] ??= values.PERI_MODEL_ID!;
   return { values, present, filePresent: true };
 }
 
@@ -618,55 +631,159 @@ function missingModelNames(model: ModelEnvironment) {
 }
 
 /**
+ * The live harness keeps its existing PERI_MODEL_* *names*, but they are now
+ * values referenced by a host-owned model library rather than implicit runtime
+ * variables. No credential or endpoint value is written into evidence.
+ */
+function buildModelLibrary(model: ModelEnvironment) {
+  const providerType =
+    model.values.PERI_MODEL_PROVIDER === "anthropic" ? "anthropic" : "openai";
+  const tiers: Array<[string, string]> = [
+    ["fable", "PERI_MODEL_ID_FABLE"],
+    ["opus", "PERI_MODEL_ID_OPUS"],
+    ["sonnet", "PERI_MODEL_ID_SONNET"],
+    ["haiku", "PERI_MODEL_ID_HAIKU"],
+  ];
+  return `version: 2
+activeProfile: default
+providers:
+  live-model:
+    type: ${providerType}
+    baseUrlEnv: PERI_MODEL_BASE_URL
+    apiKeyEnv: PERI_MODEL_API_KEY
+profiles:
+  default:
+    activeAlias: sonnet
+    tiers:
+${tiers
+  .map(
+    ([tier, env]) => `      ${tier}:
+        provider: live-model
+        modelEnv: ${env}`,
+  )
+  .join("\n")}
+`;
+}
+
+/**
  * Synthetic contract check (no real credential, no network):
- * - only PERI_MODEL_ID/PERI_MODEL_BASE_URL/PERI_MODEL_API_KEY still configure all tiers;
- * - lowercase/unknown tier names are rejected instead of silently ignored.
+ * - the default profile fills unbound tiers from the active alias;
+ * - lowercase tier keys and unknown provider references are rejected by schema;
+ * - a bound active tier with a missing env value fails the configured gate.
  */
 function assertModelFallbackContract() {
-  const environment = {
+  const environment: Record<string, string> = {
     PERI_MODEL_BASE_URL: "https://contract.invalid/v1",
     PERI_MODEL_API_KEY: "contract-placeholder-not-a-secret",
     PERI_MODEL_ID: "contract-base-model",
+    PERI_MODEL_ID_FABLE: "contract-base-model",
+    PERI_MODEL_ID_OPUS: "contract-base-model",
+    PERI_MODEL_ID_SONNET: "contract-base-model",
+    PERI_MODEL_ID_HAIKU: "contract-base-model",
   };
-  const matrix = resolveModelMatrix({ config: {}, environment });
+  const parsed = modelLibrarySchema.safeParse({
+    version: 2,
+    activeProfile: "default",
+    providers: {
+      contract: {
+        type: "openai",
+        baseUrlEnv: "PERI_MODEL_BASE_URL",
+        apiKeyEnv: "PERI_MODEL_API_KEY",
+      },
+    },
+    profiles: {
+      default: {
+        activeAlias: "sonnet",
+        tiers: {
+          fable: { provider: "contract", modelEnv: "PERI_MODEL_ID_FABLE" },
+          sonnet: { provider: "contract", modelEnv: "PERI_MODEL_ID_SONNET" },
+        },
+      },
+    },
+  });
+  if (!parsed.success)
+    throw new StepError(
+      "model_library_contract_failed",
+      "The synthetic model library is not valid",
+    );
+  const library: ModelLibraryState = {
+    status: "ok",
+    path: "contract",
+    revision: "0".repeat(64),
+    library: parsed.data,
+    error: null,
+    issues: [],
+  };
+  const resolved = resolveModel({ config: {}, library, environment });
   if (
-    !matrix.configured ||
-    MODEL_TIERS.some((tier) => matrix.tiers[tier] !== "contract-base-model")
+    !resolved.metadata.configured ||
+    MODEL_TIERS.some(
+      (tier) => resolved.metadata.tiers[tier] !== "contract-base-model",
+    )
   )
     throw new StepError(
       "model_fallback_contract_failed",
-      "Required base model env no longer fills all optional tiers",
+      "The default profile no longer fills unbound tiers from the active alias",
     );
-  for (const name of ["PERI_MODEL_ID_fable", "PERI_MODEL_ID_SONNETT"]) {
-    let rejected = false;
-    try {
-      resolveModelMatrix({
-        config: {},
-        environment: { ...environment, [name]: "typo-placeholder" },
-      });
-    } catch (error) {
-      rejected = error instanceof ModelConfigurationError;
-    }
-    if (!rejected)
-      throw new StepError(
-        "model_tier_typo_not_rejected",
-        `Model tier typo ${name} was not rejected`,
-      );
-  }
-  const missingActiveTier = resolveModelMatrix({
+
+  const lowercase = modelLibrarySchema.safeParse({
+    version: 2,
+    activeProfile: "default",
+    providers: { p: { type: "openai" } },
+    profiles: {
+      default: {
+        activeAlias: "sonnet",
+        tiers: { Sonnet: { provider: "p", model: "m" } },
+      },
+    },
+  });
+  const unknown = modelLibrarySchema.safeParse({
+    version: 2,
+    activeProfile: "default",
+    providers: { p: { type: "openai" } },
+    profiles: {
+      default: {
+        activeAlias: "sonnet",
+        tiers: { sonnet: { provider: "missing-provider", model: "m" } },
+      },
+    },
+  });
+  if (lowercase.success || unknown.success)
+    throw new StepError(
+      "model_tier_typo_not_rejected",
+      "Unknown provider references or lowercase tier keys were not rejected",
+    );
+
+  const missingActiveTier = resolveModel({
     config: { modelAlias: "fable" },
+    library,
     environment: {
       PERI_MODEL_BASE_URL: environment.PERI_MODEL_BASE_URL,
       PERI_MODEL_API_KEY: environment.PERI_MODEL_API_KEY,
     },
   });
   if (
-    missingActiveTier.configured ||
-    missingActiveTier.tiers.fable !== "unconfigured"
+    missingActiveTier.metadata.configured ||
+    missingActiveTier.metadata.tiers.fable !== "unconfigured"
   )
     throw new StepError(
       "model_missing_active_tier_gate",
       "A missing active-tier model was not rejected by the configured gate",
+    );
+  let aliasRejected = false;
+  try {
+    resolveModel({
+      config: { modelAlias: "gpt-4" },
+      library,
+      environment,
+    });
+  } catch (error) {
+    aliasRejected = error instanceof ModelConfigurationError;
+  }
+  if (!aliasRejected)
+    throw new StepError(
+      "model_alias_not_rejected",
+      "An invalid model alias was not rejected",
     );
   return {
     fallbackTiers: true,
@@ -692,6 +809,11 @@ function printDryRun(options: Options): number {
     const model = readModelEnvironment(process.env.PERI_ENV_FILE);
     const missing = missingModelNames(model);
     const contract = assertModelFallbackContract();
+    if (!modelLibrarySchema.safeParse(parseYaml(buildModelLibrary(model))).success)
+      throw new StepError(
+        "model_library_generated_invalid",
+        "The generated model library is not valid v2",
+      );
     const rootProblem = freshTestRootProblem(root);
     const sqldBinary = process.env.COMPANY_SQLD_BINARY;
     const periBinary = process.env.PERI_BINARY;
@@ -765,10 +887,88 @@ function safeMessage(error: unknown): string {
 class Api {
   cookie = "";
   lastStatus = 0;
+  private readonly chatHandles = new Map<
+    string,
+    { id: string; sessionId: string; bindingRevision: number }
+  >();
   constructor(
     readonly origin: string,
     readonly timeoutMs = 30_000,
   ) {}
+
+  private chatKey(companyId: string, agentId: string) {
+    return `${companyId}\u0000${agentId}`;
+  }
+
+  /** 取得/刷新 Agent 当前 Chat 句柄；固定 Session 已绑定时 wake 是幂等的。 */
+  private async chatHandle(
+    companyId: string,
+    agentId: string,
+    refresh = false,
+  ) {
+    const key = this.chatKey(companyId, agentId);
+    if (!refresh) {
+      const cached = this.chatHandles.get(key);
+      if (cached) return cached;
+    }
+    const created: any = await this.post(
+      `/api/chats?companyId=${encodeURIComponent(companyId)}&agentId=${encodeURIComponent(agentId)}`,
+      {},
+    );
+    const chat = created?.chat;
+    if (
+      !chat ||
+      typeof chat.id !== "string" ||
+      typeof chat.sessionId !== "string" ||
+      typeof chat.bindingRevision !== "number"
+    )
+      throw new StepError(
+        "chat_handle_missing",
+        "POST /api/chats did not return a Chat handle.",
+      );
+    const handle = {
+      id: chat.id,
+      sessionId: chat.sessionId,
+      bindingRevision: chat.bindingRevision,
+    };
+    this.chatHandles.set(key, handle);
+    return handle;
+  }
+
+  private forgetChat(companyId: string, agentId: string) {
+    this.chatHandles.delete(this.chatKey(companyId, agentId));
+  }
+
+  /** 以当前绑定为目标执行 Peri ChatUserAction；句柄失效时刷新一次。 */
+  private async chatAction(
+    companyId: string,
+    agentId: string,
+    body: Record<string, unknown>,
+  ) {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const handle = await this.chatHandle(companyId, agentId, attempt > 0);
+      try {
+        return await this.post(
+          `/api/chats/${encodeURIComponent(handle.id)}/actions?companyId=${encodeURIComponent(companyId)}&agentId=${encodeURIComponent(agentId)}`,
+          {
+            ...body,
+            target: {
+              chatId: handle.id,
+              sessionId: handle.sessionId,
+              bindingRevision: handle.bindingRevision,
+            },
+          },
+        );
+      } catch (error) {
+        if (attempt === 0 && error instanceof ApiError && error.status === 410) {
+          this.forgetChat(companyId, agentId);
+          continue;
+        }
+        throw error;
+      }
+    }
+    throw new StepError("chat_action_failed", "Chat action retry exhausted.");
+  }
 
   private async decode(response: Response) {
     this.lastStatus = response.status;
@@ -777,7 +977,8 @@ class Api {
       data = await response.json();
     } catch {}
     if (!response.ok) {
-      const error = data?.error;
+      // 传统路由把错误包在 `error` 里；Peri chat actions/DELETE 直接返回平铺错误体。
+      const error = data?.error ?? data;
       throw new ApiError(
         response.status,
         String(error?.code ?? `http_${response.status}`),
@@ -898,27 +1099,43 @@ class Api {
     );
   }
 
-  restartAgent(companyId: string, agentId: string) {
-    return this.post(
+  async restartAgent(companyId: string, agentId: string) {
+    const result = await this.post(
       `/api/agents/${encodeURIComponent(agentId)}/restart`,
       { companyId },
     );
+    // restart 会生成新的 Chat 句柄；下一次访问必须重新 wake。
+    this.forgetChat(companyId, agentId);
+    return result;
   }
 
-  conversation(companyId: string, agentId: string) {
-    return this.get(
-      `/api/agents/${encodeURIComponent(agentId)}/chat?companyId=${encodeURIComponent(companyId)}`,
-    );
+  async conversation(companyId: string, agentId: string) {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const handle = await this.chatHandle(companyId, agentId, attempt > 0);
+      try {
+        return await this.get(
+          `/api/chats/${encodeURIComponent(handle.id)}/projection?companyId=${encodeURIComponent(companyId)}&agentId=${encodeURIComponent(agentId)}`,
+        );
+      } catch (error) {
+        if (attempt === 0 && error instanceof ApiError && error.status === 410) {
+          this.forgetChat(companyId, agentId);
+          continue;
+        }
+        throw error;
+      }
+    }
+    throw new StepError("chat_projection_failed", "Chat projection retry exhausted.");
   }
 
   send(
     companyId: string,
     agentId: string,
-    input: { text: string; requestId: string; issueId?: string },
+    input: { text: string; requestId: string },
   ) {
-    return this.post(`/api/agents/${encodeURIComponent(agentId)}/chat`, {
-      companyId,
-      ...input,
+    return this.chatAction(companyId, agentId, {
+      type: "send",
+      requestId: input.requestId,
+      payload: { text: input.text },
     });
   }
 
@@ -930,26 +1147,28 @@ class Api {
     interactionId: string,
     answer: { kind: "permission"; decision: "allow_once" | "reject_once" },
   ) {
-    return this.post(`/api/agents/${encodeURIComponent(agentId)}/answer`, {
-      companyId,
-      interactionId,
-      answer,
+    return this.chatAction(companyId, agentId, {
+      type: "answer",
+      requestId: `e2e-answer-${randomUUID()}`,
+      payload: { interactionId, answer },
     });
   }
 
   /** Owner queue control for an input that the SDK accepted but did not start. */
   forceSend(companyId: string, agentId: string, inputId: string) {
-    return this.post(
-      `/api/agents/${encodeURIComponent(agentId)}/queue/force-send`,
-      { companyId, inputId },
-    );
+    return this.chatAction(companyId, agentId, {
+      type: "force_send",
+      requestId: `e2e-force-${randomUUID()}`,
+      payload: { inputId },
+    });
   }
 
   takeBack(companyId: string, agentId: string, inputId: string) {
-    return this.post(
-      `/api/agents/${encodeURIComponent(agentId)}/queue/take-back`,
-      { companyId, inputId },
-    );
+    return this.chatAction(companyId, agentId, {
+      type: "take_back",
+      requestId: `e2e-take-back-${randomUUID()}`,
+      payload: { inputId },
+    });
   }
 
   files(
@@ -1626,6 +1845,7 @@ type RunState = {
   baseline: IsolationBaseline;
   projectRoot?: string;
   model: ModelEnvironment;
+  modelLibraryPath: string;
   ownerToken: string;
   api: Api;
   child?: ReturnType<typeof Bun.spawn>;
@@ -1822,6 +2042,9 @@ function prepareRun(options: Options): RunState {
     evidenceIdentity,
   };
   ensureEvidenceSubdir(evidenceDir, evidenceIdentity, "transcripts");
+  const modelLibraryPath = join(runDir, "model-library.yaml");
+  writeFileSync(modelLibraryPath, buildModelLibrary(model), { mode: 0o600 });
+  chmodSync(modelLibraryPath, 0o600);
 
   // Capture isolation baselines before the test server starts. User data is only
   // stat'ed (path/size/mtime/inode); file contents and names are never written to
@@ -1866,6 +2089,7 @@ function prepareRun(options: Options): RunState {
     baseline,
     projectRoot,
     model,
+    modelLibraryPath,
     ownerToken,
     api: new Api(url.origin),
     serverCount: 0,
@@ -1897,6 +2121,7 @@ function childEnvironment(run: RunState): Record<string, string> {
     COMPANY_SQLD_START_TIMEOUT_MS:
       process.env.COMPANY_SQLD_START_TIMEOUT_MS ?? "30000",
     COMPANY_WEB_TOKEN: run.ownerToken,
+    COMPANY_MODEL_LIBRARY: run.modelLibraryPath,
     ...run.model.values,
   };
   if (run.options.mode === "macos-smoke") env.COMPANY_WORKSPACE = "disabled";
@@ -2127,16 +2352,9 @@ async function assertEffectiveConfiguration(
       "effective_config_alias",
       `Effective active_alias is not ${expectedAlias}`,
     );
-  const provider = config.providers?.[0];
-  const models = provider?.models;
-  if (!provider || !models || typeof models !== "object")
-    throw new StepError("effective_config_models", "four-tier provider models missing");
-  for (const tier of MODEL_TIERS)
-    if (typeof models[tier] !== "string" || !models[tier] || models[tier] === "unconfigured")
-      throw new StepError(
-        "effective_config_models",
-        `provider.models.${tier} is not configured`,
-      );
+  const providers = Array.isArray(config.providers) ? config.providers : [];
+  if (!providers.length)
+    throw new StepError("effective_config_models", "providers missing");
   const profiles = config.profiles;
   if (!profiles || typeof profiles !== "object")
     throw new StepError("effective_config_profiles", "profiles missing");
@@ -2145,41 +2363,59 @@ async function assertEffectiveConfiguration(
     if (
       !profile ||
       typeof profile !== "object" ||
-      Object.keys(profile).length !== 1 ||
-      profile.provider !== "company-model"
+      typeof profile.provider !== "string" ||
+      typeof profile.model !== "string" ||
+      !profile.model ||
+      profile.model === "unconfigured"
     )
       throw new StepError(
         "effective_config_profiles",
-        `profiles.${tier} must only bind company-model`,
+        `profiles.${tier} must bind a provider and a configured model`,
+      );
+    if (!providers.some((provider: any) => provider?.id === profile.provider))
+      throw new StepError(
+        "effective_config_profiles",
+        `profiles.${tier} references an unknown provider`,
       );
   }
   if (snapshot.configured !== true)
     throw new StepError("effective_config_not_configured", "Snapshot is not configured");
+  if (
+    snapshot.model?.source !== "profile" ||
+    snapshot.model?.configured !== true ||
+    snapshot.model?.activeAlias !== expectedAlias
+  )
+    throw new StepError(
+      "effective_config_model_metadata",
+      "Snapshot model metadata is missing or inconsistent",
+    );
   // The snapshot must have been assembled from the trusted host environment, not
   // from an Agent-writable file or a merged process environment.
   const trustedBaseUrl = run.model.values.PERI_MODEL_BASE_URL;
-  if (trustedBaseUrl && provider.baseUrl !== trustedBaseUrl)
-    throw new StepError(
-      "untrusted_model_endpoint",
-      "Effective configuration does not use the trusted host model base URL",
-    );
   const trustedKey = run.model.values.PERI_MODEL_API_KEY;
-  if (trustedKey && provider.apiKey !== trustedKey)
-    throw new StepError(
-      "untrusted_model_credential",
-      "Effective configuration does not use the trusted host model credential",
-    );
   const trustedProvider = run.model.values.PERI_MODEL_PROVIDER;
-  if (trustedProvider && provider.type !== trustedProvider)
-    throw new StepError(
-      "untrusted_model_provider",
-      "Effective configuration does not use the trusted host model provider",
-    );
+  for (const provider of providers) {
+    if (trustedBaseUrl && provider.baseUrl !== trustedBaseUrl)
+      throw new StepError(
+        "untrusted_model_endpoint",
+        "Effective configuration does not use the trusted host model base URL",
+      );
+    if (trustedKey && provider.apiKey !== trustedKey)
+      throw new StepError(
+        "untrusted_model_credential",
+        "Effective configuration does not use the trusted host model credential",
+      );
+    if (trustedProvider && provider.type !== trustedProvider)
+      throw new StepError(
+        "untrusted_model_provider",
+        "Effective configuration does not use the trusted host model provider",
+      );
+  }
   return {
     fourTiers: true,
     activeAlias: expectedAlias,
-    profilesProviderOnly: true,
-    credentialPresent: Boolean(provider.apiKey),
+    perTierProfileModels: true,
+    credentialPresent: providers.every((provider: any) => Boolean(provider.apiKey)),
     trustedEndpoint: true,
   };
 }
@@ -3060,7 +3296,7 @@ async function stepE05(run: RunState, runner: Runner) {
         sessionUnchanged: true,
         configured: true,
         fourTiers: effective.fourTiers,
-        profilesProviderOnly: effective.profilesProviderOnly,
+        perTierProfileModels: effective.perTierProfileModels,
         credentialPresent: effective.credentialPresent,
         trustedEndpoint: effective.trustedEndpoint,
       },
@@ -3381,7 +3617,7 @@ Do not modify Company business YAML. Reply with the commit SHA and the Issue ver
         commitVerified: true,
         configurationApplied: applied.after.appliedConfigVersion,
         fourTiers: effective.fourTiers,
-        profilesProviderOnly: effective.profilesProviderOnly,
+        perTierProfileModels: effective.perTierProfileModels,
         trustedEndpoint: effective.trustedEndpoint,
         attempts: turn.attempts,
       },

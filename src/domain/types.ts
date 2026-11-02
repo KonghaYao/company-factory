@@ -6,12 +6,9 @@ export type CallerContext = Readonly<{
 }>;
 export type AgentModelTier = "fable" | "opus" | "sonnet" | "haiku";
 export type AgentConfig = {
-  model?: string;
+  /** Model library profile id; "" inherits the library default. */
+  modelProfile?: string;
   modelAlias?: AgentModelTier;
-  models?: Partial<Record<AgentModelTier, string>>;
-  provider?: string;
-  apiKeyEnv?: string;
-  baseUrl?: string;
   responsibilities?: string;
   instructions?: string;
   workspaceRoots?: string[];

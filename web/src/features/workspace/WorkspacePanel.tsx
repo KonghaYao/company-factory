@@ -2,6 +2,7 @@ import { lazy, Suspense } from "react";
 import {
   Activity,
   CircleDot,
+  Cpu,
   Files as FilesIcon,
   MessageSquare,
   Settings2,
@@ -17,6 +18,7 @@ import type {
 } from "../../lib/types";
 import { ErrorBox, IconButton, Loading } from "../../ui/primitives";
 import { RunView } from "./RunView";
+import { ModelView } from "./ModelView";
 import { TasksView } from "./TasksView";
 import { MessagesView } from "./MessagesView";
 
@@ -25,7 +27,7 @@ const FilesView = lazy(() =>
   import("./FilesView").then((module) => ({ default: module.FilesView })),
 );
 
-export type WorkspaceTab = "run" | "tasks" | "files" | "messages";
+export type WorkspaceTab = "run" | "model" | "tasks" | "files" | "messages";
 
 const TABS: {
   id: WorkspaceTab;
@@ -33,6 +35,7 @@ const TABS: {
   icon: typeof Activity;
 }[] = [
   { id: "run", label: "运行", icon: Activity },
+  { id: "model", label: "模型", icon: Cpu },
   { id: "tasks", label: "任务", icon: CircleDot },
   { id: "files", label: "文件", icon: FilesIcon },
   { id: "messages", label: "消息", icon: MessageSquare },
@@ -59,6 +62,7 @@ export function WorkspacePanel({
   onOpenAgent,
   onCreateIssue,
   onOpenConfig,
+  onOpenLibrary,
   onDraft,
   onReference,
 }: {
@@ -78,6 +82,7 @@ export function WorkspacePanel({
   onOpenAgent: (id: string) => void;
   onCreateIssue: () => void;
   onOpenConfig: () => void;
+  onOpenLibrary: () => void;
   onDraft: (text: string) => void;
   onReference: (reference: FileReference) => void;
 }) {
@@ -134,6 +139,13 @@ export function WorkspacePanel({
             issues={issues}
             previews={previews}
             onIssue={onSelectIssue}
+            onModel={() => onTab("model")}
+          />
+        ) : tab === "model" ? (
+          <ModelView
+            scope={scope}
+            runtime={runtime}
+            onOpenLibrary={onOpenLibrary}
           />
         ) : tab === "tasks" ? (
           <TasksView

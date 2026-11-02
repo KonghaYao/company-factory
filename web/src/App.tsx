@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Boxes, Plus } from "lucide-react";
 import type {
@@ -24,9 +24,16 @@ import {
   AgentConfiguration,
   AgentEditor,
 } from "./features/org/AgentSettings";
-import { ChatPanel } from "./features/chat/ChatPanel";
 import { WorkspacePanel } from "./features/workspace/WorkspacePanel";
 import { CreateIssue } from "./features/workspace/CreateIssue";
+import { ModelLibrarySheet } from "./features/models/ModelLibrarySheet";
+
+/** Peri ChatShell 独立成 chunk：主工作台首屏不为 chat 运行时买单。 */
+const CompanyChatShell = lazy(() =>
+  import("./features/chat/CompanyChatShell").then((module) => ({
+    default: module.CompanyChatShell,
+  })),
+);
 
 const ownerAccessTokenKey = "company.ownerAccessToken";
 const POLL_INTERVAL = { organization: 4000, workspace: 2500, runtime: 1500 };
@@ -102,11 +109,18 @@ export default function App() {
   const [companyModal, setCompanyModal] = useState(false);
   const [orgModal, setOrgModal] = useState(false);
   const [configModal, setConfigModal] = useState(false);
+  const [libraryModal, setLibraryModal] = useState(false);
   const [editAgentId, setEditAgentId] = useState("");
   const [issueModal, setIssueModal] = useState(false);
   const [fileReference, setFileReference] = useState<FileReference>();
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [toast, setToast] = useState("");
+  /** 从工作区注入 Composer 的文本；由 ChatShell 消费后清空，避免重复追加。 */
+  const [composerInsert, setComposerInsert] = useState<{
+    agentId: string;
+    text: string;
+    revision: number;
+  }>();
 
   const companies = useQuery({
     queryKey: ["companies"],
@@ -145,6 +159,14 @@ export default function App() {
   );
   const ensure = useLocal((state) => state.ensure);
   const patch = useLocal((state) => state.patch);
+  const insertComposerText = (targetAgentId: string, text: string) => {
+    if (!targetAgentId) return;
+    setComposerInsert((current) => ({
+      agentId: targetAgentId,
+      text,
+      revision: (current?.revision ?? 0) + 1,
+    }));
+  };
 
   useEffect(() => {
     if (companyId && selectedAgent) ensure(scope);
@@ -185,14 +207,8 @@ export default function App() {
   const selectIssue = (id?: string) =>
     patch(scope, { tab: "tasks", issueId: id });
   const draft = (text: string) => {
-    patch(scope, {
-      draft: local.draft ? `${local.draft}\n\n${text}` : text,
-    });
+    insertComposerText(selectedAgent, text);
     setToast("指令已加入当前 Agent 的草稿，请检查后发送。");
-  };
-  const openFile = (reference: FileReference) => {
-    patch(scope, { tab: "files" });
-    setFileReference({ ...reference });
   };
   const createdIssue = (issue: Issue) => {
     setIssueModal(false);
@@ -212,8 +228,7 @@ export default function App() {
       return;
     }
     const hrScope = { companyId, agentId: agentId(hr) };
-    const old = useLocal.getState().scopes[scopeKey(hrScope)]?.draft || "";
-    patch(hrScope, { draft: old ? `${old}\n\n${text}` : text });
+    insertComposerText(hrScope.agentId, text);
     selectAgent(agentId(hr));
     setToast("成员定义已加入 HR 草稿，请检查后发送；尚未创建成员。");
   };
@@ -324,7 +339,11 @@ export default function App() {
 
   return (
     <div className="app">
-      <AppHeader companyName={company?.name} agentName={agent?.name} />
+      <AppHeader
+        companyName={company?.name}
+        agentName={agent?.name}
+        onOpenModels={() => setLibraryModal(true)}
+      />
       <SplitWorkspace
         sidebar={
           <OrganizationPanel
@@ -352,14 +371,27 @@ export default function App() {
         }
         chat={
           agent ? (
-            <ChatPanel
-              key={scopeKey(scope)}
-              scope={scope}
-              agent={agent}
-              runtime={actualRuntime}
-              issues={issues}
-              onOpenReference={openFile}
-            />
+            <Suspense
+              fallback={
+                <div className="chat-placeholder">
+                  <span className="panel-kicker">PERI CHAT</span>
+                  <p>正在加载 ChatShell…</p>
+                </div>
+              }
+            >
+              <CompanyChatShell
+                key={scopeKey(scope)}
+                scope={scope}
+                issues={issues}
+                onOpenSettings={() => setConfigModal(true)}
+                injectedDraft={
+                  composerInsert?.agentId === scope.agentId
+                    ? composerInsert
+                    : undefined
+                }
+                onInjectedDraft={() => setComposerInsert(undefined)}
+              />
+            </Suspense>
           ) : (
             <div className="chat-placeholder">
               <span className="panel-kicker">选择一位 Agent</span>
@@ -386,6 +418,7 @@ export default function App() {
             onOpenAgent={selectAgent}
             onCreateIssue={() => setIssueModal(true)}
             onOpenConfig={() => setConfigModal(true)}
+            onOpenLibrary={() => setLibraryModal(true)}
             onDraft={draft}
             onReference={(reference) => {
               patch(scope, { references: [...local.references, reference] });
@@ -421,6 +454,10 @@ export default function App() {
           onClose={() => setConfigModal(false)}
         />
       )}
+      <ModelLibrarySheet
+        open={libraryModal}
+        onClose={() => setLibraryModal(false)}
+      />
       {editingAgent && (
         <AgentEditor
           key={agentId(editingAgent)}

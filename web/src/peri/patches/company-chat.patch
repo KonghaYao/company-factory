@@ -1,0 +1,628 @@
+--- a/chat/components/AskUserQuestionCard.tsx
++++ b/chat/components/AskUserQuestionCard.tsx
+@@ -1,6 +1,6 @@
+ import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+ import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, Loader2Icon, MessageCircleQuestion, XIcon } from 'lucide-react';
+-import { cn } from '@/lib';
++import { cn } from '../../lib';
+ import { field, inkButton, paper } from '../../components/assistant-ui';
+ import {
+   buildAskUserQuestionContent,
+--- a/chat/components/ChatHeader.tsx
++++ b/chat/components/ChatHeader.tsx
+@@ -8,6 +8,9 @@
+   sidebarTrigger?: RefObject<HTMLButtonElement | null>;
+   detailsTrigger?: RefObject<HTMLButtonElement | null>;
+   syncLabel?: string | undefined;
++  /** 宿主关闭侧栏/详情栏时，不渲染对应触发器（避免点了没反应）。 */
++  showSidebar?: boolean;
++  showDetails?: boolean;
+   onOpenSidebar: () => void;
+   onToggleDetails: () => void;
+   onOpenSettings: () => void;
+@@ -16,6 +19,7 @@
+ /** 中间列 header：Peri / 会话标题面包屑 + 右面板开关与设置入口。 */
+ export function ChatHeader({
+   title, detailsOpen, sidebarOpen, sidebarTrigger, detailsTrigger, syncLabel,
++  showSidebar = true, showDetails = true,
+   onOpenSidebar, onToggleDetails, onOpenSettings,
+ }: ChatHeaderProps) {
+   return (
+@@ -23,18 +27,20 @@
+       data-slot="peri-chat-header"
+       className="bg-background flex h-14 shrink-0 items-center gap-2 border-b px-3 md:px-5"
+     >
+-      <button
+-        ref={sidebarTrigger}
+-        type="button"
+-        aria-expanded={sidebarOpen}
+-        aria-controls="peri-sidebar"
+-        aria-haspopup="dialog"
+-        aria-label="打开会话列表"
+-        className="text-muted-foreground hover:bg-accent hover:text-foreground inline-flex size-8 items-center justify-center rounded-lg md:hidden"
+-        onClick={onOpenSidebar}
+-      >
+-        <Menu size={19} />
+-      </button>
++      {showSidebar && (
++        <button
++          ref={sidebarTrigger}
++          type="button"
++          aria-expanded={sidebarOpen}
++          aria-controls="peri-sidebar"
++          aria-haspopup="dialog"
++          aria-label="打开会话列表"
++          className="text-muted-foreground hover:bg-accent hover:text-foreground inline-flex size-8 items-center justify-center rounded-lg md:hidden"
++          onClick={onOpenSidebar}
++        >
++          <Menu size={19} />
++        </button>
++      )}
+ 
+       <nav className="flex min-w-0 items-center gap-2 text-sm" aria-label="位置">
+         <span className="text-muted-foreground shrink-0">Peri</span>
+@@ -47,21 +53,23 @@
+       )}
+ 
+       <div className="ml-auto flex shrink-0 items-center gap-1">
++        {showDetails && (
++          <button
++            ref={detailsTrigger}
++            type="button"
++            aria-expanded={detailsOpen}
++            aria-controls="peri-right-panel"
++            className="text-muted-foreground hover:bg-accent hover:text-foreground inline-flex size-8 items-center justify-center rounded-lg"
++            aria-label="详情面板"
++            title="详情"
++            onClick={onToggleDetails}
++          >
++            <PanelRight size={17} />
++          </button>
++        )}
+         <button
+-          ref={detailsTrigger}
+           type="button"
+-          aria-expanded={detailsOpen}
+-          aria-controls="peri-right-panel"
+           className="text-muted-foreground hover:bg-accent hover:text-foreground inline-flex size-8 items-center justify-center rounded-lg"
+-          aria-label="详情面板"
+-          title="详情"
+-          onClick={onToggleDetails}
+-        >
+-          <PanelRight size={17} />
+-        </button>
+-        <button
+-          type="button"
+-          className="text-muted-foreground hover:bg-accent hover:text-foreground inline-flex size-8 items-center justify-center rounded-lg"
+           aria-label="服务端监控"
+           aria-haspopup="dialog"
+           title="服务端监控"
+--- a/chat/components/ChatRightPanel.tsx
++++ b/chat/components/ChatRightPanel.tsx
+@@ -1,7 +1,7 @@
+ import { useRef, useState, type KeyboardEvent } from 'react';
+ import { X } from 'lucide-react';
+-import { cn } from '@/lib';
+-import { useFocusTrap, useMediaQuery } from '@/hooks';
++import { cn } from '../../lib';
++import { useFocusTrap, useMediaQuery } from '../../hooks';
+ import type { ChatDisplayState } from '../runtime';
+ import { DetailsPanel, type DetailsPanelMode } from './DetailsPanel';
+ 
+--- a/chat/components/ChatShell.tsx
++++ b/chat/components/ChatShell.tsx
+@@ -1,4 +1,4 @@
+-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
++import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+ import { syncRetryAction, useChat } from '../runtime';
+ import type { ChatSummary } from '../runtime';
+ import { Timeline } from '../timeline';
+@@ -25,6 +25,15 @@
+ interface ChatShellViewProps {
+   chat: ChatShellChat;
+   onOpenSettings: () => void;
++  /** 宿主外壳开关：Company 已有 Agent 侧栏与 WorkspacePanel。 */
++  chrome?: { sidebar?: boolean; details?: boolean };
++  /** 时间线上方的宿主插槽（如“加载更早”）。 */
++  beforeTimeline?: ReactNode;
++  /** Composer 上方的宿主插槽（Issue/引用 chips、输入队列）。 */
++  composerExtras?: ReactNode;
++  /** 宿主从外部插入草稿（如“加入 HR 草稿”）；会话未就绪时等待。 */
++  injectedDraft?: { text: string; revision: number };
++  onInjectedDraft?: () => void;
+ }
+ 
+ const NAVIGATION_BLOCKED_PHASES = new Set(['cancelling', 'syncing']);
+@@ -45,7 +54,17 @@
+  * 外壳视图：数据与命令全部经 `chat` 注入。
+  * 窄屏 sidebar 变 drawer，右面板变 overlay；错误分列表/会话/实时同步三类展示。
+  */
+-export function ChatShellView({ chat, onOpenSettings }: ChatShellViewProps) {
++export function ChatShellView({
++  chat,
++  onOpenSettings,
++  chrome,
++  beforeTimeline,
++  composerExtras,
++  injectedDraft,
++  onInjectedDraft,
++}: ChatShellViewProps) {
++  const showSidebar = chrome?.sidebar !== false;
++  const showDetails = chrome?.details !== false;
+   const [sidebarOpen, setSidebarOpen] = useState(false);
+   const [detailsOpen, setDetailsOpen] = useState(false);
+   const [composerHeight, setComposerHeight] = useState(0);
+@@ -57,6 +76,24 @@
+   const { draftKey, draft, changeDraft, selectPrompt: setPromptDraft } = drafts;
+   const { select, runAction, send, focusComposer, focusSignal, scrollSignal } = navigation;
+ 
++  // 宿主注入草稿：会话就绪后按 revision 只应用一次，追加而不是覆盖用户输入。
++  const injectedRevision = useRef(0);
++  useEffect(() => {
++    if (!injectedDraft || !chat.selected) return;
++    if (injectedDraft.revision === injectedRevision.current) return;
++    injectedRevision.current = injectedDraft.revision;
++    changeDraft(draft ? `${draft}\n\n${injectedDraft.text}` : injectedDraft.text);
++    focusComposer();
++    onInjectedDraft?.();
++  }, [
++    injectedDraft,
++    chat.selected,
++    draft,
++    changeDraft,
++    focusComposer,
++    onInjectedDraft,
++  ]);
++
+   const running = chat.state?.running === true || chat.phase === 'cancelling';
+   const canSend = chat.historyReady && chat.phase === 'idle';
+   const navigationDisabled = NAVIGATION_BLOCKED_PHASES.has(chat.phase);
+@@ -162,29 +199,33 @@
+   );
+ 
+   return (
+-    <div className="bg-background text-foreground flex h-dvh min-h-[320px] overflow-hidden">
+-      <Sidebar
+-        chats={chat.chats}
+-        projects={chat.projects}
+-        selectedId={chat.selected?.id}
+-        selectedRunning={chat.state?.running === true}
+-        loading={chat.listLoading}
+-        projectsLoading={chat.projectsLoading}
+-        disabled={navigationDisabled}
+-        open={sidebarOpen}
+-        onClose={closeSidebar}
+-        onNew={newChat}
+-        onNewInProject={newChatInProject}
+-        onCreateProject={createProject}
+-        onRefresh={refreshList}
+-        onSelect={selectFromSidebar}
+-      />
++    <div className="bg-background text-foreground flex h-full min-h-[320px] overflow-hidden">
++      {showSidebar && (
++        <Sidebar
++          chats={chat.chats}
++          projects={chat.projects}
++          selectedId={chat.selected?.id}
++          selectedRunning={chat.state?.running === true}
++          loading={chat.listLoading}
++          projectsLoading={chat.projectsLoading}
++          disabled={navigationDisabled}
++          open={sidebarOpen}
++          onClose={closeSidebar}
++          onNew={newChat}
++          onNewInProject={newChatInProject}
++          onCreateProject={createProject}
++          onRefresh={refreshList}
++          onSelect={selectFromSidebar}
++        />
++      )}
+ 
+       <main className="flex min-w-0 flex-1 flex-col">
+         <ChatHeader
+           title={selectedTitle}
+           detailsOpen={detailsOpen}
+           sidebarOpen={sidebarOpen}
++          showSidebar={showSidebar}
++          showDetails={showDetails}
+           sidebarTrigger={sidebarTrigger}
+           detailsTrigger={detailsTrigger}
+           syncLabel={
+@@ -211,6 +252,8 @@
+           onDismissChat={chat.dismissChatError}
+         />
+ 
++        {beforeTimeline}
++
+         <div className="relative flex min-h-0 flex-1 flex-col">
+           <MemoTimeline
+             state={chat.state}
+@@ -237,10 +280,13 @@
+                 disabledReason={composerDisabledReason}
+                 errorBanner={chat.chatError}
+                 pendingContent={
+-                  <PendingInteractions
+-                    interactions={pendingInteractions}
+-                    onAnswer={chat.historyReady ? chat.answerInteraction : undefined}
+-                  />
++                  <>
++                    {composerExtras}
++                    <PendingInteractions
++                      interactions={pendingInteractions}
++                      onAnswer={chat.historyReady ? chat.answerInteraction : undefined}
++                    />
++                  </>
+                 }
+                 onSend={send}
+                 onStop={stop}
+@@ -257,7 +303,9 @@
+         </div>
+       </main>
+ 
+-      <ChatRightPanel open={detailsOpen} state={chat.state} onClose={closeDetails} />
++      {showDetails && (
++        <ChatRightPanel open={detailsOpen} state={chat.state} onClose={closeDetails} />
++      )}
+     </div>
+   );
+ }
+--- a/chat/components/Sidebar.tsx
++++ b/chat/components/Sidebar.tsx
+@@ -1,7 +1,7 @@
+ import { useMemo, useRef, useState, type FormEvent } from 'react';
+ import { ChevronRight, Folder, PanelLeftClose, Plus, RefreshCw, Search, Sparkles, X } from 'lucide-react';
+-import { cn } from '@/lib';
+-import { useFocusTrap, useMediaQuery } from '@/hooks';
++import { cn } from '../../lib';
++import { useFocusTrap, useMediaQuery } from '../../hooks';
+ import type { ChatSummary, ProjectSummary } from '../runtime';
+ import { SidebarThreadRow } from './SidebarThreadRow';
+ 
+--- a/chat/components/SidebarThreadRow.tsx
++++ b/chat/components/SidebarThreadRow.tsx
+@@ -1,4 +1,4 @@
+-import { cn } from '@/lib';
++import { cn } from '../../lib';
+ import type { ChatSummary } from '../runtime';
+ 
+ /** 相对时间：只做展示，不改变排序事实。 */
+--- a/chat/components/shell/ChatBanners.tsx
++++ b/chat/components/shell/ChatBanners.tsx
+@@ -83,7 +83,7 @@
+             className="hover:bg-destructive/10 shrink-0 rounded-md px-1.5 py-0.5"
+             onClick={() => onAction('rebuild-chat')}
+           >
+-            关闭并新建
++            重启会话
+           </button>
+         </div>
+       ) : chatBanner && (
+--- a/chat/composer/composerLimits.ts
++++ b/chat/composer/composerLimits.ts
+@@ -1,11 +1,8 @@
+-import { CHAT_SEND_TEXT_MAX_LENGTH } from '@peri-code/sdk';
+-
+ /**
+- * Composer 字数上限：直接复用 SDK 的发送校验常量，避免 UI 与 Action 各写一份。
+- *
+- * `String.length` 与 SDK 一致，按 UTF-16 单元计数（emoji 计 2）。
++ * Composer 字数上限：与 `@peri-code/sdk` 的内部 `MAX_SEND_TEXT_LENGTH` 同源
++ * （SDK 0.3.0 `dist/index.js` 的 32_768，未导出该常量）。
+  */
+-export const MAX_COMPOSER_CHARS = CHAT_SEND_TEXT_MAX_LENGTH;
++export const MAX_COMPOSER_CHARS = 32_768;
+ /** 达到该比例后开始显示计数，避免平时占用状态栏空间。 */
+ export const COMPOSER_NEAR_LIMIT_RATIO = 0.8;
+ 
+--- a/chat/composer/draftStorage.ts
++++ b/chat/composer/draftStorage.ts
+@@ -1,4 +1,4 @@
+-import { CHAT_SEND_TEXT_MAX_LENGTH } from '@peri-code/sdk';
++import { MAX_COMPOSER_CHARS } from './composerLimits';
+ import type { ComposerDrafts } from './drafts';
+ 
+ /**
+@@ -55,7 +55,7 @@
+       if (typeof item.text !== 'string' || typeof item.updatedAt !== 'number') continue;
+       if (
+         key.length === 0 || item.text.length === 0
+-        || item.text.length > CHAT_SEND_TEXT_MAX_LENGTH || !Number.isFinite(item.updatedAt)
++        || item.text.length > MAX_COMPOSER_CHARS || !Number.isFinite(item.updatedAt)
+       ) continue;
+       drafts[key] = { text: item.text, updatedAt: item.updatedAt };
+     }
+@@ -95,7 +95,7 @@
+     const previous = parseEnvelope(storage.getItem(COMPOSER_DRAFT_STORAGE_KEY))?.drafts ?? {};
+     const next: Record<string, StoredDraft> = {};
+     for (const [key, text] of Object.entries(drafts)) {
+-      if (key.length === 0 || text.length === 0 || text.length > CHAT_SEND_TEXT_MAX_LENGTH) continue;
++      if (key.length === 0 || text.length === 0 || text.length > MAX_COMPOSER_CHARS) continue;
+       next[key] = { text, updatedAt: previous[key]?.text === text ? previous[key]!.updatedAt : now };
+     }
+     if (Object.keys(next).length === 0) {
+--- a/chat/runtime/useChat.ts
++++ b/chat/runtime/useChat.ts
+@@ -78,7 +78,9 @@
+   return typeof document === 'undefined' || document.visibilityState !== 'hidden';
+ }
+ 
+-export function useChat() {
++export function useChat(
++  createApplication: () => ChatController = createChatApplication,
++) {
+   const [dismissedListError, setDismissedListError] = useState(0);
+   const [activityUntil, setActivityUntil] = useState(0);
+   const controllerRef = useRef<ChatController | null>(null);
+@@ -87,7 +89,7 @@
+     projects: (signal?: AbortSignal) => controllerRef.current?.listProjects(signal) ?? Promise.resolve([]),
+   }), []);
+   const queries = useMemo(() => createChatQueries(api), [api]);
+-  const controller = useMemo(() => createChatApplication(), []);
++  const controller = useMemo(() => createApplication(), []);
+   controllerRef.current = controller;
+   const view = useSyncExternalStore(controller.subscribe, controller.getState, controller.getState);
+   const visible = useSyncExternalStore(subscribeVisibility, documentVisible, () => true);
+@@ -177,6 +179,18 @@
+     return outcome;
+   }, [controller, bumpActivity]);
+   const stop = useCallback(() => controller.stop(), [controller]);
++  const loadEarlierHistory = useCallback(
++    (limit?: number) => controller.loadEarlierHistory(limit),
++    [controller],
++  );
++  const takeBackInput = useCallback(
++    (inputId: string) => controller.takeBackInput(inputId),
++    [controller],
++  );
++  const forceSendInput = useCallback(
++    (inputId: string) => controller.forceSendInput(inputId),
++    [controller],
++  );
+   const setConfigOption = useCallback(
+     (configId: string, value: string) => controller.setConfigOption(configId, value),
+     [controller],
+@@ -198,6 +212,7 @@
+     chatError, listError, error: chatError || listError, banners,
+     payloadReader, answerInteraction,
+     refreshList, selectChat, createProject, reloadChat, rebuildChat, currentChatId, send, stop,
++    loadEarlierHistory, takeBackInput, forceSendInput,
+     setConfigOption,
+     dismissChatError, dismissListError,
+   };
+--- a/chat/timeline/StreamdownText.tsx
++++ b/chat/timeline/StreamdownText.tsx
+@@ -1,6 +1,6 @@
+ import { memo } from 'react';
+ import { Streamdown, type Components } from 'streamdown';
+-import { cn } from '@/lib';
++import { cn } from '../../lib';
+ import '../../styles/chat-markdown.css';
+ 
+ /** react-markdown / Streamdown 会给自定义组件注入 `node`；它不是 DOM 属性。 */
+--- a/chat/timeline/rows/ReasoningRow.tsx
++++ b/chat/timeline/rows/ReasoningRow.tsx
+@@ -1,6 +1,6 @@
+ import { useEffect, useRef, useState } from 'react';
+ import { ChevronRight, Sparkles } from 'lucide-react';
+-import { cn } from '@/lib';
++import { cn } from '../../../lib';
+ import type { TimelineWorkItem } from '../types';
+ 
+ /** 单条 reasoning：运行中展开，结束后自动收起；turn 折叠内不画左侧竖线。 */
+--- a/chat/timeline/rows/ToolRow.tsx
++++ b/chat/timeline/rows/ToolRow.tsx
+@@ -3,7 +3,7 @@
+   Check, ChevronRight, CircleAlert, FilePenLine, FileText, Globe, ListChecks, Loader2,
+   MessageCircleQuestion, Search, Terminal, Wrench, type LucideIcon,
+ } from 'lucide-react';
+-import { cn } from '@/lib';
++import { cn } from '../../../lib';
+ import { loadPayloadValue, type ToolPayloadReader } from '../../runtime';
+ import { toolFailureSummary, type ToolFailureSummary } from '../failureSummary';
+ import {
+--- a/chat/timeline/rows/TurnFoldRow.tsx
++++ b/chat/timeline/rows/TurnFoldRow.tsx
+@@ -1,5 +1,5 @@
+ import { ChevronRight } from 'lucide-react';
+-import { cn } from '@/lib';
++import { cn } from '../../../lib';
+ 
+ /**
+  * turn 级折叠行：已结算 turn 的 work 收束为一条摘要；失败/取消只保留终态配色，
+--- a/chat/timeline/rows/WorkGroupRow.tsx
++++ b/chat/timeline/rows/WorkGroupRow.tsx
+@@ -1,6 +1,6 @@
+ import { useEffect, useRef, useState } from 'react';
+ import { ChevronRight } from 'lucide-react';
+-import { cn } from '@/lib';
++import { cn } from '../../../lib';
+ import { ReasoningRow } from './ReasoningRow';
+ import { ToolRow } from './ToolRow';
+ import type { ToolPayloadReader } from '../../runtime';
+--- a/components/assistant-ui/elements/approval-card.tsx
++++ b/components/assistant-ui/elements/approval-card.tsx
+@@ -2,7 +2,7 @@
+ 
+ import { useId, type ComponentProps, type ReactNode } from "react";
+ import { CheckIcon, Loader2Icon, TerminalIcon, XIcon } from "lucide-react";
+-import { cn } from "@/lib";
++import { cn } from "../../../lib";
+ import { field, ghostButton, inkButton, mono, paper } from "./surfaces";
+ import { useReceiptFocus } from "./receipt-focus";
+ 
+--- a/components/assistant-ui/elements/elicitation-form.tsx
++++ b/components/assistant-ui/elements/elicitation-form.tsx
+@@ -6,7 +6,7 @@
+ // 2. `ElicitationField` 增加可选 `description`，随 label 展示字段说明（服务端 schema 提供）。
+ import { useId, type ComponentProps } from "react";
+ import { CheckIcon, PlugIcon, XIcon } from "lucide-react";
+-import { cn } from "@/lib";
++import { cn } from "../../../lib";
+ import { field, inkButton, mono, paper } from "./surfaces";
+ import { useReceiptFocus } from "./receipt-focus";
+ 
+--- a/remote/controller.ts
++++ b/remote/controller.ts
+@@ -206,10 +206,50 @@
+     this.actionError = "";
+     this.connectionError = "";
+     this.clearCancel();
+-    return await this.openChat(
+-      null,
+-      this.newProjectId === undefined ? {} : { projectId: this.newProjectId },
+-    );
++    // Company DELETE 语义是“重启同一固定 Session”（不是新建）：关闭后重开原会话。
++    return selected
++      ? await this.openChat({
++          sessionId: selected.id,
++          title: selected.title,
++          updatedAt: selected.updatedAt,
++        })
++      : await this.openChat(
++          null,
++          this.newProjectId === undefined ? {} : { projectId: this.newProjectId },
++        );
++  }
++
++  /** 历史分页：只追加更早事实，不改变绑定。 */
++  async loadEarlierHistory(limit = 50): Promise<boolean> {
++    return this.control(ChatUserAction.loadEarlierHistory({ limit }));
++  }
++
++  /** 队列取回：从待投递队列撤回一条输入，不停止当前回复。 */
++  async takeBackInput(inputId: string): Promise<boolean> {
++    return this.control(ChatUserAction.takeBack(inputId));
++  }
++
++  /** 队列立即投递：把一条待投递输入提前交给运行侧。 */
++  async forceSendInput(inputId: string): Promise<boolean> {
++    return this.control(ChatUserAction.forceSend(inputId));
++  }
++
++  private async control(action: ChatUserAction): Promise<boolean> {
++    const active = this.active;
++    const target = active ? this.bindingTarget(active) : null;
++    if (!active || !target) return false;
++    try {
++      await this.deps.actions.execute(active.address, action, target);
++      if (!this.uncertain) {
++        this.actionError = "";
++        this.recovery = "none";
++      }
++      this.refresh();
++      return true;
++    } catch (error) {
++      this.failAction(error);
++      return false;
++    }
+   }
+ 
+   /**
+@@ -353,10 +393,18 @@
+     const active = this.active;
+     const target = active ? this.bindingTarget(active) : null;
+     if (!active || !target) return { ok: false, message: "会话尚未就绪，配置未提交。" };
++    // SDK 0.3.0 的动作联合没有 set_config_option；缺该动作时只读，不伪造成功。
++    const setConfigOption = (
++      ChatUserAction as unknown as {
++        setConfigOption?: (input: { configId: string; value: string }) => ChatUserAction;
++      }
++    ).setConfigOption;
++    if (!setConfigOption)
++      return { ok: false, message: "后端不支持会话内切换配置" };
+     try {
+       await this.deps.actions.execute(
+         active.address,
+-        ChatUserAction.setConfigOption({ configId, value }),
++        setConfigOption({ configId, value }),
+         target,
+       );
+       // 成功写配置不能清掉未知结果留下的横幅；否则界面继续阻断却看不到原因。
+--- a/remote/index.ts
++++ b/remote/index.ts
+@@ -17,10 +17,6 @@
+   type ProjectDirectoryRepository,
+ } from "./projects";
+ export {
+-  MonitorUnavailableError, createHttpMonitorRepository,
+-  type MonitorRepository,
+-} from "./monitor";
+-export {
+   ChatSyncProvider, SyncBackpressureError, WebSocketChatChannel,
+   type ChatSyncOptions, type SyncConnectionStatus, type WebSocketLike,
+ } from "./sync";
+--- a/server/api/sync.ts
++++ b/src/server/peri/sync.ts
+@@ -8,7 +8,7 @@
+ import type { MiddlewareHandler } from "hono";
+ import { createMiddleware } from "hono/factory";
+ import type { WSEvents, WSContext } from "hono/ws";
+-import { logError } from "../logging";
++import { logError } from "./logging";
+ import { chatNotFound } from "./errors";
+ 
+--- a/chat/composer/ChatComposer.tsx
++++ b/chat/composer/ChatComposer.tsx
+@@ -98,7 +98,6 @@
+     [commands, trigger?.query],
+   );
+   const slashMenuId = `${generatedId}-slash`;
+-  const hintId = `${generatedId}-hint`;
+   const limitId = `${generatedId}-limit`;
+   const errorId = `${generatedId}-error`;
+   const disabledId = `${generatedId}-disabled`;
+@@ -274,16 +273,14 @@
+     && errorBanner.length > 0 && errorBanner.includes(failure.message);
+   const showDisabledReason = !busy && !canSend && draft.length > 0 && disabledReason !== undefined;
+   const describedBy = [
+-    hintId,
+     limit.overLimit ? limitId : null,
+     failure && !bannerCoversFailure ? errorId : null,
+     showDisabledReason ? disabledId : null,
+-  ].filter((value): value is string => value !== null).join(' ');
++  ].filter((value): value is string => value !== null).join(' ') || undefined;
+ 
+   return (
+     <ComposerShell onHeightChange={onHeightChange}>
+       {pendingContent}
+-      <span id={hintId} className="sr-only">Enter 发送，Shift+Enter 换行</span>
+       {failure && !bannerCoversFailure && (
+         <div
+           id={errorId}
+@@ -337,7 +334,7 @@
+           {disabledReason}
+         </p>
+       )}
+-      <div className="relative flex items-end gap-2 px-3 pt-2">
++      <div className="relative flex items-end gap-2 px-3 pt-2" data-slot="peri-composer-input">
+         {slashOpen && (
+           <ComposerSlashMenu
+             id={slashMenuId}
+@@ -351,9 +348,10 @@
+           value={draft}
+           rows={1}
+           placeholder={busy ? '任务运行中，可先起草消息…' : canSend
+-            ? '输入消息，Enter 发送，Shift+Enter 换行'
++            ? '输入消息'
+             : disabledReason ?? '等待会话同步…'}
+-          className="placeholder:text-muted-foreground/70 max-h-[200px] min-h-9 w-full resize-none bg-transparent px-1.5 py-1.5 text-sm leading-6 outline-none"
++          data-slot="peri-composer-textarea"
++          className="max-h-[200px] min-h-9 w-full resize-none text-sm leading-6"
+           aria-label="输入消息"
+           aria-describedby={describedBy}
+           aria-invalid={limit.overLimit || undefined}
+@@ -379,11 +377,12 @@
+         meta={meta}
+         usage={usage}
+         limit={limit}
+-        hint={busy ? (stopping ? '正在停止…' : '运行中') : 'Enter 发送 · Shift+Enter 换行'}
+         onSelectOption={onConfigOption}
+         actions={(
+           <button
+             type="button"
++            data-slot="peri-composer-send"
++            data-busy={busy || undefined}
+             className="bg-primary text-primary-foreground hover:bg-primary/85 inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors disabled:opacity-40"
+             aria-label={busy ? '停止' : '发送'}
+             disabled={actionDisabled}
+ /**

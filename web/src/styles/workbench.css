@@ -384,10 +384,9 @@
 
   .workbench-chat {
     min-height: 72dvh;
-  }
-
-  .chat-panel {
+    /* Peri ChatShell 需要确定高度：否则 h-full 退化为内容高度，composer 会被推到列表末尾。 */
     height: 72dvh;
+    overflow: hidden;
   }
 
   .workbench-data {
@@ -410,7 +409,8 @@
   }
 
   .header-status .header-user,
-  .header-status .status-sep {
+  .header-status .status-sep,
+  .header-action-label {
     display: none;
   }
 

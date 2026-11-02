@@ -100,6 +100,7 @@ export type IMMessage = {
   delivery_status?: string;
   delivery?: { status?: string };
 };
+export type ModelTier = "fable" | "opus" | "sonnet" | "haiku";
 export type RuntimePublicError = NonNullable<TurnView["error"]>;
 /** `activeTurn` 是 SDK TurnView 的字段一一映射；stopReason 缺失时显式归一为 null。 */
 export type RuntimeActiveTurn = Omit<
@@ -127,6 +128,21 @@ export type Runtime = {
   pendingRestart?: boolean;
   configured?: boolean;
   model?: string;
+  /** Applied model chain metadata; all fields are non-secret. */
+  modelAlias?: ModelTier | null;
+  modelProfile?: string | null;
+  modelProvider?: string | null;
+  modelMissing?: string[];
+  modelError?: string | null;
+  modelSource?: "profile" | null;
+  modelLibraryRevision?: string | null;
+  /** All four tiers when the applied snapshot carries v2 detail; null for older snapshots. */
+  modelTiers?: Record<ModelTier, string> | null;
+  modelTierProviders?: Record<ModelTier, string | null> | null;
+  modelTierSources?: Record<ModelTier, "bound" | "fallback" | "unbound"> | null;
+  modelResolvedAt?: string | null;
+  /** Set when an older snapshot must be restarted to show per-tier detail. */
+  modelTierNotice?: string | null;
   error?: string;
   activities?: any[];
   capabilities?: {
@@ -140,6 +156,52 @@ export type Runtime = {
   };
   queue?: any[];
   interactions?: InteractionView[];
+};
+export type ModelLibraryTierView = {
+  tier: ModelTier;
+  bound: boolean;
+  provider: string | null;
+  providerType: "openai" | "anthropic" | null;
+  label: string | null;
+  model: string | null;
+  modelEnv: string | null;
+  modelConfigured: boolean;
+  providerEnabled: boolean;
+  endpointConfigured: boolean;
+  credentialConfigured: boolean;
+  missing: string[];
+  ready: boolean;
+};
+export type ModelLibraryProfileView = {
+  id: string;
+  label: string | null;
+  activeAlias: ModelTier;
+  enabled: boolean;
+  /** Always expands to all four tiers; absent bindings are `bound: false`. */
+  tiers: ModelLibraryTierView[];
+};
+export type ModelLibraryProviderView = {
+  id: string;
+  type: "openai" | "anthropic";
+  label: string | null;
+  enabled: boolean;
+  /** Environment variable *names* only; values never leave the host. */
+  baseUrlEnv: string;
+  apiKeyEnv: string;
+  endpointConfigured: boolean;
+  credentialConfigured: boolean;
+};
+/** Read-only v2 projection of `$COMPANY_HOME/model-library.yaml`. */
+export type ModelLibraryView = {
+  status: "ok" | "missing" | "insecure" | "invalid";
+  error: string | null;
+  issues: string[];
+  path: string;
+  version: number | null;
+  activeProfile: string | null;
+  revision: string | null;
+  profiles: ModelLibraryProfileView[];
+  providers: ModelLibraryProviderView[];
 };
 export type ChatMessage = {
   id: string;
