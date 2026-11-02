@@ -157,6 +157,53 @@ export class ModeTransport implements Transport {
   }
 
   /**
+   * 把 direct `session/prompt` 投影到 SDK 视图。
+   *
+   * SDK 0.3.0 的 `ChatView` 只从 `session/update` 推导用户气泡与回合边界；
+   * Peri 的 direct prompt 不发送 `user_message_chunk`（仅 Defer 消息与
+   * session/load replay 发送），因此这里在本地注入一条等价通知，只进入
+   * SDK 订阅者，不写入 WASM、不改变 ACP 请求本身。
+   */
+  announceExternalUserTurn(text: string): boolean {
+    const sessionId = this.loadedSessionId;
+    if (!sessionId) return false;
+    return this.publishLocal({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId,
+        update: {
+          sessionUpdate: "user_message_chunk",
+          content: { type: "text", text },
+        },
+      },
+    });
+  }
+
+  /** 关闭 direct prompt 的本地回合；Peri 已发 done 时调用无副作用。 */
+  finishExternalUserTurn(): void {
+    this.publishLocal({
+      jsonrpc: "2.0",
+      method: "peri/agent_event_done",
+      params: {},
+    });
+  }
+
+  private publishLocal(notification: JsonRpcNotification): boolean {
+    const publish = (this.inner as unknown as {
+      publish?: (value: JsonRpcNotification) => void;
+    }).publish;
+    if (typeof publish !== "function") {
+      this.warn(
+        "[wasm_view_bridge] transport 不支持本地通知注入；前端视图可能不更新",
+      );
+      return false;
+    }
+    publish.call(this.inner, notification);
+    return true;
+  }
+
+  /**
    * 轮次级取消：不带 requestId/generation。
    *
    * Peri `origin/main` 的 `session/cancel` 在带 requestId/generation 时只取消

@@ -11,9 +11,14 @@ type Call = { method: string; params?: unknown };
 class FakeTransport implements Transport {
   readonly calls: Call[] = [];
   readonly notifications: Call[] = [];
+  readonly published: JsonRpcNotification[] = [];
   readonly failures = new Map<string, Error>();
   readonly responses = new Map<string, unknown>();
   closed = false;
+
+  publish(notification: JsonRpcNotification): void {
+    this.published.push(notification);
+  }
 
   async request<T = unknown>(method: string, params?: unknown): Promise<T> {
     this.calls.push({ method, params });
@@ -216,5 +221,60 @@ describe("ModeTransport", () => {
     ]);
     expect(inner.notifications[0]?.params).not.toHaveProperty("requestId");
     expect(inner.notifications[0]?.params).not.toHaveProperty("generation");
+  });
+
+  test("direct prompt 在本地注入 user_message_chunk 与回合结束通知，不写 WASM", async () => {
+    const inner = new FakeTransport();
+    inner.responses.set("session/load", { sessionId: "session-view" });
+    const transport = new ModeTransport(inner);
+    await transport.request("session/load", { sessionId: "session-view" });
+
+    expect(transport.announceExternalUserTurn("你好")).toBe(true);
+    expect(transport.finishExternalUserTurn()).toBeUndefined();
+    expect(inner.published).toEqual([
+      {
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: "session-view",
+          update: {
+            sessionUpdate: "user_message_chunk",
+            content: { type: "text", text: "你好" },
+          },
+        },
+      },
+      {
+        jsonrpc: "2.0",
+        method: "peri/agent_event_done",
+        params: {},
+      },
+    ]);
+    expect(inner.calls.map((call) => call.method)).toEqual([
+      "session/load",
+      "session/set_mode",
+    ]);
+    expect(inner.notifications).toEqual([]);
+  });
+
+  test("未加载 Session 或 transport 不支持注入时 announce 返回 false", async () => {
+    const inner = new FakeTransport();
+    const transport = new ModeTransport(inner);
+    expect(transport.announceExternalUserTurn("before-load")).toBe(false);
+    expect(inner.published).toEqual([]);
+
+    const withoutPublish = new FakeTransport();
+    Object.defineProperty(withoutPublish, "publish", { value: undefined });
+    withoutPublish.responses.set("session/load", { sessionId: "session-plain" });
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const plain = new ModeTransport(withoutPublish);
+      await plain.request("session/load", { sessionId: "session-plain" });
+      expect(plain.announceExternalUserTurn("hello")).toBe(false);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("transport 不支持本地通知注入"),
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

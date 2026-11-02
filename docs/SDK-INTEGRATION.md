@@ -52,6 +52,7 @@ The current default Workspace is a Rust builtin in the official Peri executable.
 - 旧 `/api/agents/:id/{chat,stop,answer,queue/*}` HTTP 路由已删除；`AgentService` 的同名方法保留给 IM/MCP 内部投递。`GET /api/chats/:chatId/projection` 是只读诊断/验收投影，替代旧 `/chat` 的消息读取；所有写操作仍必须走 `/actions`。
 - `load_earlier_history` 翻到最早一页时，SDK 以 `HistoryPageUnavailableError("exhausted")` 表示分页终止；API 将其映射为成功空页（202，`applied: 0, nextCursor: null, exhausted: true`），不当作 500 存储故障。
 - `DELETE /api/chats/:chatId` 与显式重启先按 SDK 契约重试一次 `ChatCloseIncompleteError`：WASM 运行时的 sqld Hrana HTTP stream 会在空闲后过期，重试会建立新 stream 完成关闭；只有重试仍失败才保留 handle 并返回 503 `wasm_cleanup_unconfirmed`。
+- 视图投影：SDK 0.3.0 的 `ChatView` 只从 `session/update` 的 `user_message_chunk` 推导用户气泡与回合边界，而 Peri 仅对 Defer 消息和 `session/load` replay 发送该通知，direct `session/prompt` 不发。因此服务端在发送前经 transport 的本地通知注入一条等价 `user_message_chunk`，并在 prompt settle / cancel 确认后注入 `peri/agent_event_done` 关闭回合；两种通知只进入 SDK 订阅者，不写 WASM、不改变 ACP 请求。该注入依赖 SDK 的非公开 `publish()`，升级 SDK 时需复核；不支持时记录 `[wasm_view_bridge]` 警告，消息仍会持久化。
 - vendor 来源、补丁与基线 commit 见 `web/src/peri/VENDOR.md`。
 
 ## Fixed Sessions and configuration

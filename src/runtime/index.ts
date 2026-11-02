@@ -1473,13 +1473,20 @@ export class PeriRuntime {
         bound.promptInFlight.set(requestId, {
           startedAt: new Date().toISOString(),
         });
+        // direct prompt 不产生 live user_message_chunk；先同步投影本地回合，
+        // 否则 SDK 视图没有 activeTurn，后续 assistant chunk 会被丢弃。
+        const projected = transport.announceExternalUserTurn?.(text) ?? false;
         const work = Promise.resolve().then(() => transport.prompt(text));
         void work.then(
           () => {
             bound.promptInFlight.delete(requestId);
+            // prompt RPC 在整轮结束时 resolve；SDK 对第二回合起的 done
+            // 可能因 requestId 不匹配而忽略，这里兜底关闭本地回合。
+            if (projected) transport.finishExternalUserTurn?.();
           },
           (error) => {
             bound.promptInFlight.delete(requestId);
+            if (projected) transport.finishExternalUserTurn?.();
             this.recordPromptFailure(
               bound,
               classifyPromptError(error),
@@ -1595,6 +1602,9 @@ export class PeriRuntime {
       return this.executeControl(
         async () => {
           await transport.cancel();
+          // direct prompt 的 done 事件可能因 requestId 不匹配被 SDK 忽略，
+          // 取消确认后主动关闭本地回合。
+          transport.finishExternalUserTurn?.();
           return { requestId: randomUUID(), status: "requested" as const };
         },
         {

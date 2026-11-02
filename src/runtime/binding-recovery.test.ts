@@ -191,17 +191,30 @@ test("runtime internal send retains bounded digests, deduplicates admission, and
   const f = await fixture();
   const bound = await f.runtime.wake(f.input);
   let sends = 0;
+  const projected: string[] = [];
+  let finishes = 0;
   f.internals.promptTransports.set(bound.chat.id, {
     prompt: async () => {
       sends++;
       return { stopReason: "end_turn" };
     },
     cancel: async () => {},
+    announceExternalUserTurn: (text: string) => {
+      projected.push(text);
+      return true;
+    },
+    finishExternalUserTurn: () => {
+      finishes++;
+    },
   });
   const payload = { requestId: "same", text: "正文".repeat(8192) };
   const results = await Promise.all([f.runtime.send(f.input, payload), f.runtime.send(f.input, payload)]);
   expect(results[0].inputId).toBe(results[1].inputId);
   expect(sends).toBe(1);
+  expect(projected).toHaveLength(1);
+  expect(projected[0]).toBe(payload.text);
+  await Promise.resolve();
+  expect(finishes).toBeGreaterThanOrEqual(1);
   for (let i = 0; i < INPUT_RECEIPT_LIMIT + 5; i++)
     await f.runtime.send(f.input, { requestId: `notice-${i}`, text: `${i}:` + payload.text });
   const entries = [...f.internals.deliveries.entries.values()] as Array<{ fingerprint: string }>;
@@ -223,6 +236,8 @@ test("runtime send retries not_sent and rejected, but preserves an unknown admis
       return { stopReason: "end_turn" };
     },
     cancel: async () => {},
+    announceExternalUserTurn: () => true,
+    finishExternalUserTurn: () => {},
   });
   bound.configured = false;
   await expect(f.runtime.send(f.input, { requestId: "config", text: "work" })).rejects.toMatchObject({ details: { disposition: "not_sent" } });
