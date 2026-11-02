@@ -110,6 +110,40 @@ ${text}`,
     expect(html).toContain("[overflow-wrap:anywhere]");
   });
 
+  test("超长正文默认收起，可展开", () => {
+    const body = Array.from(
+      { length: 14 },
+      (_, index) => `第 ${index + 1} 行正文`,
+    ).join("\n");
+    const message = envelope(
+      `[Company IM T2/M2 from ${sender}]
+Read the original via company_im.thread before replying.
+
+${body}`,
+    );
+    const html = renderToStaticMarkup(
+      <CompanyImMessageRow message={message} />,
+    );
+
+    expect(html).toContain('data-collapsed="true"');
+    expect(html).toContain("max-h-48");
+    expect(html).toContain("展开全文");
+    expect(html).toContain("第 14 行正文");
+  });
+
+  test("超长用户输入默认收起", () => {
+    const text = Array.from(
+      { length: 12 },
+      (_, index) => `第 ${index + 1} 行输入`,
+    ).join("\n");
+    const html = renderToStaticMarkup(<UserMessageRow entry={entry(text)} />);
+
+    expect(html).toContain('data-slot="peri-user-message"');
+    expect(html).toContain('data-collapsed="true"');
+    expect(html).toContain("max-h-48");
+    expect(html).toContain("展开全文");
+  });
+
   test("普通人类消息仍走 Peri 原用户气泡", () => {
     const html = renderToStaticMarkup(
       <UserMessagePresentationContext.Provider
@@ -130,6 +164,7 @@ ${text}`,
     expect(html).toContain('data-slot="peri-user-message"');
     expect(html).toContain("帮我看看这个需求。");
     expect(html).toContain("你");
+    expect(html).not.toContain("展开全文");
     expect(html).not.toContain('data-slot="peri-company-im-message"');
   });
 

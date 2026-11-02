@@ -45,6 +45,7 @@
 | P10 | `server/api/sync.ts` → `src/server/peri/sync.ts` | `logError` 导入改为同目录 `./logging` |
 | P11 | `chat/composer/ChatComposer.tsx` | Composer 改版：删除 Enter/Shift+Enter 快捷键提示与占位符长文案；新增 `peri-composer-input`/`textarea`/`send` 三个 `data-slot`，供公司作用域样式绑定 |
 | P12 | `chat/timeline/rows/UserMessageRow.tsx` | 新增可选 `UserMessagePresentationContext`：宿主可把 `role === "user"` 的条目替换为公司 IM 卡片；无 Provider 时保持 Peri 原气泡，Provider 返回 `null` 时交回默认渲染 |
+| P13 | `chat/timeline/rows/UserMessageRow.tsx` | 超长用户输入（>480 字或 >10 行）默认限制高度，提供“展开全文/收起”；短消息与复制按钮行为不变 |
 
 P3/P7 是 Company 单会话外壳的宿主适配；P2/P5 是 SDK 0.3.0 与 Peri HEAD 的版本漂移守卫。
 除以上补丁外，`remote/` 与 `chat/` 的行为代码保持 Peri 原件。
@@ -54,6 +55,7 @@ Composer 的视觉皮肤放在公司自有 `web/src/styles/peri-chat.css`（`.pe
 不 vendor 进 Peri 源码；重新 vendor 后按 P11 重放标记即可继续生效。
 
 P12 只增加可选展示上下文与分支，不改变默认用户气泡、复制按钮或时间线数据结构。
+P13 只增加超长用户输入的折叠状态，不改变消息内容、复制或时间线数据结构。
 Company IM 的解析与卡片位于公司自有 `web/src/features/chat/companyIm.ts` 与
 `CompanyImMessageRow.tsx`；重新 vendor 后按 P12 重放上下文导出即可继续生效。
 

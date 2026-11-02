@@ -1,5 +1,16 @@
+import { useState } from "react";
 import { Hash, MessageSquare } from "lucide-react";
 import type { CompanyImEnvelope } from "./companyIm";
+
+const LONG_MESSAGE_CHARS = 480;
+const LONG_MESSAGE_LINES = 10;
+
+function isLongMessage(text: string): boolean {
+  return (
+    text.length > LONG_MESSAGE_CHARS ||
+    text.split("\n").length > LONG_MESSAGE_LINES
+  );
+}
 
 export type CompanyImSenderView = {
   name?: string | null;
@@ -51,6 +62,9 @@ export function CompanyImMessageRow({
   const threadLabel = threadId
     ? `${threadId}${subject ? ` · ${subject}` : ""}`
     : "话题未知";
+  const [expanded, setExpanded] = useState(false);
+  const collapsible = isLongMessage(message.body || "");
+  const collapsed = collapsible && !expanded;
 
   return (
     <article
@@ -96,11 +110,24 @@ export function CompanyImMessageRow({
         </span>
 
         <div
-          className="text-foreground min-w-0 whitespace-pre-wrap text-sm leading-6 [overflow-wrap:anywhere]"
+          className={`text-foreground min-w-0 whitespace-pre-wrap text-sm leading-6 [overflow-wrap:anywhere] ${
+            collapsed ? "max-h-48 overflow-hidden" : ""
+          }`}
           data-slot="peri-company-im-body"
+          data-collapsed={collapsed ? "true" : undefined}
         >
           {message.body || "（无正文）"}
         </div>
+        {collapsible && (
+          <button
+            type="button"
+            className="text-muted-foreground hover:text-foreground self-start text-[11px] font-medium"
+            aria-expanded={expanded}
+            onClick={() => setExpanded((value) => !value)}
+          >
+            {expanded ? "收起" : "展开全文"}
+          </button>
+        )}
       </div>
     </article>
   );
