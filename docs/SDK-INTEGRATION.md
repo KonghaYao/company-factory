@@ -20,10 +20,10 @@ The current default Workspace is a Rust builtin in the official Peri executable.
 本地 SQLite 文件不等于 WASM storage API，但用户预先配置的本地 sqld/libSQL **HTTP** 端点可以作为连接。宿主配置 `COMPANY_WASM_STORES_FILE`（宿主所有、0600、非符号/硬链接、不得位于 Agent/知识库/项目/工具挂载范围），格式：
 
 ```json
-{"stores":[{"companyId":"<BACKEND_GENERATED_COMPANY_ID>","agentId":"<AGENT_ID>","url":"http://127.0.0.1:<INDEPENDENT_SQLD_PORT>","authToken":"<HOST_ONLY_TOKEN>"}]}
+{"stores":[{"companyId":"<BACKEND_GENERATED_COMPANY_ID>","agentId":"<AGENT_ID>","url":"http://127.0.0.1:<INDEPENDENT_SQLD_PORT>","authToken":"<HOST_ONLY_TOKEN>"}],"default":{"url":"http://127.0.0.1:<INDEPENDENT_SQLD_PORT>/db/<TENANT>/<DATABASE>/<BRANCH>","authToken":"<HOST_ONLY_TOKEN>"}}
 ```
 
-也可通过 `createApplication({ storeProvider })` 注入 `resolve(scope)`，为当前后端生成的精确 scope 返回 `{url,authToken}`。仅允许明确回环 `127.0.0.1` / `[::1]` 的 HTTP 根端点；拒绝外域、userinfo、子路径、query、fragment。重复 scope 或跨 Agent 同端点被拒绝，IPv4/IPv6 同端口也保守视为冲突。token 只存在宿主和 SDK 内存，不进 Agent env/YAML、配置快照、manifest、日志或响应。sqld 磁盘路径和认证由用户准备；不自动安装/启动服务、不签 JWT、不建容器/云资源、不管理 namespace。
+`default` 可省略；存在时作为未列出 scope 的回退，精确 scope 条目优先。也可通过 `createApplication({ storeProvider })` 注入 `resolve(scope)`，为当前后端生成的精确 scope 返回 `{url,authToken}`。仅允许明确回环 `127.0.0.1` / `[::1]` 的 HTTP 端点；可带数据库路径以适配按路径路由的 Hrana 网关（如 peri-loom），拒绝外域、userinfo、query、fragment。同一 scope 重复配置被拒绝；不同 Agent 可共用同一回环端点，Session 隔离由 scope 与 cwd 绑定负责。token 只存在宿主和 SDK 内存，不进 Agent env/YAML、配置快照、manifest、日志或响应。sqld 磁盘路径和认证由用户准备；不自动安装/启动服务、不签 JWT、不建容器/云资源、不管理 namespace。
 
 后端 ID 缺配流程：`runtime/store-requests/<scope-hash>.json` 记录无秘密的 scope。用户补齐此映射后以同一个 `requestId`、同样创建输入重试，不必猜 ID 或改成由用户选择公司 ID；已有领域初始化幂等逻辑复用完成的 Agent。绑定文件 `runtime/wasm-stores/<scope-hash>.json` 记录 backend `wasm-sqld-v1`、scope/cwd、规范化 endpoint hash（不含 token）和可信 Session ID。先独占写入 `creating` 标记，`createNewSession` 成功后原子写入 `bound`；若结果未确认，明确报错并保留标记，禁止自动新建。可信 binding 存在而业务 Agent 文件尚未完成时，provision 重试 load 同一 Session。
 

@@ -8,7 +8,7 @@
 
 **2026-11-02 架构变更：Workspace 本地运行。** 按所有者裁定，Agent 的官方 Workspace MCP 与宿主 Git 直接以宿主用户身份运行，不再依赖 Linux / bubblewrap，也不再提供 OS 级隔离；Agent 工具可访问该用户可访问的本机文件。`COMPANY_SANDBOX` 已移除；`COMPANY_WORKSPACE=disabled` 仅作为显式关闭 Agent Workspace 的调试开关。
 
-**测试基线（2026-11-02，macOS）：** 全量 `342 pass / 24 skip / 0 fail`（366 项、1,940 断言、42 个文件）；`bun run typecheck` 与 `bun run build` 通过。历史 Linux live 验收（2026-10-31，沙箱版，`closure=true`）是过去实现的证据，**不代表当前本地架构**，需要重新做 live 验收；详见 [验证记录](docs/VERIFICATION.md)。
+**测试基线（2026-11-02，macOS）：** 全量 `347 pass / 24 skip / 0 fail`（371 项、1,947 断言、42 个文件）；`bun run typecheck` 与 `bun run build` 通过。历史 Linux live 验收（2026-10-31，沙箱版，`closure=true`）是过去实现的证据，**不代表当前本地架构**，需要重新做 live 验收；详见 [验证记录](docs/VERIFICATION.md)。
 
 **未验证项，不能声称：** 独立 fable 模型仍未验证（供应商无独立 fable 模型）；四档 alias 路由可用，但不能声称四档四模型全部真实通过。历史 live 证据中的 `agentCiExecuted` 与 digest 口径仅对那轮沙箱版运行有效。
 
@@ -40,7 +40,7 @@ bun start
 | 变量 | 默认值 / 用途 |
 | --- | --- |
 | `COMPANY_HOME` | `~/.company`；Company / Agent 文件与宿主 Session 绑定元数据 |
-| `COMPANY_WASM_STORES_FILE` | 可选显式覆盖：宿主私有 0600 JSON，每个 `(companyId, agentId)` 一条 `url/authToken`；不同 scope 可共用同一回环 URL。显式 scope 优先于自动供给 |
+| `COMPANY_WASM_STORES_FILE` | 可选显式覆盖：宿主私有 0600 JSON，`stores` 为每个 `(companyId, agentId)` 配置一条 `url/authToken`，或用全局 `default` 覆盖所有未列出的 scope；不同 scope 可共用同一回环 URL。显式条目优先于自动供给 |
 | `COMPANY_SQLD_BINARY` | 可选：绝对路径的官方 sqld 可执行文件；设置后启用单一共享 sqld 自动供给 |
 | `COMPANY_SQLD_ROOT` | `~/.company-host`；共享 sqld 的宿主私有根，必须由所有者持有且为 `0700`，位于项目与 `~/.company/agents/runtime` 之外 |
 | `COMPANY_SQLD_PORT` | `18081`；共享 sqld 的固定回环端口 |
@@ -94,7 +94,7 @@ profiles:
 
 每个 `(companyId, agentId)` 必须有可解析的存储 scope；所有 scope 可以共用同一个宿主本地 sqld。解析按以下优先级：
 
-1. **显式覆盖**：设置 `COMPANY_WASM_STORES_FILE` 指向宿主私有 `0600` JSON，为具体 scope 配置 `{companyId, agentId, url, authToken}`。显式条目优先于自动供给；不同 scope 可使用同一回环 URL，同一 scope 重复配置会被拒绝。未启用自动供给时，缺失 scope 保持原来的 `wasm_store_not_configured` 错误。
+1. **显式覆盖**：设置 `COMPANY_WASM_STORES_FILE` 指向宿主私有 `0600` JSON，为具体 scope 配置 `{companyId, agentId, url, authToken}`，或用全局 `default` 为所有未列出的 scope 提供同一端点。显式条目优先于自动供给，精确 scope 优先于 `default`；不同 scope 可使用同一回环 URL，同一 scope 重复配置会被拒绝。未启用自动供给时，缺失 scope 保持原来的 `wasm_store_not_configured` 错误。
 2. **单一共享自动供给**：设置 `COMPANY_SQLD_BINARY` 后启用。服务只启动一个本地 sqld，所有未显式配置的 scope 共用 `$COMPANY_SQLD_ROOT/sqld/shared` 的数据、Ed25519 密钥与受限 JWT。
 
 显式条目优先且不会被自动改写；如果既有条目仍指向旧的每 Agent 端点，它们继续使用旧库。共享实例的端口若与显式端点相同且该端点正在监听，自动启动会明确失败，不会接管或终止它。
@@ -110,11 +110,15 @@ profiles:
       "url": "http://127.0.0.1:<SQLD_PORT>",
       "authToken": "<HOST_ONLY_SQLD_TOKEN>"
     }
-  ]
+  ],
+  "default": {
+    "url": "http://127.0.0.1:<SQLD_PORT>/db/<TENANT>/<DATABASE>/<BRANCH>",
+    "authToken": "<HOST_ONLY_SQLD_TOKEN>"
+  }
 }
 ```
 
-仅接受明确 `127.0.0.1` / `[::1]` 的 HTTP 根端点，不接受远端、URL 内凭据、路径、query、fragment。不要把配置放入任何 Agent 可见目录或提交到 Git。
+`default` 可省略；省略时只有 `stores` 中精确匹配的 scope 能解析。`url` 仅接受明确 `127.0.0.1` / `[::1]` 的 HTTP 端点，可带数据库路径以适配按路径路由的 Hrana 网关（如 peri-loom），不接受远端、URL 内凭据、query、fragment。不要把配置放入任何 Agent 可见目录或提交到 Git。
 
 自动供给的宿主私有目录为 `$COMPANY_SQLD_ROOT/sqld/shared`，默认 `$COMPANY_SQLD_ROOT=$HOME/.company-host`。根目录及其 `sqld/shared` 子目录必须是所有者所有的 `0700` 真实目录，且不得位于项目目录或 `~/.company/agents/runtime` 内；服务不会自动 chmod 既有目录。目录内含 `auth.key`（`0600`）、`auth.pub`（`0600`）、无秘密的 `manifest.json`（`0600`，只记录 backend、版本与端口）以及 sqld 的 `db`。JWT 仅在内存中按需签发，使用 Ed25519（`EdDSA`）与 `{"p":{"rw":{"ns":["default"]}},"exp":<now+365d>}` 权限声明；私钥和 token 不进入 argv、子进程环境、Agent 目录、effective-config、`stores.json`、日志或 HTTP 响应。
 
@@ -195,7 +199,7 @@ bun run test:integration
 bun run example                  # 在隔离临时目录运行真实双 Issue 交付示例
 ```
 
-当前代码已实际执行 `bun run typecheck`、`bun run build` 与全量测试（macOS `342 pass / 24 skip / 0 fail`）；`bun run example` 与浏览器套件未执行。真实 runtime 套件还需设置专用空库的 `COMPANY_TEST_SQLD_URL/COMPANY_TEST_SQLD_TOKEN`；HTTP/MCP 集成套件使用 `COMPANY_TEST_INTEGRATION_STORES_FILE`（相同 stores 格式），为生成公司固定成员及 `integrated-dev/integrated-preview` 准备显式测试端点（可共用同一回环端点）。缺少 Peri 二进制或显式测试存储时套件 SKIP，不计为通过；不能使用生产数据库。集成套件使用固定 `requestId: initialize` 与所有者身份，缺配时可从其临时根的请求文件取得真实生成 ID。Domain 测试替身只证明业务规则，不冒充 WASM/存储证据；测试代码不自动安装或启动 sqld。
+当前代码已实际执行 `bun run typecheck`、`bun run build` 与全量测试（macOS `347 pass / 24 skip / 0 fail`）；`bun run example` 与浏览器套件未执行。真实 runtime 套件还需设置专用空库的 `COMPANY_TEST_SQLD_URL/COMPANY_TEST_SQLD_TOKEN`；HTTP/MCP 集成套件使用 `COMPANY_TEST_INTEGRATION_STORES_FILE`（相同 stores 格式），为生成公司固定成员及 `integrated-dev/integrated-preview` 准备显式测试端点（可共用同一回环端点）。缺少 Peri 二进制或显式测试存储时套件 SKIP，不计为通过；不能使用生产数据库。集成套件使用固定 `requestId: initialize` 与所有者身份，缺配时可从其临时根的请求文件取得真实生成 ID。Domain 测试替身只证明业务规则，不冒充 WASM/存储证据；测试代码不自动安装或启动 sqld。
 
 `SOURCE-MANIFEST.sha256` 是历史源码快照，已过期：2026-10-31 复核有 24/62 项不匹配，且不包含 `scripts/e2e-live.ts`、`scripts/e2e-ci-runner.ts` 等文件。它不得作为当前源码完整性或 E2E 证据；需要时重新生成。
 

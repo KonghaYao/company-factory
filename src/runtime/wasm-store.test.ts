@@ -45,15 +45,42 @@ describe("WASM 本地 sqld 配置与可信 backend（无数据库请求）", () 
       expect(await f.provider.resolve(f.scope)).toEqual({ url: f.entry.url + "/", authToken: f.entry.authToken });
     }
   });
-  test("拒绝外域、userinfo、query、fragment、非规范回环和路径", async () => {
+  test("拒绝外域、userinfo、query、fragment 和非规范回环", async () => {
     const f = await fixture();
-    for (const url of ["https://example.invalid", "http://localhost:18081", "http://127.1:18081", "http://127.0.0.1:18081?secret=x", "http://127.0.0.1:18081/#x", "http://user:pass@127.0.0.1:18081", "http://127.0.0.1:18081/namespace"]) {
+    for (const url of ["https://example.invalid", "http://localhost:18081", "http://127.1:18081", "http://127.0.0.1:18081?secret=x", "http://127.0.0.1:18081/#x", "http://user:pass@127.0.0.1:18081"]) {
       await f.write([{ ...f.entry, url }]);
       try { await f.provider.resolve(f.scope); throw new Error("必须拒绝 URL"); } catch (error: any) {
         expect(error.code).toBe("wasm_store_invalid_url");
         expect(error.message).not.toContain(f.entry.authToken);
         expect(error.message).not.toContain(url);
       }
+    }
+  });
+  test("允许回环端点带数据库路径", async () => {
+    const f = await fixture();
+    const url = "http://127.0.0.1:18081/db/local_default/demo/main";
+    await f.write([{ ...f.entry, url }]);
+    expect(await f.provider.resolve(f.scope)).toEqual({ url, authToken: f.entry.authToken });
+  });
+  test("全局 default 覆盖未列出的 scope，精确条目优先", async () => {
+    const f = await fixture();
+    const fallback = { url: "http://127.0.0.1:18083/db/local_default/demo/main", authToken: token() };
+    await writeFile(f.file, JSON.stringify({ default: fallback, stores: [f.entry] }), { mode: 0o600 });
+    expect(await f.provider.resolve(f.scope)).toEqual({ url: f.entry.url + "/", authToken: f.entry.authToken });
+    const other = { ...f.scope, agentId: "other", directory: join(f.root, "agents", "other") };
+    expect(await f.provider.resolve(other)).toEqual(fallback);
+  });
+  test("非法 default 被拒绝且不回显", async () => {
+    const f = await fixture();
+    const bad = { url: "http://example.invalid", authToken: token() };
+    await writeFile(f.file, JSON.stringify({ default: bad, stores: [] }), { mode: 0o600 });
+    try {
+      await f.provider.resolve({ ...f.scope, agentId: "other" });
+      throw new Error("必须拒绝 default");
+    } catch (error: any) {
+      expect(error.code).toBe("wasm_store_invalid_url");
+      expect(error.message).not.toContain(bad.authToken);
+      expect(error.message).not.toContain(bad.url);
     }
   });
   test("拒绝 group/world 权限、符号链接和 Agent 可见文件", async () => {

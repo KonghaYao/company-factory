@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { ChatCloseIncompleteError } from "@peri-code/sdk";
 import { InputReceiptCache } from "../../runtime/input-receipts";
 import { PeriRuntime, RuntimeError, type RuntimeAgent } from "../../runtime";
+import { WasmStoreError } from "../../runtime/wasm-store";
 import { createPeriChatApi, type ChatScope } from "./chat-api";
 
 const scopeInput = { companyId: "company", agentId: "agent" };
@@ -47,6 +48,7 @@ function apiHarness(options: {
   state?: "ready" | "not_found" | "unavailable";
   restart?: (caller: any, agentId: string, options?: any) => Promise<unknown>;
   chatRunning?: boolean;
+  wakeError?: unknown;
 } = {}) {
   const calls = {
     sends: [] as Array<{ input: RuntimeAgent; payload: any }>,
@@ -77,6 +79,11 @@ function apiHarness(options: {
     }));
   const runtime = {
     validateSendText: (_input: RuntimeAgent, text: string) => text,
+    wakeChat: async () => {
+      if (options.wakeError !== undefined) throw options.wakeError;
+      return chat;
+    },
+    sessionBinding: () => ({ sessionId: "s1", bindingRevision: 1 }),
     send: async (input: RuntimeAgent, payload: any) => {
       calls.sends.push({ input, payload });
       return sendImpl(input, payload);
@@ -245,6 +252,52 @@ describe("POST /api/chats/:chatId/actions send = direct prompt", () => {
     expect(body.message).toContain("target.sessionId");
     expect(body.recovery).toBe("none");
     expect(harness.calls.sends).toHaveLength(0);
+  });
+});
+
+describe("store binding failures map to stable chat errors", () => {
+  function wakeRequest() {
+    return new Request(
+      "http://company.test/api/chats?companyId=company&agentId=agent",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      },
+    );
+  }
+
+  test("legacy_session_backend stays 409 with a fixed Chinese message", async () => {
+    const harness = apiHarness({
+      wakeError: new WasmStoreError(
+        "legacy_session_backend",
+        "该 Agent 有旧 Session 或 native sessions.db，但没有可信 wasm-sqld-v1 绑定。",
+      ),
+    });
+    const response = await harness.api.request(wakeRequest());
+    expect(response.status).toBe(409);
+    expect(await json(response)).toMatchObject({
+      ok: false,
+      code: "legacy_session_backend",
+      message: "该 Agent 仍使用旧版会话存储，消息未发送；请重新创建会话。",
+      disposition: "rejected",
+      recovery: "none",
+    });
+  });
+
+  test("host store configuration failures are 503, never internal_error", async () => {
+    const harness = apiHarness({
+      wakeError: new WasmStoreError("wasm_store_not_configured", "宿主配置缺失"),
+    });
+    const response = await harness.api.request(wakeRequest());
+    expect(response.status).toBe(503);
+    expect(await json(response)).toMatchObject({
+      ok: false,
+      code: "wasm_store_not_configured",
+      message: "会话存储未配置，消息未发送；请检查宿主存储配置。",
+      disposition: "rejected",
+      recovery: "none",
+    });
   });
 });
 

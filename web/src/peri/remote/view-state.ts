@@ -300,6 +300,74 @@ const FAILURE_COPIES: Record<string, FailureCopy> = {
     message: "会话缺少固定绑定，无法重启；请检查 Agent 配置。",
     recovery: "none",
   },
+  wasm_store_scope_invalid: {
+    message: "会话存储 scope 无效，消息未发送；请检查 Agent 配置。",
+    recovery: "none",
+  },
+  wasm_store_not_configured: {
+    message: "会话存储未配置，消息未发送；请检查宿主存储配置。",
+    recovery: "none",
+  },
+  wasm_store_invalid_url: {
+    message: "会话存储端点无效，消息未发送；请检查宿主存储配置。",
+    recovery: "none",
+  },
+  wasm_store_config_exposed: {
+    message: "会话存储配置位于 Agent 可见目录，消息未发送；请由宿主移出。",
+    recovery: "none",
+  },
+  wasm_store_config_permissions: {
+    message: "会话存储配置权限不安全，消息未发送；请由宿主设为 0600。",
+    recovery: "none",
+  },
+  wasm_store_config_invalid: {
+    message: "会话存储配置无效，消息未发送；请检查宿主存储配置。",
+    recovery: "none",
+  },
+  wasm_store_config_close_failed: {
+    message: "会话存储配置读取未完成，消息未发送；请检查宿主存储配置。",
+    recovery: "none",
+  },
+  wasm_store_conflict: {
+    message: "会话存储配置存在重复 scope，消息未发送；请检查宿主存储配置。",
+    recovery: "none",
+  },
+  wasm_store_provider_failed: {
+    message: "会话存储无法解析，消息未发送；请检查宿主存储配置。",
+    recovery: "none",
+  },
+  wasm_store_binding_invalid: {
+    message: "会话存储绑定无效，消息未发送；请重新创建会话。",
+    recovery: "none",
+  },
+  legacy_session_backend: {
+    message: "该 Agent 仍使用旧版会话存储，消息未发送；请重新创建会话。",
+    recovery: "none",
+  },
+  wasm_store_binding_missing: {
+    message: "会话缺少可信存储绑定，消息未发送；请重新创建会话。",
+    recovery: "none",
+  },
+  wasm_session_creation_unconfirmed: {
+    message: "上次会话创建未确认，未再次新建；请人工核验存储。",
+    recovery: "none",
+  },
+  wasm_session_binding_mismatch: {
+    message: "会话绑定与当前存储不一致，消息未发送。",
+    recovery: "none",
+  },
+  wasm_store_backend_changed: {
+    message: "会话存储端点已变更，消息未发送；请恢复原端点或重新创建会话。",
+    recovery: "none",
+  },
+  wasm_store_unavailable: {
+    message: "会话存储暂不可用，消息未发送；请检查宿主存储服务。",
+    recovery: "none",
+  },
+  wasm_session_cwd_mismatch: {
+    message: "会话工作目录与当前 Agent 不一致，消息未发送。",
+    recovery: "none",
+  },
   session_creation_failed: {
     message: "会话创建失败；结果不确定，请重新加载会话核对。",
     recovery: "reload",

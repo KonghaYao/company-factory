@@ -2,6 +2,7 @@ import { Hono, type Context } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { upgradeWebSocket } from "@hono/bun";
 import {
+  ChatActionError,
   ChatCloseIncompleteError,
   parseChatUserAction,
   type ChatBindingTarget,
@@ -13,6 +14,7 @@ import {
 } from "@peri-code/sdk";
 import type { AgentRecord, CallerContext } from "../../domain";
 import { RuntimeError, type PeriRuntime, type RuntimeAgent } from "../../runtime";
+import { WasmStoreError } from "../../runtime/wasm-store";
 import { redactPublicMessage } from "../../runtime/redaction";
 import {
   extractRpcErrorMetadata,
@@ -96,8 +98,10 @@ function companyError(
   error: unknown,
   context: { chatId?: string; requestId?: string },
 ): { status: ContentfulStatusCode; body: object } {
-  if (error instanceof RuntimeError)
+  if (error instanceof RuntimeError || error instanceof WasmStoreError)
     return runtimeErrorBody(error, context);
+  if (!(error instanceof ChatActionError))
+    logError("[peri] chat API error", error, context);
   return mapChatActionError(error, context);
 }
 /** `target` 是连接所属绑定；空句柄用 `sessionId:null` + `bindingRevision:0`。 */

@@ -38,10 +38,11 @@ function within(parent: string, child: string) {
 function connection(value: unknown): WasmStoreConfiguration & { identity: string } {
   const config = value as Partial<WasmStoreConfiguration> | null;
   if (!config || typeof config.url !== "string" || typeof config.authToken !== "string" || !config.authToken.trim())
-    throw failure("wasm_store_not_configured", "需要为每个 companyId、agentId 配置 url 与非空 authToken；设置服务端 COMPANY_WASM_STORES_FILE，或注入 StoreProvider。");
-  // 不接受 URL 凭据、别名、非规范 IP、子路径或任何外域；本轮不实现 namespace 管理。
-  if (!/^http:\/\/(127\.0\.0\.1|\[::1\])(?::[0-9]+)?\/?$/.test(config.url))
-    throw failure("wasm_store_invalid_url", "sqld url 必须是明确回环 127.0.0.1 或 [::1] 的 HTTP 根端点，不得含用户信息、路径、query 或 fragment。");
+    throw failure("wasm_store_not_configured", "需要配置 url 与非空 authToken；设置服务端 COMPANY_WASM_STORES_FILE（stores 或 default），或注入 StoreProvider。");
+  // 不接受 URL 凭据、别名、非规范 IP 或任何外域；允许回环端点带数据库路径，
+  // 以兼容 peri-loom 等按 /db/<tenant>/<database>/<branch> 路由的 Hrana 网关。
+  if (!/^http:\/\/(127\.0\.0\.1|\[::1\])(?::[0-9]+)?(?:\/[A-Za-z0-9._~/-]*)?$/.test(config.url))
+    throw failure("wasm_store_invalid_url", "sqld url 必须是明确回环 127.0.0.1 或 [::1] 的 HTTP 端点；可带数据库路径，但不得含用户信息、query 或 fragment。");
   let url: URL;
   try { url = new URL(config.url); } catch {
     throw failure("wasm_store_invalid_url", "sqld url 格式无效；请配置本地 HTTP 端点。");
@@ -59,6 +60,7 @@ export class FileStoreProvider implements StoreProvider {
       throw failure("wasm_store_not_configured", "未配置 COMPANY_WASM_STORES_FILE。查看 runtime/store-requests 中的 companyId、agentId，在宿主私有 JSON 中添加 stores: [{companyId, agentId, url, authToken}]，再重试相同创建请求。");
     let file: Awaited<ReturnType<typeof open>> | undefined;
     let entries: unknown;
+    let defaultEntry: unknown;
     try {
       const path = await realpath(resolve(this.options.file));
       const visible = [
@@ -79,6 +81,7 @@ export class FileStoreProvider implements StoreProvider {
         throw failure("wasm_store_config_permissions", "存储配置必须是宿主所有的普通文件，拒绝 group/world 权限；请由所有者设置为 0600。");
       const document = JSON.parse(await file.readFile("utf8"));
       entries = document?.stores;
+      defaultEntry = document?.default;
     } catch (error) {
       if (error instanceof WasmStoreError) throw error;
       throw failure("wasm_store_config_invalid", "无法读取指定存储配置；检查文件路径、所有者、0600 权限与 JSON stores 数组。未连接数据库。");
@@ -87,11 +90,14 @@ export class FileStoreProvider implements StoreProvider {
         throw failure("wasm_store_config_close_failed", "宿主存储配置文件关闭失败；未连接数据库。");
       }
     }
-    if (!Array.isArray(entries))
-      throw failure("wasm_store_config_invalid", "存储配置需要 stores 数组，每条包含 companyId、agentId、url、authToken。");
+    if (entries === undefined && defaultEntry === undefined)
+      throw failure("wasm_store_config_invalid", "存储配置需要 stores 数组或全局 default 对象；每条 stores 包含 companyId、agentId、url、authToken。");
+    if (entries !== undefined && !Array.isArray(entries))
+      throw failure("wasm_store_config_invalid", "stores 必须是数组，每条包含 companyId、agentId、url、authToken。");
+    const fallback = defaultEntry === undefined ? undefined : connection(defaultEntry);
     const scopes = new Set<string>();
     let selected: WasmStoreConfiguration | undefined;
-    for (const entry of entries) {
+    for (const entry of entries ?? []) {
       if (!entry || typeof entry.companyId !== "string" || !entry.companyId || typeof entry.agentId !== "string" || !entry.agentId)
         throw failure("wasm_store_config_invalid", "每条存储配置都需要 companyId、agentId、url、authToken。");
       const key = scopeKey(entry), store = connection(entry);
@@ -100,8 +106,10 @@ export class FileStoreProvider implements StoreProvider {
       scopes.add(key);
       if (key === scopeKey(scope)) selected = { url: store.url, authToken: store.authToken };
     }
+    if (!selected && fallback)
+      selected = { url: fallback.url, authToken: fallback.authToken };
     if (!selected)
-      throw failure("wasm_store_not_configured", "当前 scope 缺少存储配置。查看 runtime/store-requests 中的 companyId、agentId，补齐 url、authToken 后重试相同请求；不要手填公司 ID。");
+      throw failure("wasm_store_not_configured", "当前 scope 缺少存储配置。查看 runtime/store-requests 中的 companyId、agentId，补齐 url、authToken 或添加全局 default 后重试相同请求；不要手填公司 ID。");
     return selected;
   }
 }
