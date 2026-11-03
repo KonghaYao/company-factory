@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   COMPANY_ASSETS_GUIDANCE,
+  DECISION_GUIDANCE,
   MULTITASK_GUIDANCE,
   TASK_PROGRESS_GUIDANCE,
   memoryManagedBlock,
@@ -9,7 +10,7 @@ import {
 } from "./templates";
 
 describe("member managed profile", () => {
-  test("injects multitasking, task progress and company asset guidance for every role", () => {
+  test("injects multitasking, task progress, decision and company asset guidance for every role", () => {
     for (const role of [
       "hr",
       "task-supervisor",
@@ -32,6 +33,12 @@ describe("member managed profile", () => {
       expect(block).not.toContain("addUpdate");
       expect(block).not.toContain("`updates`");
       expect(block).not.toContain("latest_update");
+      expect(block).toContain("## Decisions");
+      expect(block).toContain(DECISION_GUIDANCE);
+      expect(block).toContain("askDecision");
+      expect(block).toContain("2–6");
+      expect(block).toContain("200");
+      expect(block).toContain("不要用选项制造同意");
       expect(block).toContain("## Company assets");
       expect(block).toContain(COMPANY_ASSETS_GUIDANCE);
       expect(block).toContain("公司资产（公共知识）");
@@ -44,6 +51,9 @@ describe("member managed profile", () => {
         block.indexOf("## Task progress"),
       );
       expect(block.indexOf("## Task progress")).toBeLessThan(
+        block.indexOf("## Decisions"),
+      );
+      expect(block.indexOf("## Decisions")).toBeLessThan(
         block.indexOf("## Company assets"),
       );
     }
@@ -57,6 +67,7 @@ describe("member managed profile", () => {
     expect(merged).toContain("my own notes");
     expect(merged).toContain("## Multitasking");
     expect(merged).toContain("## Task progress");
+    expect(merged).toContain("## Decisions");
     expect(merged).toContain("## Company assets");
   });
 

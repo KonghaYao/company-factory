@@ -553,6 +553,100 @@ describe("Company domain — files, permissions and business invariants", () => 
     expect(i.decisions[1]?.status).toBe("withdrawn");
     expect(i.decisions[1]?.answers[0]?.late).toBe(true);
   });
+  test("A08b decision options persist trimmed and pending projection is user-only", async () => {
+    let i = await domain.getIssue(dev, { issueId: "1" });
+    i = await domain.askDecision(dev, {
+      issueId: "1",
+      version: i.version,
+      question: "Refund method?",
+      options: [" Yes ", "No"],
+    });
+    const withOptions = i.decisions.find((q) => q.id === "1-Q3");
+    expect(withOptions?.options).toEqual(["Yes", "No"]);
+    expect(
+      (await domain.getIssue(user, { issueId: "1" })).decisions.find(
+        (q) => q.id === "1-Q3",
+      )?.options,
+    ).toEqual(["Yes", "No"]);
+
+    i = await domain.askDecision(dev, {
+      issueId: "1",
+      version: i.version,
+      question: "Legacy free-form question?",
+    });
+    const legacy = i.decisions.find((q) => q.id === "1-Q4");
+    expect(legacy).toBeDefined();
+    expect(Object.hasOwn(legacy!, "options")).toBe(false);
+
+    const invalid = async (options: unknown) =>
+      expect(
+        domain.askDecision(dev, {
+          issueId: "1",
+          version: i.version,
+          question: "Invalid options?",
+          options,
+        }),
+      ).rejects.toMatchObject({ code: "invalid_input" });
+    await invalid(["only one"]);
+    await invalid(["1", "2", "3", "4", "5", "6", "7"]);
+    await invalid(["   ", "No"]);
+    await invalid(["Yes", "No\nThanks"]);
+    await invalid(["Yes", "No\rThanks"]);
+    await invalid(["Yes", " Yes "]);
+    await invalid(["Yes", "x".repeat(201)]);
+    await invalid(null);
+    await invalid([]);
+    await invalid("Yes,No");
+    await invalid({ options: ["Yes", "No"] });
+
+    const pending = await domain.listPendingDecisions(user);
+    expect(pending.map((item) => item.decisionId).sort()).toEqual([
+      "1-Q3",
+      "1-Q4",
+    ]);
+    expect(pending.find((item) => item.decisionId === "1-Q3")).toMatchObject({
+      issueId: "1",
+      issueTitle: "One",
+      agentId: dev.id,
+      question: "Refund method?",
+      options: ["Yes", "No"],
+    });
+    expect(
+      Object.hasOwn(
+        pending.find((item) => item.decisionId === "1-Q4")!,
+        "options",
+      ),
+    ).toBe(false);
+    expect(pending[0]).not.toHaveProperty("body");
+    expect(pending[0]).not.toHaveProperty("comments");
+    await expect(domain.listPendingDecisions(dev)).rejects.toMatchObject({
+      code: "forbidden",
+      status: 403,
+    });
+
+    i = await domain.answerDecision(user, {
+      issueId: "1",
+      questionId: "1-Q3",
+      answer: "Yes",
+    });
+    expect(
+      (await domain.listPendingDecisions(user)).map(
+        (item) => item.decisionId,
+      ),
+    ).toEqual(["1-Q4"]);
+    expect(
+      (await domain.getIssue(user, { issueId: "1" })).decisions.find(
+        (q) => q.id === "1-Q3",
+      ),
+    ).toMatchObject({ status: "pending", answer: "Yes" });
+
+    i = await domain.withdrawDecision(dev, {
+      issueId: "1",
+      questionId: "1-Q4",
+      version: i.version,
+    });
+    expect(await domain.listPendingDecisions(user)).toEqual([]);
+  });
   test("A09 IM persists, delivers once, replies distinct from delivery and does not create Issues", async () => {
     const before = (await domain.listIssues(user)).length;
     const ask = await domain.ask(dev, {

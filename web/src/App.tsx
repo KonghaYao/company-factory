@@ -7,6 +7,7 @@ import type {
   FileReference,
   Issue,
   Organization,
+  PendingDecision,
   Runtime,
   Scope,
   Workspace,
@@ -38,7 +39,12 @@ const CompanyChatShell = lazy(() =>
 );
 
 const ownerAccessTokenKey = "company.ownerAccessToken";
-const POLL_INTERVAL = { organization: 4000, workspace: 2500, runtime: 1500 };
+const POLL_INTERVAL = {
+  organization: 4000,
+  workspace: 2500,
+  runtime: 1500,
+  questions: 3000,
+};
 
 function saveOwnerAccessToken(token: string) {
   try {
@@ -202,6 +208,57 @@ export default function App() {
     enabled: !!companyId && !!selectedAgent,
     refetchInterval: POLL_INTERVAL.runtime,
   });
+  const pendingDecisions = useQuery<{ items: PendingDecision[] }>({
+    queryKey: ["pending-decisions", companyId],
+    queryFn: () =>
+      api(`/api/decisions/pending?companyId=${encodeURIComponent(companyId)}`),
+    enabled: !!companyId,
+    refetchInterval: POLL_INTERVAL.questions,
+  });
+  const pendingQuestions = pendingDecisions.data?.items || [];
+  const answerPendingDecision = useMutation({
+    mutationFn: (vars: {
+      companyId: string;
+      item: PendingDecision;
+      answer: string;
+    }) =>
+      action(vars.companyId, "company_tasks", "answerDecision", {
+        issueId: vars.item.issueId,
+        questionId: vars.item.decisionId,
+        answer: vars.answer,
+        requestId: uuid(),
+      }),
+    onSuccess: (_result, vars) => {
+      // 立即隐藏，不等下一次 3s 轮询。
+      qc.setQueryData<{ items: PendingDecision[] }>(
+        ["pending-decisions", vars.companyId],
+        (current) =>
+          current
+            ? {
+                items: current.items.filter(
+                  (item) => item.decisionId !== vars.item.decisionId,
+                ),
+              }
+            : current,
+      );
+      qc.invalidateQueries({
+        queryKey: ["pending-decisions", vars.companyId],
+      });
+      qc.invalidateQueries({
+        queryKey: ["workspace", vars.companyId, vars.item.agentId],
+      });
+      qc.invalidateQueries({
+        queryKey: [
+          "comments",
+          vars.companyId,
+          vars.item.agentId,
+          vars.item.issueId,
+        ],
+      });
+      qc.invalidateQueries({ queryKey: ["company", vars.companyId] });
+      setToast("答复已提交；Agent 将继续处理。");
+    },
+  });
   const issues = workspace.data?.issues || [];
   const previews = workspace.data?.previews || [];
   const threads = workspace.data?.threads || [];
@@ -224,6 +281,15 @@ export default function App() {
   };
   const selectIssue = (id?: string) =>
     patch(scope, { tab: "tasks", issueId: id });
+  const openPendingQuestion = (targetAgentId: string, issueId: string) => {
+    const target = agents.find((item) => agentId(item) === targetAgentId);
+    if (!target || target.status === "archived") {
+      setToast("该成员已归档；问题仍可直接答复，但不会切换工作区。");
+      return;
+    }
+    selectAgent(targetAgentId);
+    patch({ companyId, agentId: targetAgentId }, { tab: "tasks", issueId });
+  };
   const draft = (text: string) => {
     insertComposerText(selectedAgent, text);
     setToast("指令已加入当前 Agent 的草稿，请检查后发送。");
@@ -398,6 +464,12 @@ export default function App() {
             collapsed={collapsed}
             loading={organization.isLoading}
             error={organization.error}
+            pendingQuestions={pendingQuestions}
+            pendingQuestionsError={pendingDecisions.error}
+            onAnswerQuestion={(item, answer) =>
+              answerPendingDecision.mutateAsync({ companyId, item, answer })
+            }
+            onOpenQuestion={openPendingQuestion}
             onChooseCompany={chooseCompany}
             onSelectAgent={selectAgent}
             onEditAgent={(id) => {

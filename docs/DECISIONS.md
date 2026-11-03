@@ -82,3 +82,10 @@
 - **迁移策略**：`scripts/refresh-agent-profiles.ts` 默认 dry-run，只输出成员、变更块标题和 commit，不打印正文；`--apply` 时逐成员只替换托管块并各提交一个 Agent Git commit，块外自由记忆保留。脚本不修改 `agent.yaml`、`agent.version`/`configVersion`、Session 或 Company 业务数据；重复或不平衡的托管块标记直接报错、不覆盖。
 - **理由/约束**：沿用 Issue 的公司锁、CAS、Git 与 Workspace 文件能力，避免新增存储和 schema；提示词与命名变更不需要版本 bump。
 - **状态**：生效中
+
+## 9. 待裁定问题进入左侧栏并支持选项快答（2026-11-02）
+
+- **决策**：Agent 通过 `askDecision` 提出的待回答 decision 在公司范围左侧栏顶部集中展示；问题可携带 2–6 个具体选项，用户单选并提交，仍可自由回答。回答成功后即使 Agent 尚未 `resolveDecision`，也从左侧栏隐藏。
+- **边界**：`answerDecision` 保持自由文本；`options` 只用于真实可枚举的选择，不用于制造同意；旧 decision 无 options 继续工作；归档成员的问题仍可回答；不新增 MCP 工具或数据库迁移。
+- **接口**：owner-only `GET /api/decisions/pending?companyId=...` 返回最小投影；答案仍经 `/api/action` 的 `answerDecision` 提交。
+- **状态**：生效中

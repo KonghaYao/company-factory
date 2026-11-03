@@ -12,7 +12,13 @@ import {
   Trash2,
   Undo2,
 } from "lucide-react";
-import type { Agent, Company, Organization, OrgNode } from "../../lib/types";
+import type {
+  Agent,
+  Company,
+  Organization,
+  OrgNode,
+  PendingDecision,
+} from "../../lib/types";
 import { agentId } from "../../lib/types";
 import {
   Avatar,
@@ -22,6 +28,7 @@ import {
   Sheet,
   Spinner,
 } from "../../ui/primitives";
+import { PendingQuestions } from "./PendingQuestions";
 
 type RunAction = (action: () => void) => () => void;
 
@@ -253,6 +260,8 @@ export function OrganizationPanel({
   collapsed,
   loading,
   error,
+  pendingQuestions,
+  pendingQuestionsError,
   onChooseCompany,
   onSelectAgent,
   onEditAgent,
@@ -266,6 +275,8 @@ export function OrganizationPanel({
   onMoveAgent,
   onArchiveAgent,
   onRestoreAgent,
+  onAnswerQuestion,
+  onOpenQuestion,
 }: {
   companies: Company[];
   companyId: string;
@@ -275,6 +286,8 @@ export function OrganizationPanel({
   collapsed: Record<string, boolean>;
   loading: boolean;
   error: unknown;
+  pendingQuestions: PendingDecision[];
+  pendingQuestionsError: unknown;
   onChooseCompany: (id: string) => void;
   onSelectAgent: (id: string) => void;
   onEditAgent: (id: string) => void;
@@ -288,6 +301,8 @@ export function OrganizationPanel({
   onMoveAgent: (agentId: string) => void;
   onArchiveAgent: (agentId: string) => void;
   onRestoreAgent: (agentId: string) => void;
+  onAnswerQuestion: (item: PendingDecision, answer: string) => Promise<unknown>;
+  onOpenQuestion: (agentId: string, issueId: string) => void;
 }) {
   const company = companies.find((c) => c.id === companyId);
   const [archiveOpen, setArchiveOpen] = useState(false);
@@ -458,6 +473,14 @@ export function OrganizationPanel({
           </button>
         )}
       </div>
+
+      <PendingQuestions
+        questions={pendingQuestions}
+        agents={agents}
+        error={pendingQuestionsError}
+        onAnswer={onAnswerQuestion}
+        onOpenIssue={onOpenQuestion}
+      />
 
       <div className="org-scroll">
         {loading && <Loading label="读取组织…" />}

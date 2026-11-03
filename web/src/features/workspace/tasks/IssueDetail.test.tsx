@@ -297,4 +297,26 @@ describe("IssueDetail", () => {
     expect(html).toContain("预览正文");
     expect((html.match(/data-slot="peri-markdown"/g) ?? []).length).toBe(4);
   });
+
+  test("a pending decision with options exposes chips in the detail card", () => {
+    const html = render({
+      issue: {
+        ...issue,
+        decisions: [
+          {
+            id: "1-Q1",
+            question: "选择",
+            options: ["A", "B"],
+            status: "pending",
+            answer: null,
+          },
+        ],
+      },
+    });
+
+    expect(tag(html, "decision-1-Q1-option-0")).not.toBe("");
+    expect(tag(html, "decision-1-Q1-option-1")).not.toBe("");
+    expect(tag(html, "decision-answer-1-Q1")).not.toBe("");
+    expect(html).toContain("选择");
+  });
 });

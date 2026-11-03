@@ -177,6 +177,8 @@ export type Company = {
 export type Decision = {
   id: string;
   question: string;
+  /** Agent-supplied concrete choices; omitted on legacy decisions. */
+  options?: string[];
   status: "pending" | "answered" | "withdrawn";
   answer: string | null;
   answers: { text: string; author_id: string; at: string; late: boolean }[];
@@ -193,6 +195,18 @@ export type IssueStatus =
   | "verifying"
   | "ready_merge"
   | "cancel";
+/** Read-only company-wide projection; never a persisted Issue field. */
+export type PendingDecisionView = {
+  issueId: string;
+  issueTitle: string;
+  issueStatus: IssueStatus;
+  /** Current Issue assignee. */
+  agentId: string;
+  decisionId: string;
+  question: string;
+  options?: string[];
+  updatedAt: string;
+};
 export type TodoStatus = "pending" | "in_progress" | "done";
 export type TodoItem = {
   /** Server-generated stable id: `<issueId>-T<n>`; never reused. */

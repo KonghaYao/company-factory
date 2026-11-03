@@ -62,6 +62,7 @@ import {
   type OrgNodeKind,
   type OrgPlacement,
   type Organization,
+  type PendingDecisionView,
   type Roster,
   type TodoItem,
 } from "./types";
@@ -159,6 +160,34 @@ const cleanText = (v: unknown, label: string, max = 100000) => {
     `${label} must be nonempty text (at most ${max} characters)`,
   );
   return v;
+};
+const cleanDecisionOptions = (value: unknown): string[] | undefined => {
+  if (value === undefined) return undefined;
+  requireValue(
+    Array.isArray(value) && value.length >= 2 && value.length <= 6,
+    "invalid_input",
+    "options must contain 2–6 choices",
+  );
+  const options = value.map((item) => {
+    requireValue(
+      typeof item === "string",
+      "invalid_input",
+      "options must be strings",
+    );
+    const text = item.trim();
+    requireValue(
+      text.length > 0 && text.length <= 200 && !/[\r\n]/.test(item),
+      "invalid_input",
+      "each option must be one nonempty line of at most 200 characters",
+    );
+    return text;
+  });
+  requireValue(
+    new Set(options).size === options.length,
+    "invalid_input",
+    "options must be unique",
+  );
+  return options;
 };
 const promptText = (v: unknown) => {
   requireValue(
@@ -2038,6 +2067,47 @@ export class CompanyDomain {
     }
     return all;
   }
+  /**
+   * Owner-only, company-wide inbox projection of unanswered decisions. Excludes
+   * canceled Issues and never returns Issue bodies/comments; archived Agents'
+   * questions remain because the user still has to answer them.
+   */
+  async listPendingDecisions(
+    ctx: CallerContext,
+  ): Promise<PendingDecisionView[]> {
+    requireValue(
+      ctx.type === "user",
+      "forbidden",
+      "Only the user may read pending Company decisions",
+      403,
+    );
+    const issues = await this.listIssues(ctx);
+    return issues
+      .filter((issue) => issue.status !== "cancel")
+      .flatMap((issue) =>
+        issue.decisions
+          .filter(
+            (decision) =>
+              decision.status === "pending" && decision.answer === null,
+          )
+          .map((decision) => ({
+            issueId: issue.id,
+            issueTitle: issue.title,
+            issueStatus: issue.status,
+            agentId: issue.agent_id,
+            decisionId: decision.id,
+            question: decision.question,
+            ...(decision.options ? { options: [...decision.options] } : {}),
+            updatedAt: issue.updated_at,
+          })),
+      )
+      .sort(
+        (a, b) =>
+          b.updatedAt.localeCompare(a.updatedAt) ||
+          a.issueId.localeCompare(b.issueId, undefined, { numeric: true }) ||
+          a.decisionId.localeCompare(b.decisionId),
+      );
+  }
   async getIssue(ctx: CallerContext, input: Input): Promise<Issue> {
     const issue = normalizeIssueProgress(
       await this.store.markdown<Issue>(
@@ -2442,9 +2512,11 @@ export class CompanyDomain {
         409,
       );
       const id = `${issue.id}-Q${Math.max(0, ...issue.decisions.map((q) => Number(q.id.split("-Q")[1]) || 0)) + 1}`;
+      const options = cleanDecisionOptions(input.options);
       issue.decisions.push({
         id,
         question: cleanText(input.question, "question"),
+        ...(options ? { options } : {}),
         status: "pending",
         answer: null,
         answers: [],

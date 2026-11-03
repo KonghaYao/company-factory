@@ -3,7 +3,7 @@ import { link, mkdir, mkdtemp, readFile, rm, symlink, truncate, writeFile } from
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { AGENT_MEMORY_MAX_BYTES, applyAgentMemory, prepareAgentMemory, readAgentMemory } from "./agent-memory";
-import { COMPANY_ASSETS_GUIDANCE, TASK_PROGRESS_GUIDANCE } from "./templates";
+import { COMPANY_ASSETS_GUIDANCE, DECISION_GUIDANCE, TASK_PROGRESS_GUIDANCE } from "./templates";
 
 describe("Agent memory host reads", () => {
   for (const name of ["CLAUDE.md", "claude.md"]) {
@@ -78,6 +78,10 @@ describe("Agent memory host reads", () => {
       expect(prepared.content).toContain("FREE_AFTER");
       expect(prepared.content).toContain("## Task progress");
       expect(prepared.content).toContain(TASK_PROGRESS_GUIDANCE);
+      expect(prepared.content).toContain("## Decisions");
+      expect(prepared.content).toContain(DECISION_GUIDANCE);
+      expect(prepared.content).toContain("askDecision");
+      expect(prepared.content).toContain("2–6");
       expect(prepared.content).toContain("## Company assets");
       expect(prepared.content).toContain(COMPANY_ASSETS_GUIDANCE);
 

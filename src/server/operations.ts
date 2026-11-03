@@ -230,6 +230,7 @@ export const schemas: Record<string, z.ZodType> = {
   askDecision: z.object({
     issueId: str,
     question: str,
+    options: z.array(str.min(1).max(200)).min(2).max(6).optional(),
     expectedVersion: z.number(),
     requestId: str,
   }),

@@ -43,6 +43,10 @@ describe("composeSystemInstructions", () => {
     expect(text).toContain("comment");
     expect(text).toContain("todo_snapshot");
     expect(text).toContain("no separate progress-record tool");
+    expect(text).toContain("askDecision");
+    expect(text).toContain("options");
+    expect(text).toContain("2–6");
+    expect(text).toContain("mutually exclusive");
     expect(text).not.toContain("addUpdate");
     expect(text).not.toContain("`updates`");
     expect(text).not.toContain("latest update");

@@ -72,9 +72,22 @@ export type Agent = {
 export type Decision = {
   id: string;
   question: string;
+  /** Agent 提供的具体选项；旧 decision 缺省，退回自由文本。 */
+  options?: string[];
   status: "pending" | "answered" | "withdrawn";
   answer?: string | null;
   responses?: { answer: string; created_at: string }[];
+};
+/** 左侧栏待裁定投影：公司范围、不含 Issue 正文/评论。 */
+export type PendingDecision = {
+  issueId: string;
+  issueTitle: string;
+  issueStatus: string;
+  agentId: string;
+  decisionId: string;
+  question: string;
+  options?: string[];
+  updatedAt: string;
 };
 export type TodoStatus = "pending" | "in_progress" | "done";
 /** Issue 内有序待办；id 由服务端生成，删除后不复用。 */

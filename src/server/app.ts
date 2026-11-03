@@ -343,6 +343,14 @@ export async function createApplication(options: ApplicationOptions = {}) {
       ),
     });
   });
+  // Owner-only pending-decision inbox. Minimal projection; never exposes Issue bodies.
+  app.get("/api/decisions/pending", async (c) => {
+    const companyId = c.req.query("companyId")?.trim();
+    if (!companyId)
+      throw new AccessError("company_required", "companyId is required", 400);
+    const caller = access.user(c.req.raw, companyId);
+    return c.json({ items: await domain.listPendingDecisions(caller) });
+  });
   // Owner-only restart gate. Agent bearer credentials are not owner sessions, so
   // they receive 401 here. This endpoint is not exposed through Company MCP.
   app.get("/api/restart-readiness", async (c) => {
