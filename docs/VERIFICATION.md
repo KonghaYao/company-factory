@@ -13,7 +13,8 @@
 - `bun run build`：通过，保留既有 Monaco/chunk 体积提示。
 - SDK 生命周期适配：0.4.0 的 `TursoStorage` 持有一条持久连接并新增 `close()`，`ChatManager.shutdown()` 不再关闭注入的 `database`。同一端点与凭据的所有 scope 共用一个 `TursoStorage`；替换 Manager 不再反复 connect/close，`shutdown()` 在所有 Manager 关闭后统一释放，失败仍映射为 `wasm_cleanup_unconfirmed` 并可重试。
 - 429 事故与修复：升级后用户发送消息报 `wasm_store_unavailable`（503）。真实原因是 peri-loom v1.2.0 的 `max_concurrent=4` 配额：每个 Agent 各建一个 `TursoStorage` 会各持一条持久连接，关闭旧实例时又遇到配额已满（`quota_exceeded`，不可重试），随后所有会话读取返回 429。改为按端点共享连接后，9 个已绑定 Agent 共用一个连接，逐个读取全部命中，`closeAll()` 一次成功；loom 经一次干净 stop/start 清除残留配额，仍为 v1.2.0。
-- 会话配置：0.4.0 新增 `set_config_option` 动作；Company 固定模型与 bypass 权限模式，HTTP 层明确拒绝该动作（`invalid_action` 400），UI 选择器保持只读。
+- 会话配置：0.4.0 新增 `set_config_option` 动作；Company 固定模型与 bypass 权限模式，HTTP 层明确拒绝该动作（`invalid_action` 400）。UI 仍会显示可点击的选择器，点击后由服务端拒绝并返回 400，不是客户端只读。
+- 会话关闭中断的修复：升级时并行停止公司服务与 loom，HR 的 `session/close` 只写入了 `session_close_intents`（`requested_at=2026-11-03T07:01:19.459Z`）便遇到存储不可用；下一次 bind 报 `binding_failed`（HTTP 500）。核对线程 `01a19b27-8224-7491-af4d-9af670781058`、`message_count=157` 与绑定 cwd 均完整后，删除该条 stale intent，HR 以原 Session 重新绑定成功（`POST /api/chats` 201，sessionId 不变）。正确停机顺序：先停公司服务并等待退出，再 `docker stop --timeout 90 peri-loom`；不要并行停止。
 - 真实存储读：临时脚本用生产 `WasmStoreDirectory` + `FileStoreProvider` 连接升级后的 loom 端点，读取公司 `c-77ac6210f78c0efb4e91afb06ce14d57` 的 9 个绑定 Session：`allOk=true`、`sharedStorages=1`、`closeFailed=false`；未输出端点或凭据。
 - 容器：`ghcr.io/konghayao/peri-loom:v1.2.0`（digest `sha256:de8b50e274e8aa837367234c72d24cb212800ed38760964f09b0544d3beaa332`）以原配置运行（host network、`127.0.0.1:9443`、`/data/peri` volume、`PERI_HRANA_EXPERIMENTAL=1`、`--no-build`）；容器内 `PERI_IMAGE_VERSION=v1.2.0`。另设 `--stop-timeout 90`（Docker 29 存于 `Config.StopTimeout`），覆盖 launcher 的 40s 关停预算 + 5s finalize；停止时用 `docker stop --timeout 90`。
 - 服务：重启后 `/health` 返回 `@peri-code/sdk@0.4.0 WASM…`，`bun run check:restart` 返回 SAFE。
