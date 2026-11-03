@@ -2,9 +2,6 @@ import {
   DomainError,
   requireValue,
   type Issue,
-  type LatestUpdate,
-  type TaskUpdate,
-  type TaskUpdateKind,
   type TodoItem,
   type TodoStatus,
 } from "./types";
@@ -13,21 +10,11 @@ import {
 export const TODO_LIMIT = 50;
 export const TODO_CHANGE_LIMIT = 20;
 export const TODO_TEXT_MAX = 500;
-export const UPDATE_LIMIT = 2000;
-export const UPDATE_BODY_MAX = 4000;
-export const UPDATE_NOTE_MAX = 2000;
-export const UPDATE_PAGE_DEFAULT = 20;
-export const UPDATE_PAGE_MAX = 50;
-export const LATEST_UPDATE_EXCERPT_MAX = 180;
+export const TODO_NOTE_MAX = 2000;
 export const TODO_STATUSES: readonly TodoStatus[] = [
   "pending",
   "in_progress",
   "done",
-];
-export const TASK_UPDATE_KINDS: readonly TaskUpdateKind[] = [
-  "progress",
-  "blocker",
-  "decision",
 ];
 
 export type TodoActor = { type: "user" | "agent"; id: string };
@@ -49,13 +36,13 @@ function characterLength(value: string): number {
 
 function requiredString(value: unknown, field: string): string {
   if (typeof value !== "string" || value.length === 0)
-    invalidDocument(`Invalid ${field} in stored todo/update record`);
+    invalidDocument(`Invalid ${field} in stored todo record`);
   return value;
 }
 
 function actorType(value: unknown, field: string): "user" | "agent" {
   if (value !== "user" && value !== "agent")
-    invalidDocument(`Invalid ${field} in stored todo/update record`);
+    invalidDocument(`Invalid ${field} in stored todo record`);
   return value;
 }
 
@@ -66,22 +53,6 @@ export function todoStatus(value: unknown): TodoStatus {
       `status must be one of ${TODO_STATUSES.join(", ")}`,
     );
   return value as TodoStatus;
-}
-
-export function taskUpdateKind(
-  value: unknown,
-  fallback: TaskUpdateKind = "progress",
-): TaskUpdateKind {
-  if (value === undefined) return fallback;
-  if (
-    typeof value !== "string" ||
-    !TASK_UPDATE_KINDS.includes(value as TaskUpdateKind)
-  )
-    throw new DomainError(
-      "invalid_input",
-      `kind must be one of ${TASK_UPDATE_KINDS.join(", ")}`,
-    );
-  return value as TaskUpdateKind;
 }
 
 /** Single-line plain text; the UI must not render it as Markdown. */
@@ -97,36 +68,15 @@ export function cleanTodoText(value: unknown): string {
   return value;
 }
 
-export function cleanUpdateBody(value: unknown): string {
+export function cleanTodoNote(value: unknown): string {
   requireValue(
     typeof value === "string" &&
       value.trim().length > 0 &&
-      characterLength(value) <= UPDATE_BODY_MAX,
+      characterLength(value) <= TODO_NOTE_MAX,
     "invalid_input",
-    `update body must be nonempty text of at most ${UPDATE_BODY_MAX} characters`,
+    `note must be nonempty text of at most ${TODO_NOTE_MAX} characters`,
   );
   return value;
-}
-
-export function cleanUpdateNote(value: unknown): string {
-  requireValue(
-    typeof value === "string" &&
-      value.trim().length > 0 &&
-      characterLength(value) <= UPDATE_NOTE_MAX,
-    "invalid_input",
-    `note must be nonempty text of at most ${UPDATE_NOTE_MAX} characters`,
-  );
-  return value;
-}
-
-export function latestUpdateExcerpt(body: unknown): string {
-  return Array.from(
-    String(body ?? "")
-      .replace(/\s+/g, " ")
-      .trim(),
-  )
-    .slice(0, LATEST_UPDATE_EXCERPT_MAX)
-    .join("");
 }
 
 export function todoCounts(todos: TodoItem[] | undefined | null): TodoCounts {
@@ -172,31 +122,18 @@ function normalizeTodos(value: unknown): TodoItem[] {
   });
 }
 
-function normalizeLatestUpdate(value: unknown): LatestUpdate | null {
-  if (value === undefined || value === null) return null;
-  if (!isRecord(value)) invalidDocument("Invalid latest_update projection");
-  const kind = value.kind;
-  if (!TASK_UPDATE_KINDS.includes(kind as TaskUpdateKind))
-    invalidDocument("Invalid latest_update kind");
-  return {
-    id: requiredString(value.id, "latest_update id"),
-    created_at: requiredString(value.created_at, "latest_update created_at"),
-    author_type: actorType(value.author_type, "latest_update author_type"),
-    author_id: requiredString(value.author_id, "latest_update author_id"),
-    kind: kind as TaskUpdateKind,
-    excerpt: requiredString(value.excerpt, "latest_update excerpt"),
-  };
-}
-
 /**
  * Old Issues have no progress fields. Reads never rewrite their files merely to
  * upgrade the shape; every caller receives the same normalized view instead.
+ * A legacy `latest_update` key is dropped from the view and never written back.
  */
-export function normalizeIssueProgress(issue: Issue): Issue {
+export function normalizeIssueProgress(
+  issue: Issue & { latest_update?: unknown },
+): Issue {
+  const { latest_update: _legacyLatestUpdate, ...rest } = issue;
   const normalized: Issue = {
-    ...issue,
-    todos: normalizeTodos(issue.todos),
-    latest_update: normalizeLatestUpdate(issue.latest_update),
+    ...rest,
+    todos: normalizeTodos(rest.todos),
   };
   if (
     issue.todo_seq === undefined ||
@@ -343,60 +280,4 @@ export function applyTodoOrder(todos: TodoItem[], order: unknown): TodoItem[] {
     result.push(byId.get(id)!);
   }
   return result;
-}
-
-/** Validate an append-only record read from disk; unknown schemas are errors. */
-export function normalizeTaskUpdate(
-  value: unknown,
-  expectedIssueId?: string,
-): TaskUpdate {
-  if (!isRecord(value) || value.schema !== "company-update/v1")
-    invalidDocument("Unsupported task update schema");
-  if (value.version !== 1)
-    invalidDocument("Unsupported task update record version");
-  const kind = value.kind;
-  if (!TASK_UPDATE_KINDS.includes(kind as TaskUpdateKind))
-    invalidDocument("Invalid task update kind");
-  const issueId = requiredString(value.issue_id, "issue_id");
-  if (expectedIssueId !== undefined && issueId !== expectedIssueId)
-    invalidDocument("Task update belongs to another Issue");
-  const counts = value.todo_counts;
-  if (!isRecord(counts)) invalidDocument("Invalid task update todo_counts");
-  for (const key of ["total", "done", "in_progress"])
-    if (!Number.isInteger(counts[key]) || Number(counts[key]) < 0)
-      invalidDocument("Invalid task update todo_counts");
-  const status = value.status;
-  if (
-    ![
-      "triage",
-      "plan",
-      "code",
-      "ready_preview",
-      "preview",
-      "accepted",
-      "verifying",
-      "ready_merge",
-      "cancel",
-    ].includes(String(status))
-  )
-    invalidDocument("Invalid task update status snapshot");
-  if (typeof value.body !== "string")
-    invalidDocument("Invalid task update body");
-  return {
-    schema: "company-update/v1",
-    id: requiredString(value.id, "id"),
-    issue_id: issueId,
-    author_type: actorType(value.author_type, "author_type"),
-    author_id: requiredString(value.author_id, "author_id"),
-    kind: kind as TaskUpdateKind,
-    created_at: requiredString(value.created_at, "created_at"),
-    version: 1,
-    status: status as TaskUpdate["status"],
-    todo_counts: {
-      total: Number(counts.total),
-      done: Number(counts.done),
-      in_progress: Number(counts.in_progress),
-    },
-    body: value.body,
-  };
 }

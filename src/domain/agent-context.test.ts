@@ -311,10 +311,10 @@ describe("Agent context is a bounded index of current facts", () => {
       view.workspace(hr, { previewCursor: first.nextPreviewCursor }),
     ).rejects.toMatchObject({ code: "invalid_input" });
   });
-  test("Issue summaries expose todo counts and a short latest-update excerpt only", async () => {
+  test("Issue summaries expose todo counts only", async () => {
     const issue = await domain.getIssue(supervisor, { issueId: "1" });
     const note =
-      "short progress ".repeat(20) + "UPDATE_FULL_BODY_SENTINEL";
+      "short progress ".repeat(20) + "COMMENT_NOTE_SENTINEL";
     const updated = await domain.updateTodos(supervisor, {
       issueId: issue.id,
       version: issue.version,
@@ -325,26 +325,31 @@ describe("Agent context is a bounded index of current facts", () => {
         },
       ],
       note,
-      requestId: "context-progress-summary",
+      requestId: "context-todo-summary",
     });
     expect(updated.issue.todos![0]!.status).toBe("pending");
+    expect(updated.comment.body).toBe(note);
     const page = await view.issues(supervisor, { limit: 50 });
     expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThanOrEqual(
       CONTEXT_PAGE_BYTES,
     );
     const row = page.items.find((item) => item.id === issue.id)!;
     expect(row.todos).toEqual({ total: 1, done: 0, in_progress: 0 });
-    expect(row.latest_update).toMatchObject({
-      id: updated.update!.id,
-      kind: "progress",
-    });
-    expect(row.latest_update!.excerpt).toContain("short progress");
-    expect(row.latest_update!.excerpt.length).toBeLessThanOrEqual(180);
+    expect(row).not.toHaveProperty("latest_update");
     const encoded = JSON.stringify(page);
     expect(encoded).not.toContain("TODO_FULL_TEXT_SENTINEL");
-    expect(encoded).not.toContain("UPDATE_FULL_BODY_SENTINEL");
-    // Full records remain reachable through getIssue.
+    expect(encoded).not.toContain("COMMENT_NOTE_SENTINEL");
+    // Full records and comment snapshots remain reachable through their reads.
     const full = await domain.getIssue(supervisor, { issueId: issue.id });
     expect(full.todos![0]!.text).toContain("TODO_FULL_TEXT_SENTINEL");
+    const comments = await domain.comments(supervisor, { issueId: issue.id });
+    expect(comments.items[0]!.body).toBe(note);
+    expect(comments.items[0]!.todo_snapshot).toEqual([
+      {
+        id: `${issue.id}-T1`,
+        text: full.todos![0]!.text,
+        status: "pending",
+      },
+    ]);
   });
 });

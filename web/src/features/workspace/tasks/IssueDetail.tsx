@@ -16,7 +16,6 @@ import type {
   Issue,
   Preview,
   Scope,
-  Workspace,
 } from "../../../lib/types";
 import { action, list } from "../../../lib/api";
 import { uuid } from "../../../lib/uuid";
@@ -35,7 +34,7 @@ import { StreamdownText } from "../../../peri/chat/timeline/StreamdownText";
 import { DecisionCard } from "./DecisionCard";
 import { PreviewCard } from "./PreviewCard";
 import { TodoSection } from "./TodoSection";
-import { UpdatesSection } from "./UpdatesSection";
+import { TodoStatusText } from "./TodoStatusText";
 
 const STATUS_OPTIONS = [
   "triage",
@@ -48,7 +47,7 @@ const STATUS_OPTIONS = [
   "ready_merge",
 ];
 
-/** Issue 详情：待办/进展、编辑、裁定、Preview 验收与评论时间线。 */
+/** Issue 详情：待办、编辑、裁定、Preview 验收与评论时间线。 */
 export function IssueDetail({
   scope,
   issue,
@@ -107,28 +106,7 @@ export function IssueDetail({
     qc.invalidateQueries({
       queryKey: ["comments", scope.companyId, scope.agentId, issue.id],
     });
-    qc.invalidateQueries({
-      queryKey: ["updates", scope.companyId, scope.agentId, issue.id],
-    });
     qc.invalidateQueries({ queryKey: ["company", scope.companyId] });
-  };
-  /**
-   * todo/进展写操作返回完整 Issue：先写回 workspace cache，让连续操作
-   * 立即拿到新 version，避免下一次请求立刻 version_conflict。
-   */
-  const applyIssue = (next: Issue) => {
-    qc.setQueryData<Workspace>(
-      ["workspace", scope.companyId, scope.agentId],
-      (current) =>
-        current
-          ? {
-              ...current,
-              issues: current.issues.map((item) =>
-                String(item.id) === String(next.id) ? next : item,
-              ),
-            }
-          : current,
-    );
   };
   const update = useMutation({
     mutationFn: (capture: {
@@ -219,20 +197,7 @@ export function IssueDetail({
         />
       ))}
 
-      <TodoSection
-        scope={scope}
-        issue={issue}
-        onIssue={applyIssue}
-        onRefresh={refresh}
-      />
-
-      <UpdatesSection
-        scope={scope}
-        issue={issue}
-        agents={agents}
-        onIssue={applyIssue}
-        onRefresh={refresh}
-      />
+      <TodoSection issue={issue} />
 
       <CollapsibleSection
         className="panel-section"
@@ -437,6 +402,33 @@ export function IssueDetail({
                       />
                     )}
                   </CollapsibleText>
+                  {item.todo_snapshot !== undefined && (
+                    <ul
+                      className="comment-todo-snapshot"
+                      data-testid="comment-todo-snapshot"
+                      role="list"
+                    >
+                      {item.todo_snapshot.length > 0 ? (
+                        item.todo_snapshot.map((todo) => (
+                          <li
+                            key={todo.id}
+                            data-testid="comment-todo-item"
+                            data-status={todo.status}
+                          >
+                            <TodoStatusText status={todo.status} />
+                            <span
+                              className="comment-todo-snapshot-text"
+                              title={todo.text}
+                            >
+                              {todo.text}
+                            </span>
+                          </li>
+                        ))
+                      ) : (
+                        <li className="comment-todo-empty">无待办</li>
+                      )}
+                    </ul>
+                  )}
                   {item.updated_at && (
                     <small className="comment-edited">
                       已编辑 {shortDate(item.updated_at)}

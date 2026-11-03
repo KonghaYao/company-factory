@@ -6,7 +6,6 @@ import type {
   Comment,
   Issue,
   Preview,
-  TaskUpdate,
   TodoItem,
   TodoStatus,
 } from "../../../lib/types";
@@ -39,6 +38,10 @@ const comments: Comment[] = [
     author_type: "agent",
     author_id: "agent-1",
     created_at: "2026-01-01T11:00:00Z",
+    todo_snapshot: [
+      { id: "1-T1", text: "梳理接口", status: "done" },
+      { id: "1-T3", text: "补充测试", status: "in_progress" },
+    ],
   },
 ];
 const todo = (id: string, text: string, status: TodoStatus): TodoItem => ({
@@ -59,34 +62,6 @@ const todos: TodoItem[] = [
   todo("1-T3", "补充测试", "in_progress"),
   todo("1-T4", "验收", "pending"),
 ];
-const updates: TaskUpdate[] = [
-  {
-    schema: "company-update/v1",
-    id: "1-U2",
-    issue_id: "1",
-    author_type: "agent",
-    author_id: "agent-1",
-    kind: "blocker",
-    created_at: "2026-01-03T10:00:00Z",
-    version: 1,
-    status: "code",
-    todo_counts: { total: 4, done: 2, in_progress: 1 },
-    body: "**等待** 依赖",
-  },
-  {
-    schema: "company-update/v1",
-    id: "1-U1",
-    issue_id: "1",
-    author_type: "user",
-    author_id: "user-1",
-    kind: "decision",
-    created_at: "2026-01-02T10:00:00Z",
-    version: 1,
-    status: "triage",
-    todo_counts: { total: 0, done: 0, in_progress: 0 },
-    body: "决定先做 **待办**",
-  },
-];
 
 const tag = (html: string, testId: string) =>
   html.match(new RegExp(`<[^>]+data-testid="${testId}"[^>]*>`))?.[0] ?? "";
@@ -97,8 +72,6 @@ function render(
     nextCursor?: string | null;
     issue?: Issue;
     previews?: Preview[];
-    updates?: TaskUpdate[];
-    updatesCursor?: string | null;
   } = {},
 ): string {
   const currentIssue = options.issue ?? issue;
@@ -110,18 +83,6 @@ function render(
         {
           items: options.comments ?? comments,
           nextCursor: options.nextCursor ?? null,
-        },
-      ],
-      pageParams: [undefined],
-    },
-  );
-  qc.setQueryData(
-    ["updates", scope.companyId, scope.agentId, currentIssue.id],
-    {
-      pages: [
-        {
-          items: options.updates ?? [],
-          nextCursor: options.updatesCursor ?? null,
         },
       ],
       pageParams: [undefined],
@@ -163,19 +124,16 @@ describe("IssueDetail", () => {
     expect(html).not.toContain("--collapsible-h:240px");
   });
 
-  test("todo and progress sections render before description and comments", () => {
+  test("todo section renders before description and comments, without updates", () => {
     const html = render();
 
     expect(tag(html, "todos-section-trigger")).toContain('aria-expanded="true"');
-    expect(tag(html, "updates-section-trigger")).toContain(
-      'aria-expanded="true"',
-    );
     expect(tag(html, "todos-section-body")).not.toContain("inert");
-    expect(tag(html, "updates-section-body")).not.toContain("inert");
+    expect(tag(html, "updates-section")).toBe("");
+    expect(tag(html, "updates-section-trigger")).toBe("");
 
     const order = [
       html.indexOf('data-testid="todos-section"'),
-      html.indexOf('data-testid="updates-section"'),
       html.indexOf('data-testid="description-section"'),
       html.indexOf('data-testid="comments-section"'),
     ];
@@ -183,9 +141,13 @@ describe("IssueDetail", () => {
     expect(order).toEqual([...order].sort((a, b) => a - b));
   });
 
-  test("todo progress, per-item status and empty state", () => {
+  test("todo progress, per-item status and empty state are read-only", () => {
     const html = render({ issue: { ...issue, todos } });
     const progress = tag(html, "todo-progress");
+    const todoBody = html.slice(
+      html.indexOf('data-testid="todos-section-body"'),
+      html.indexOf('data-testid="description-section"'),
+    );
 
     expect(progress).toContain('role="progressbar"');
     expect(progress).toContain('aria-valuenow="2"');
@@ -194,14 +156,21 @@ describe("IssueDetail", () => {
     expect(html).toContain("2/4 · 50%");
     expect((html.match(/data-testid="todo-item"/g) ?? []).length).toBe(4);
     expect((html.match(/todo-item is-done/g) ?? []).length).toBe(2);
-    expect((html.match(/data-status="done"/g) ?? []).length).toBe(2);
-    expect(html).toContain('data-status="in_progress"');
-    expect(html).toContain('data-status="pending"');
-    expect(html).toContain('aria-label="状态：补充测试"');
-    expect(html).toContain('aria-label="上移：实现页面"');
-    expect(html).toContain('aria-label="下移：梳理接口"');
-    expect(html).toContain('aria-label="删除待办：验收"');
-    expect(html).toContain('aria-label="新待办内容"');
+    expect((todoBody.match(/data-testid="todo-status"/g) ?? []).length).toBe(4);
+    expect(todoBody).toContain("已完成");
+    expect(todoBody).toContain("进行中");
+    expect(todoBody).toContain("待开始");
+    expect(todoBody).toContain("lucide-circle-check");
+    expect(todoBody).toContain("lucide-circle-dot");
+    expect(todoBody).toContain("lucide-circle");
+    expect(todoBody).not.toContain("<select");
+    expect(todoBody).not.toContain("<input");
+    expect(todoBody).not.toContain("<button");
+    expect(html).not.toContain('aria-label="状态：补充测试"');
+    expect(html).not.toContain('aria-label="上移：实现页面"');
+    expect(html).not.toContain('aria-label="下移：梳理接口"');
+    expect(html).not.toContain('aria-label="删除待办：验收"');
+    expect(html).not.toContain('aria-label="新待办内容"');
     expect(tag(html, "todo-empty")).toBe("");
 
     const empty = render();
@@ -211,44 +180,39 @@ describe("IssueDetail", () => {
     expect(empty).not.toContain("0/0");
   });
 
-  test("update entries show author, kind, markdown and snapshot newest-first", () => {
-    const html = render({ updates, updatesCursor: "20" });
-    const newest = html.indexOf('data-update-id="1-U2"');
-    const older = html.indexOf('data-update-id="1-U1"');
+  test("comment todo snapshot renders after the body as a read-only list", () => {
+    const html = render();
+    const snapshotIndex = html.indexOf(
+      'data-testid="comment-todo-snapshot"',
+    );
+    const agentBodyIndex = html.indexOf(
+      'data-testid="comment-comment-2-body"',
+    );
+    const userStart = html.indexOf('data-comment-id="comment-1"');
+    const agentStart = html.indexOf('data-comment-id="comment-2"');
+    const snapshotMarkup = html.slice(snapshotIndex, html.indexOf("</ul>", snapshotIndex));
 
-    expect(tag(html, "update-timeline")).not.toBe("");
-    expect((html.match(/data-testid="update-item"/g) ?? []).length).toBe(2);
-    expect(newest).toBeGreaterThan(-1);
-    expect(older).toBeGreaterThan(newest);
-    expect(html).toContain('data-kind="blocker"');
-    expect(html).toContain("阻塞");
-    expect(html).toContain("决定");
-    expect(html).toContain("状态 编写代码 · 待办 2/4 · 1 进行中");
-    expect((html.match(/data-slot="peri-markdown"/g) ?? []).length).toBe(5);
-    expect(html).toContain('data-streamdown="strong"');
-    expect(html).toContain("加载更早的进展");
-
-    const newestItem = html.slice(newest, html.indexOf("</li>", newest));
-    const olderItem = html.slice(older, html.indexOf("</li>", older));
-    expect(newestItem).toContain("开发一号");
-    expect(newestItem).toContain("阻塞");
-    expect(olderItem).toContain("你");
-    expect(olderItem).toContain("决定");
-    // 进展记录不是逐条折叠，也不提供编辑/删除。
-    expect((html.match(/class="collapsible-text"/g) ?? []).length).toBe(2);
-    expect(newestItem).not.toContain("<button");
-    expect(olderItem).not.toContain("<button");
+    expect(snapshotIndex).toBeGreaterThan(agentBodyIndex);
+    expect((html.match(/data-testid="comment-todo-snapshot"/g) ?? []).length).toBe(1);
+    expect(html.slice(userStart, agentStart)).not.toContain(
+      'data-testid="comment-todo-snapshot"',
+    );
+    expect((html.match(/data-testid="comment-todo-item"/g) ?? []).length).toBe(2);
+    expect(snapshotMarkup).toContain('data-status="done"');
+    expect(snapshotMarkup).toContain('data-status="in_progress"');
+    expect(snapshotMarkup).toContain("lucide-circle-check");
+    expect(snapshotMarkup).toContain("lucide-circle-dot");
+    expect(snapshotMarkup).toContain("已完成");
+    expect(snapshotMarkup).toContain("进行中");
+    expect(snapshotMarkup).toContain("梳理接口");
+    expect(snapshotMarkup).toContain("补充测试");
+    expect(snapshotMarkup).not.toContain("<button");
   });
 
-  test("update empty state and composer are explicit", () => {
-    const html = render();
+  test("comments without a snapshot render no snapshot container", () => {
+    const html = render({ comments: [comments[0]] });
 
-    expect(tag(html, "update-empty")).not.toBe("");
-    expect(html).toContain("还没有进展记录");
-    expect(html).toContain('aria-label="进展记录"');
-    expect(html).toContain('aria-label="进展类型"');
-    expect(tag(html, "update-submit")).toContain("disabled");
-    expect(html).not.toContain("加载更早的进展");
+    expect(tag(html, "comment-todo-snapshot")).toBe("");
   });
 
   test("each comment gets its own collapsed body and keeps its content", () => {

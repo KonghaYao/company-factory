@@ -90,31 +90,6 @@ export type TodoItem = {
   updated_by_id: string;
   done_at?: string;
 };
-export type TaskUpdateKind = "progress" | "blocker" | "decision";
-/** 列表/摘要投影；权威记录是追加式进展文件。 */
-export type LatestUpdate = {
-  id: string;
-  created_at: string;
-  author_type: "user" | "agent";
-  author_id: string;
-  kind: TaskUpdateKind;
-  excerpt: string;
-};
-/** 只追加、不可编辑的进展记录。 */
-export type TaskUpdate = {
-  schema: "company-update/v1";
-  id: string;
-  issue_id: string;
-  author_type: "user" | "agent";
-  author_id: string;
-  kind: TaskUpdateKind;
-  created_at: string;
-  version: 1;
-  /** 追加时的 Issue 状态快照。 */
-  status: string;
-  todo_counts: { total: number; done: number; in_progress: number };
-  body: string;
-};
 export type Issue = {
   id: string | number;
   title: string;
@@ -134,8 +109,6 @@ export type Issue = {
   collaborators?: string[];
   /** 服务端维护的有序待办；旧 Issue 可能缺省。 */
   todos?: TodoItem[];
-  /** 最新一条进展的列表投影；旧 Issue 为 null。 */
-  latest_update?: LatestUpdate | null;
 };
 export type Comment = {
   id: string;
@@ -145,6 +118,8 @@ export type Comment = {
   created_at: string;
   updated_at?: string;
   version?: number | string;
+  /** updateTodos 产生的只读 todo 快照；旧评论没有该字段。 */
+  todo_snapshot?: { id: string; text: string; status: TodoStatus }[];
 };
 export type Preview = {
   id: string;

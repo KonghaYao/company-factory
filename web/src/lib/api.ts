@@ -1,10 +1,4 @@
-import type {
-  Issue,
-  Scope,
-  TaskUpdate,
-  TaskUpdateKind,
-  TodoStatus,
-} from "./types";
+import type { Scope } from "./types";
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -66,56 +60,3 @@ export const action = <T = any>(
 ) => post<T>("/api/action", { companyId, module, operation, input });
 export const list = <T = any>(value: any, key: string): T[] =>
   Array.isArray(value) ? value : value?.[key] || value?.items || [];
-
-/** 与服务端 `updateTodos.changes` 对齐；文本 1..500，单次 1..20 项。 */
-export type TodoChange =
-  | { op: "add"; text: string; status?: TodoStatus }
-  | { op: "update"; todoId: string; text?: string; status?: TodoStatus }
-  | { op: "remove"; todoId: string };
-
-export type TaskUpdatePage = {
-  items: TaskUpdate[];
-  nextCursor: string | null;
-};
-
-export type TaskUpdatesResult = {
-  issue: Issue;
-  update: TaskUpdate | null;
-};
-
-export const fetchTaskUpdates = (
-  companyId: string,
-  input: { issueId: string; cursor?: string; limit?: number },
-) =>
-  action<TaskUpdatePage>(companyId, "company_tasks", "updates", input);
-
-export const updateTodos = (
-  companyId: string,
-  input: {
-    issueId: string;
-    expectedVersion: number;
-    requestId: string;
-    changes?: TodoChange[];
-    order?: string[];
-    note?: string;
-    kind?: TaskUpdateKind;
-  },
-) =>
-  action<TaskUpdatesResult>(companyId, "company_tasks", "updateTodos", input);
-
-export const addTaskUpdate = (
-  companyId: string,
-  input: {
-    issueId: string;
-    expectedVersion: number;
-    requestId: string;
-    kind?: TaskUpdateKind;
-    body: string;
-  },
-) =>
-  action<{ issue: Issue; update: TaskUpdate }>(
-    companyId,
-    "company_tasks",
-    "addUpdate",
-    input,
-  );

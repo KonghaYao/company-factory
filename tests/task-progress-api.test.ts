@@ -12,7 +12,7 @@ import {
 
 // Real Hono/MCP adapters and Company storage; only runtime provisioning and
 // Agent Git are replaced. No live Company home or Peri Session is used.
-describe("Task progress HTTP/MCP contract", () => {
+describe("Task todo and comment-snapshot HTTP/MCP contract", () => {
   let application: Awaited<ReturnType<typeof createApplication>>;
   let server: ReturnType<typeof Bun.serve>;
   let root: string;
@@ -83,7 +83,7 @@ describe("Task progress HTTP/MCP contract", () => {
   }
   async function issue(idle = false) {
     const result = await actionJson("createIssue", {
-      title: `API progress ${idle ? "idle " : ""}${++requestSeq}`,
+      title: `API todos ${idle ? "idle " : ""}${++requestSeq}`,
       requestId: requestId("create-issue"),
     });
     expect(result.status).toBe(200);
@@ -143,7 +143,7 @@ describe("Task progress HTTP/MCP contract", () => {
       body: JSON.stringify({
         module: "company_org",
         operation: "createCompany",
-        input: { name: "进展 API 公司", requestId: "api-company" },
+        input: { name: "待办 API 公司", requestId: "api-company" },
       }),
     });
     expect(created.status).toBe(200);
@@ -158,7 +158,7 @@ describe("Task progress HTTP/MCP contract", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  test("health still advertises exactly three modules and the three new tools are registered", async () => {
+  test("health still advertises exactly three modules and progress-record tools are unregistered", async () => {
     const health = await fetch(base + "/health");
     expect(health.status).toBe(200);
     const body = await health.json();
@@ -167,97 +167,16 @@ describe("Task progress HTTP/MCP contract", () => {
       "company_tasks",
       "company_im",
     ]);
-    expect(MODULE_OPERATIONS.company_tasks).toEqual(
-      expect.arrayContaining(["updates", "addUpdate", "updateTodos"]),
-    );
-    expect(READ_OPERATIONS.has("updates")).toBe(true);
-    expect(READ_OPERATIONS.has("addUpdate")).toBe(false);
+    expect(MODULE_OPERATIONS.company_tasks).toContain("updateTodos");
+    expect(MODULE_OPERATIONS.company_tasks).not.toContain("updates");
+    expect(MODULE_OPERATIONS.company_tasks).not.toContain("addUpdate");
+    expect(READ_OPERATIONS.has("updates")).toBe(false);
     expect(READ_OPERATIONS.has("updateTodos")).toBe(false);
+    expect(schemas.updates).toBeUndefined();
+    expect(schemas.addUpdate).toBeUndefined();
   });
 
-  test("owner /api/action updates todos, appends updates and reads newest-first pages", async () => {
-    const created = await issue();
-    const added = await actionJson("updateTodos", {
-      issueId: created.id,
-      expectedVersion: created.version,
-      requestId: requestId("owner-todos"),
-      changes: [
-        { op: "add", text: "HTTP step one" },
-        { op: "add", text: "HTTP step two", status: "in_progress" },
-      ],
-    });
-    expect(added.status).toBe(200);
-    expect(added.body.update).toBeNull();
-    expect(added.body.issue.todos.map((t: any) => t.id)).toEqual([
-      `${created.id}-T1`,
-      `${created.id}-T2`,
-    ]);
-
-    const detail = await read(created.id);
-    expect(detail.todos).toHaveLength(2);
-    expect(detail.latest_update).toBeNull();
-
-    const first = await actionJson("addUpdate", {
-      issueId: created.id,
-      expectedVersion: added.body.issue.version,
-      requestId: requestId("owner-update-1"),
-      body: "First append",
-    });
-    expect(first.status).toBe(200);
-    expect(first.body.update.id).toBe(`${created.id}-U1`);
-    const second = await actionJson("addUpdate", {
-      issueId: created.id,
-      expectedVersion: first.body.issue.version,
-      requestId: requestId("owner-update-2"),
-      body: "Second append",
-      kind: "blocker",
-    });
-    expect(second.status).toBe(200);
-    expect(second.body.issue.latest_update.kind).toBe("blocker");
-
-    const page = await actionJson("updates", { issueId: created.id, limit: 1 });
-    expect(page.status).toBe(200);
-    expect(page.body.items[0].body).toBe("Second append");
-    expect(page.body.nextCursor).toBe("1");
-    const next = await actionJson("updates", {
-      issueId: created.id,
-      cursor: page.body.nextCursor,
-      limit: 1,
-    });
-    expect(next.body.items[0].body).toBe("First append");
-    expect(next.body.nextCursor).toBeNull();
-
-    const stale = await actionJson("updateTodos", {
-      issueId: created.id,
-      expectedVersion: created.version,
-      requestId: requestId("owner-stale"),
-      changes: [{ op: "add", text: "stale" }],
-    });
-    expect(stale.status).toBe(409);
-    expect(stale.body.error.code).toBe("version_conflict");
-  });
-
-  test("MCP publishes schemas, read-only hints and operation-specific guidance", async () => {
-    const discovery = await mcp(supervisorId, "tools/list");
-    const tools = discovery.result.tools;
-    const byName = new Map(tools.map((tool: any) => [tool.name, tool]));
-    for (const name of ["updates", "addUpdate", "updateTodos"])
-      expect(byName.has(name)).toBe(true);
-    expect((byName.get("updates") as any).annotations.readOnlyHint).toBe(true);
-    expect((byName.get("addUpdate") as any).annotations.readOnlyHint).toBe(
-      false,
-    );
-    expect((byName.get("updateTodos") as any).annotations.readOnlyHint).toBe(
-      false,
-    );
-    expect((byName.get("updateTodos") as any).description).toContain("note");
-    expect((byName.get("addUpdate") as any).description).toContain(
-      "does not change status",
-    );
-    expect((byName.get("updates") as any).description).toContain(
-      "Newest-first",
-    );
-
+  test("updateTodos schema requires a note and ignores the retired kind", () => {
     expect(
       schemas.updateTodos!.safeParse({
         issueId: "1",
@@ -277,145 +196,193 @@ describe("Task progress HTTP/MCP contract", () => {
       schemas.updateTodos!.safeParse({
         issueId: "1",
         expectedVersion: 1,
+        requestId: "schema-no-note",
+        changes: [{ op: "add", text: "one" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      schemas.updateTodos!.safeParse({
+        issueId: "1",
+        expectedVersion: 1,
         requestId: "schema-bad-todos",
         changes: [{ op: "add", text: "x".repeat(501) }],
+        note: "note",
       }).success,
-    ).toBe(false);
-    expect(
-      schemas.addUpdate!.safeParse({
-        issueId: "1",
-        expectedVersion: 1,
-        requestId: "schema-update",
-        body: "body",
-      }).success,
-    ).toBe(true);
-    expect(
-      schemas.addUpdate!.safeParse({
-        issueId: "1",
-        expectedVersion: 1,
-        requestId: "schema-bad-update",
-        body: "x".repeat(4001),
-      }).success,
-    ).toBe(false);
-    expect(
-      schemas.updates!.safeParse({ issueId: "1", limit: 50 }).success,
-    ).toBe(true);
-    expect(
-      schemas.updates!.safeParse({ issueId: "1", limit: 51 }).success,
     ).toBe(false);
   });
 
-  test("owner Agent must attach a note; collaborators may read but not write", async () => {
+  test("the owner session cannot write todos", async () => {
     const created = await issue();
-    const noNote = await mcp(supervisorId, "tools/call", {
-      name: "updateTodos",
-      arguments: {
-        issueId: created.id,
-        expectedVersion: created.version,
-        requestId: requestId("agent-no-note"),
-        changes: [{ op: "add", text: "no note" }],
-      },
+    const forbidden = await actionJson("updateTodos", {
+      issueId: created.id,
+      expectedVersion: created.version,
+      requestId: requestId("owner-todos"),
+      changes: [{ op: "add", text: "owner write" }],
+      note: "Owner attempts a todo write.",
     });
-    expect(noNote.result.isError).toBe(true);
-    expect(toolPayload(noNote).error.code).toBe("invalid_input");
+    expect(forbidden.status).toBe(403);
+    expect(forbidden.body.error.code).toBe("forbidden");
+    expect((await read(created.id)).todos).toEqual([]);
+  });
 
-    const withNote = await mcp(supervisorId, "tools/call", {
+  test("the owner Agent writes todos and the server appends a snapshot comment", async () => {
+    const created = await issue();
+    const note = "Split the work and started the first step.";
+    const written = await mcp(supervisorId, "tools/call", {
       name: "updateTodos",
       arguments: {
         issueId: created.id,
         expectedVersion: created.version,
         requestId: requestId("agent-with-note"),
-        changes: [{ op: "add", text: "agent step" }],
-        note: "Agent split the work.",
+        changes: [
+          { op: "add", text: "agent step one" },
+          { op: "add", text: "agent step two", status: "in_progress" },
+        ],
+        note,
       },
     });
-    expect(withNote.result.isError).toBeUndefined();
-    const payload = toolPayload(withNote);
-    expect(payload.issue.todos[0].text).toBe("agent step");
-    expect(payload.update.author_type).toBe("agent");
-    expect(payload.update.author_id).toBe(supervisorId);
-    expect(payload.update.todo_counts).toEqual({
-      total: 1,
-      done: 0,
-      in_progress: 0,
+    expect(written.result.isError).toBeUndefined();
+    const payload = toolPayload(written);
+    expect(payload.issue.todos.map((todo: any) => todo.text)).toEqual([
+      "agent step one",
+      "agent step two",
+    ]);
+    expect(payload.comment).toMatchObject({
+      id: `${created.id}-C1`,
+      issue_id: created.id,
+      author_type: "agent",
+      author_id: supervisorId,
+      body: note,
     });
+    expect(payload.comment.todo_snapshot).toEqual([
+      { id: `${created.id}-T1`, text: "agent step one", status: "pending" },
+      {
+        id: `${created.id}-T2`,
+        text: "agent step two",
+        status: "in_progress",
+      },
+    ]);
 
-    const forbidden = await mcp(hrId, "tools/call", {
-      name: "updates",
-      arguments: { issueId: created.id },
-    });
-    expect(forbidden.result.isError).toBe(true);
-    expect(toolPayload(forbidden).error.code).toBe("forbidden");
+    const detail = await read(created.id);
+    expect(detail.todos).toHaveLength(2);
+    expect(detail).not.toHaveProperty("latest_update");
+    const comments = await actionJson("comments", { issueId: created.id });
+    expect(comments.status).toBe(200);
+    expect(comments.body.items).toHaveLength(1);
+    expect(comments.body.items[0].body).toBe(note);
+    expect(comments.body.items[0].todo_snapshot).toEqual(
+      payload.comment.todo_snapshot,
+    );
+  });
 
+  test("MCP discovery exposes updateTodos only and describes note/comment/snapshot", async () => {
+    const discovery = await mcp(supervisorId, "tools/list");
+    const tools = discovery.result.tools;
+    const byName = new Map(tools.map((tool: any) => [tool.name, tool]));
+    expect(byName.has("updateTodos")).toBe(true);
+    expect(byName.has("updates")).toBe(false);
+    expect(byName.has("addUpdate")).toBe(false);
+    const updateTodos = byName.get("updateTodos") as any;
+    expect(updateTodos.annotations.readOnlyHint).toBe(false);
+    expect(updateTodos.description).toContain("note");
+    expect(updateTodos.description).toContain("comment");
+    expect(updateTodos.description).toContain("snapshot");
+    expect(updateTodos.description).not.toContain("immutable update");
+  });
+
+  test("collaborators may read comments but cannot write todos; stale versions conflict", async () => {
+    const created = await issue();
     const assigned = await actionJson("assignIssue", {
       issueId: created.id,
-      expectedVersion: payload.issue.version,
+      expectedVersion: created.version,
       requestId: requestId("collaborator"),
       agentId: supervisorId,
       collaborators: [hrId],
     });
     expect(assigned.status).toBe(200);
+
+    const written = await mcp(supervisorId, "tools/call", {
+      name: "updateTodos",
+      arguments: {
+        issueId: created.id,
+        expectedVersion: assigned.body.version,
+        requestId: requestId("agent-todo"),
+        changes: [{ op: "add", text: "visible todo" }],
+        note: "Collaborators can read this.",
+      },
+    });
+    expect(written.result.isError).toBeUndefined();
+    const version = toolPayload(written).issue.version;
+
     const readable = await mcp(hrId, "tools/call", {
-      name: "updates",
+      name: "comments",
       arguments: { issueId: created.id },
     });
     expect(readable.result.isError).toBeUndefined();
     expect(toolPayload(readable).items).toHaveLength(1);
+    expect(toolPayload(readable).items[0].todo_snapshot).toHaveLength(1);
 
     const collaboratorWrite = await mcp(hrId, "tools/call", {
-      name: "addUpdate",
+      name: "updateTodos",
       arguments: {
         issueId: created.id,
-        expectedVersion: assigned.body.version,
+        expectedVersion: version,
         requestId: requestId("collaborator-write"),
-        body: "not allowed",
+        changes: [{ op: "add", text: "not allowed" }],
+        note: "Not the owner.",
       },
     });
     expect(collaboratorWrite.result.isError).toBe(true);
     expect(toolPayload(collaboratorWrite).error.code).toBe("not_current_owner");
-  });
 
-  test("MCP updates pagination remains newest-first for a collaborator", async () => {
-    const created = await issue();
-    const assigned = await actionJson("assignIssue", {
-      issueId: created.id,
-      expectedVersion: created.version,
-      requestId: requestId("paginate-collaborator"),
-      agentId: supervisorId,
-      collaborators: [hrId],
-    });
-    let version = assigned.body.version;
-    for (const body of ["first", "second", "third"]) {
-      const appended = await actionJson("addUpdate", {
-        issueId: created.id,
-        expectedVersion: version,
-        requestId: requestId("paginate-update"),
-        body,
-      });
-      expect(appended.status).toBe(200);
-      version = appended.body.issue.version;
-    }
-    const page = await mcp(hrId, "tools/call", {
-      name: "updates",
-      arguments: { issueId: created.id, limit: 2 },
-    });
-    const payload = toolPayload(page);
-    expect(payload.items.map((item: any) => item.body)).toEqual([
-      "third",
-      "second",
-    ]);
-    expect(payload.nextCursor).toBe("2");
-    const next = await mcp(hrId, "tools/call", {
-      name: "updates",
+    const stale = await mcp(supervisorId, "tools/call", {
+      name: "updateTodos",
       arguments: {
         issueId: created.id,
-        limit: 2,
-        cursor: payload.nextCursor,
+        expectedVersion: assigned.body.version,
+        requestId: requestId("stale"),
+        changes: [{ op: "add", text: "stale" }],
+        note: "Stale version.",
       },
     });
-    expect(toolPayload(next).items.map((item: any) => item.body)).toEqual([
-      "first",
+    expect(stale.result.isError).toBe(true);
+    expect(toolPayload(stale).error.code).toBe("version_conflict");
+    expect((await read(created.id)).todos).toHaveLength(1);
+  });
+
+  test("canceled Issues reject todo writes but accept ordinary comments", async () => {
+    const created = await issue();
+    const canceled = await actionJson("cancelIssue", {
+      issueId: created.id,
+      expectedVersion: created.version,
+      requestId: requestId("cancel"),
+      reason: "No longer needed",
+    });
+    expect(canceled.status).toBe(200);
+
+    const rejected = await mcp(supervisorId, "tools/call", {
+      name: "updateTodos",
+      arguments: {
+        issueId: created.id,
+        expectedVersion: canceled.body.version,
+        requestId: requestId("canceled-todos"),
+        changes: [{ op: "add", text: "revive" }],
+        note: "Canceled Issue.",
+      },
+    });
+    expect(rejected.result.isError).toBe(true);
+    expect(toolPayload(rejected).error.code).toBe("terminal_issue");
+
+    const late = await actionJson("addComment", {
+      issueId: created.id,
+      requestId: requestId("late-comment"),
+      body: "Post-cancel retrospective evidence.",
+    });
+    expect(late.status).toBe(200);
+    expect(late.body).not.toHaveProperty("todo_snapshot");
+    const comments = await actionJson("comments", { issueId: created.id });
+    expect(comments.body.items.map((item: any) => item.body)).toEqual([
+      "Post-cancel retrospective evidence.",
     ]);
-    expect(toolPayload(next).nextCursor).toBeNull();
   });
 });

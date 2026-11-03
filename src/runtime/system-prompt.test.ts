@@ -39,8 +39,13 @@ describe("composeSystemInstructions", () => {
     expect(text).toContain("getIssue(issueId)");
     expect(text).toContain("getPreview(batchId)");
     expect(text).toContain("updateTodos");
-    expect(text).toContain("addUpdate");
-    expect(text).toContain("updates");
+    expect(text).toContain("note");
+    expect(text).toContain("comment");
+    expect(text).toContain("todo_snapshot");
+    expect(text).toContain("no separate progress-record tool");
+    expect(text).not.toContain("addUpdate");
+    expect(text).not.toContain("`updates`");
+    expect(text).not.toContain("latest update");
     expect(text).toContain("knowledgebase");
     expect(text).toContain("公司资产（公共知识）");
     expect(text).toContain("Company assets");

@@ -36,12 +36,6 @@ export type IssueSummary = Pick<
   summary: string;
   progress: string;
   todos: { total: number; done: number; in_progress: number };
-  latest_update: {
-    id: string;
-    created_at: string;
-    kind: "progress" | "blocker" | "decision";
-    excerpt: string;
-  } | null;
   detail: { operation: "getIssue"; issueId: string };
 };
 type ThreadSummary = Pick<
@@ -145,17 +139,8 @@ function summary(issue: Issue): IssueSummary {
     needs_user: issue.needs_user,
     summary: clipped(issue.summary, 240),
     progress: clipped(issue.progress, 160),
-    // Counts and a short excerpt only: full todos/update bodies stay behind
-    // getIssue and the paged updates operation.
+    // Only counts; full todos stay behind getIssue.
     todos: todoCounts(issue.todos),
-    latest_update: issue.latest_update
-      ? {
-          id: issue.latest_update.id,
-          created_at: issue.latest_update.created_at,
-          kind: issue.latest_update.kind,
-          excerpt: clipped(issue.latest_update.excerpt, 180),
-        }
-      : null,
     detail: { operation: "getIssue", issueId: issue.id },
   };
 }

@@ -6,19 +6,11 @@ import { z } from "zod";
 import { applyAgentMemory, prepareAgentMemory } from "./agent-memory";
 import { completeMutation } from "./mutation-completion";
 import {
-  UPDATE_LIMIT,
-  UPDATE_PAGE_DEFAULT,
-  UPDATE_PAGE_MAX,
   applyTodoChanges,
   applyTodoOrder,
-  cleanUpdateBody,
-  cleanUpdateNote,
-  latestUpdateExcerpt,
+  cleanTodoNote,
   nextTodoSeq,
   normalizeIssueProgress,
-  normalizeTaskUpdate,
-  taskUpdateKind,
-  todoCounts,
   type TodoActor,
 } from "./task-progress";
 import {
@@ -71,8 +63,6 @@ import {
   type OrgPlacement,
   type Organization,
   type Roster,
-  type TaskUpdate,
-  type TaskUpdateKind,
   type TodoItem,
 } from "./types";
 export * from "./types";
@@ -202,9 +192,6 @@ export class CompanyDomain {
   }
   private issuePath(ctx: CallerContext, id: string) {
     return this.path(ctx, "tasks", `${safeId(id, "issueId")}.md`);
-  }
-  private updatesPath(ctx: CallerContext, issueId: string) {
-    return this.path(ctx, "updates", safeId(issueId, "issueId"));
   }
   private previewPath(ctx: CallerContext, id: string) {
     return this.path(ctx, "previews", `${safeId(id, "batchId")}.md`);
@@ -573,7 +560,6 @@ export class CompanyDomain {
         for (const d of [
           "tasks",
           "comments",
-          "updates",
           "pipelines",
           "previews",
           "knowledgebase",
@@ -2117,7 +2103,6 @@ export class CompanyDomain {
           input.body ?? "## 目标与验收要求\n\n## 工作记录\n\n## 交付物\n",
         ),
         todos: [],
-        latest_update: null,
       };
       await this.store.putMarkdown(this.issuePath(ctx, id), issue, 0);
       return issue;
@@ -2340,6 +2325,7 @@ export class CompanyDomain {
     ctx: CallerContext,
     issueId: string,
     body: string,
+    todoSnapshot?: Comment["todo_snapshot"],
   ): Promise<Comment> {
     const dir = this.path(ctx, "comments", safeId(issueId));
     const rows = await this.store.files(dir);
@@ -2353,6 +2339,7 @@ export class CompanyDomain {
       version: 1,
       body: cleanText(body, "body"),
     };
+    if (todoSnapshot !== undefined) item.todo_snapshot = todoSnapshot;
     await this.store.putMarkdown(join(dir, `${id}.md`), item, 0);
     return item;
   }
@@ -2386,113 +2373,14 @@ export class CompanyDomain {
       return comment;
     });
   }
-  /** Append one immutable progress record inside the caller's Company lock. */
-  private async appendTaskUpdate(
-    ctx: CallerContext,
-    issue: Issue,
-    kind: TaskUpdateKind,
-    body: string,
-  ): Promise<TaskUpdate> {
-    const dir = this.updatesPath(ctx, issue.id);
-    const files = await this.store.files(dir);
-    requireValue(
-      files.length < UPDATE_LIMIT,
-      "update_limit",
-      `An Issue may have at most ${UPDATE_LIMIT} update records`,
-      409,
-    );
-    const id = `${issue.id}-U${
-      Math.max(
-        0,
-        ...files.map((file) => Number(/-U(\d+)\.md$/.exec(file)?.[1]) || 0),
-      ) + 1
-    }`;
-    const update: TaskUpdate = {
-      schema: "company-update/v1",
-      id,
-      issue_id: issue.id,
-      author_type: ctx.type,
-      author_id: ctx.id,
-      kind,
-      created_at: now(),
-      version: 1,
-      status: issue.status,
-      todo_counts: todoCounts(issue.todos),
-      body: cleanUpdateBody(body),
-    };
-    await this.store.putMarkdown(join(dir, `${id}.md`), update, 0);
-    return update;
-  }
-  private latestUpdate(update: TaskUpdate) {
-    return {
-      id: update.id,
-      created_at: update.created_at,
-      author_type: update.author_type,
-      author_id: update.author_id,
-      kind: update.kind,
-      excerpt: latestUpdateExcerpt(update.body),
-    };
-  }
-  async updates(ctx: CallerContext, input: Input) {
-    // Reading the Issue enforces the same participant/archived-member rules as
-    // getIssue; the immutable files are the authoritative history.
-    const issue = await this.getIssue(ctx, input);
-    const dir = this.updatesPath(ctx, issue.id);
-    const rows: TaskUpdate[] = [];
-    for (const file of await this.store.files(dir))
-      rows.push(
-        normalizeTaskUpdate(
-          await this.store.markdown(join(dir, file)),
-          issue.id,
-        ),
-      );
-    // Files are naturally ascending; the owner-facing history is newest first.
-    rows.reverse();
-    const rawCursor = input.cursor;
-    let offset = 0;
-    if (rawCursor !== undefined) {
-      requireValue(
-        typeof rawCursor === "string" &&
-          /^(0|[1-9]\d*)$/.test(rawCursor) &&
-          Number.isSafeInteger(Number(rawCursor)),
-        "invalid_input",
-        "cursor must be a non-negative integer offset",
-      );
-      offset = Number(rawCursor);
-    }
-    const limit = input.limit ?? UPDATE_PAGE_DEFAULT;
-    requireValue(
-      Number.isInteger(limit) &&
-        Number(limit) >= 1 &&
-        Number(limit) <= UPDATE_PAGE_MAX,
-      "invalid_input",
-      `limit must be an integer between 1 and ${UPDATE_PAGE_MAX}`,
-    );
-    return {
-      items: rows.slice(offset, offset + Number(limit)),
-      nextCursor:
-        offset + Number(limit) < rows.length
-          ? String(offset + Number(limit))
-          : null,
-    };
-  }
-  async addUpdate(ctx: CallerContext, input: Input) {
-    return this.mutate(ctx, "addUpdate", input, async () => {
-      const issue = await this.getIssue(ctx, input);
-      await this.owner(ctx, issue);
-      this.version(issue, input);
-      const update = await this.appendTaskUpdate(
-        ctx,
-        issue,
-        taskUpdateKind(input.kind),
-        cleanUpdateBody(input.body),
-      );
-      issue.latest_update = this.latestUpdate(update);
-      return { issue: await this.writeIssue(ctx, issue), update };
-    });
-  }
   async updateTodos(ctx: CallerContext, input: Input) {
     return this.mutate(ctx, "updateTodos", input, async () => {
+      requireValue(
+        ctx.type === "agent",
+        "forbidden",
+        "The todo list is managed only by the responsible Agent",
+        403,
+      );
       const issue = await this.getIssue(ctx, input);
       await this.owner(ctx, issue);
       this.version(issue, input);
@@ -2512,16 +2400,7 @@ export class CompanyDomain {
         "invalid_input",
         "changes or order is required",
       );
-      // Agent progress is evidence for the owner, so a todo mutation without a
-      // note is rejected; the note becomes an immutable update in this lock.
-      const note =
-        input.note === undefined ? undefined : cleanUpdateNote(input.note);
-      requireValue(
-        ctx.type !== "agent" || note !== undefined,
-        "invalid_input",
-        "Agent updateTodos calls must include a concise note",
-      );
-      const kind = taskUpdateKind(input.kind);
+      const note = cleanTodoNote(input.note);
       const actor: TodoActor = { type: ctx.type, id: ctx.id };
       const at = now();
       let todos: TodoItem[] = issue.todos ?? [];
@@ -2541,11 +2420,14 @@ export class CompanyDomain {
       if (order !== undefined) todos = applyTodoOrder(todos, order);
       issue.todos = todos;
       if (sequence > (issue.todo_seq ?? 0)) issue.todo_seq = sequence;
-      const update = note
-        ? await this.appendTaskUpdate(ctx, issue, kind, note)
-        : null;
-      if (update) issue.latest_update = this.latestUpdate(update);
-      return { issue: await this.writeIssue(ctx, issue), update };
+      const written = await this.writeIssue(ctx, issue);
+      const todo_snapshot = (written.todos ?? []).map(({ id, text, status }) => ({
+        id,
+        text,
+        status,
+      }));
+      const comment = await this.comment(ctx, written.id, note, todo_snapshot);
+      return { issue: written, comment };
     });
   }
   async askDecision(ctx: CallerContext, input: Input) {

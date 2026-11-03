@@ -1,11 +1,7 @@
 import { ArrowUpRight, GitBranch, Plus } from "lucide-react";
 import type { Agent, Issue, Preview, Scope } from "../../lib/types";
 import { statusLabel, statusTone } from "../../lib/format";
-import {
-  taskUpdateKindLabels,
-  taskUpdateKindTone,
-  todoProgress,
-} from "../../lib/taskProgress";
+import { todoProgress } from "../../lib/taskProgress";
 import { Badge, Button, EmptyState } from "../../ui/primitives";
 import { IssueDetail } from "./tasks/IssueDetail";
 
@@ -113,22 +109,7 @@ export function TasksView({
                     </span>
                   </div>
                 )}
-                {item.latest_update ? (
-                  <p
-                    className="task-card-update"
-                    data-testid={`issue-${item.id}-latest-update`}
-                  >
-                    <Badge
-                      value={taskUpdateKindLabels[item.latest_update.kind]}
-                      tone={taskUpdateKindTone[item.latest_update.kind]}
-                    />
-                    <span className="task-card-update-text">
-                      {item.latest_update.excerpt}
-                    </span>
-                  </p>
-                ) : (
-                  <p>{item.progress || item.summary || "尚未填写摘要"}</p>
-                )}
+                <p>{item.progress || item.summary || "尚未填写摘要"}</p>
                 <div className="task-card-foot">
                   <span>{owner?.name || item.agent_id}</span>
                   <ArrowUpRight size={13} />

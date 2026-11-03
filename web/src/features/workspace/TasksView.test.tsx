@@ -38,14 +38,6 @@ const issues: Issue[] = [
       todo("7-T4", "验收", "pending"),
       todo("7-T5", "合入", "pending"),
     ],
-    latest_update: {
-      id: "7-U1",
-      created_at: "2026-01-03T10:00:00Z",
-      author_type: "agent",
-      author_id: "agent-1",
-      kind: "blocker",
-      excerpt: "外部 API 尚未就绪",
-    },
   },
   {
     id: 8,
@@ -54,7 +46,6 @@ const issues: Issue[] = [
     agent_id: "agent-1",
     version: 1,
     summary: "旧摘要",
-    latest_update: null,
   },
 ];
 
@@ -75,7 +66,7 @@ const render = () =>
   );
 
 describe("TasksView todo progress", () => {
-  test("card shows done/total, in-progress count and latest update", () => {
+  test("card shows done/total and in-progress count", () => {
     const html = render();
     const progress = tag(html, "issue-7-todo-progress");
 
@@ -83,9 +74,9 @@ describe("TasksView todo progress", () => {
     expect(progress).toContain('aria-valuenow="2"');
     expect(progress).toContain('aria-valuemax="5"');
     expect(html).toContain("2/5 · 1 进行中");
-    expect(tag(html, "issue-7-latest-update")).not.toBe("");
-    expect(html).toContain("阻塞");
-    expect(html).toContain("外部 API 尚未就绪");
+    expect(tag(html, "issue-7-latest-update")).toBe("");
+    expect(html).not.toContain("阻塞");
+    expect(html).not.toContain("外部 API 尚未就绪");
   });
 
   test("cards without todos render no 0/0 progress and keep the summary fallback", () => {

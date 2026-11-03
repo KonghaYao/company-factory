@@ -71,11 +71,13 @@
 - **影响**：检查是 advisory，不是分布式锁；检查通过到停止之间仍可能出现新工作。外部宿主进程、外部 Preview 与手工终端任务不在覆盖范围。Agent bearer 与 Company MCP 不能访问该接口。
 - **状态**：生效中
 
-## 8. 任务 todo、追加进展与公司资产命名（2026-11-02）
+## 8. 任务 todo、评论快照与公司资产命名（2026-11-02，2026-11-03 修订）
 
-- **决策**：任务 todo 是 Issue 的内嵌业务事实，统一由 `company_tasks.updateTodos` 维护；进展记录使用只追加的 `updates/<issueId>/` 文件，由 `addUpdate` 写入、`updates` 分页读取；不新建数据库、并行任务系统或第四个 MCP 模块。公司公共知识继续使用现有 `companys/<companyId>/knowledgebase/`，统一命名为「公司资产（公共知识）」，不新建资产目录或资产子系统。
+- **决策**：任务 todo 是 Issue 的内嵌业务事实，只由负责该 Issue 的 Agent 通过 `company_tasks.updateTodos` 维护；每次调用必须附带 1..2000 字符的 note。服务端先写入 Issue，再追加一条普通 Issue 评论：评论正文为 note，`todo_snapshot` 记录操作后有序 todo 的只读 `{id,text,status}` 快照。删除独立进展记录子系统（`addUpdate` / `updates` 工具、`updates/` 文件读取、`TaskUpdate` 类型、`latest_update` 投影与 UI 分区），不新建数据库、并行任务系统或第四个 MCP 模块。公司公共知识继续使用现有 `companys/<companyId>/knowledgebase/`，统一命名为「公司资产（公共知识）」，不新建资产目录或资产子系统。
+- **边界**：快照只含 `{id,text,status}`，不复制 todo 审计字段；评论正文可编辑，快照只读；`TodoSection` 与评论快照使用相同的图标+文字状态；用户不能写 todo；canceled Issue 拒绝 todo 变更，但普通评论仍可追加。Issue 写入与评论追加是两个文件，失败窗口不做跨文件事务声明。
+- **兼容**：旧 `updates/` 文件与 Issue 的 `latest_update` 键直接忽略；新公司不再创建 `updates/` 目录；不迁移、不删除旧文件，旧评论没有 `todo_snapshot` 时正常渲染。
 - **提示词分层**：系统提示词只保留工具名、事实边界和资产边界；操作细节放在 `CLAUDE.md` 托管块的 `## Task progress` 与 `## Company assets`。旧 Session 的系统提示词保持冻结，已有成员通过托管块迁移获得新指引，不重建 Session。
-- **公司资产边界**：只放可复用的公共知识；个人经验放 `CLAUDE.md`，任务过程放 Issue/进展/评论，代码与产物放项目目录。禁止写入密钥、token、密码、连接串、个人隐私、客户敏感数据和大型二进制。
+- **公司资产边界**：只放可复用的公共知识；个人经验放 `CLAUDE.md`，任务过程放 Issue/评论，代码与产物放项目目录。禁止写入密钥、token、密码、连接串、个人隐私、客户敏感数据和大型二进制。
 - **迁移策略**：`scripts/refresh-agent-profiles.ts` 默认 dry-run，只输出成员、变更块标题和 commit，不打印正文；`--apply` 时逐成员只替换托管块并各提交一个 Agent Git commit，块外自由记忆保留。脚本不修改 `agent.yaml`、`agent.version`/`configVersion`、Session 或 Company 业务数据；重复或不平衡的托管块标记直接报错、不覆盖。
 - **理由/约束**：沿用 Issue 的公司锁、CAS、Git 与 Workspace 文件能力，避免新增存储和 schema；提示词与命名变更不需要版本 bump。
 - **状态**：生效中

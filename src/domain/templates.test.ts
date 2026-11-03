@@ -25,8 +25,13 @@ describe("member managed profile", () => {
       expect(block).toContain("## Task progress");
       expect(block).toContain(TASK_PROGRESS_GUIDANCE);
       expect(block).toContain("updateTodos");
-      expect(block).toContain("addUpdate");
-      expect(block).toContain("updates");
+      expect(block).toContain("note");
+      expect(block).toContain("评论");
+      expect(block).toContain("快照");
+      expect(block).toContain("没有独立的进展记录工具");
+      expect(block).not.toContain("addUpdate");
+      expect(block).not.toContain("`updates`");
+      expect(block).not.toContain("latest_update");
       expect(block).toContain("## Company assets");
       expect(block).toContain(COMPANY_ASSETS_GUIDANCE);
       expect(block).toContain("公司资产（公共知识）");
