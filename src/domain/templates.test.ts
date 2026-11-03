@@ -17,6 +17,7 @@ describe("member managed profile", () => {
     for (const role of [
       "hr",
       "task-supervisor",
+      "secretary",
       "developer",
       "preview",
       "reviewer",
@@ -69,6 +70,15 @@ describe("member managed profile", () => {
       expect(block).toContain("宿主秘密");
       expect(block).toContain("私有");
       expect(block).not.toContain(".claude/skills");
+      if (role === "secretary") {
+        expect(block).toContain("interview");
+        expect(block).toContain("skill://interview/SKILL.md");
+        expect(block).toContain("searchIssues");
+        expect(block).toContain("assignIssue");
+        expect(block).toContain("不承接交付");
+      } else {
+        expect(block).not.toContain("interview");
+      }
       expect(block.indexOf("## Multitasking")).toBeLessThan(
         block.indexOf("## Colleague trust"),
       );

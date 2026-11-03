@@ -223,6 +223,22 @@ describe("Company fact notices through the HTTP/MCP boundary", () => {
     expect(current.version).toBe(assigned.version);
     expect(current.status).toBe("triage");
   });
+  test("createIssue with an assignee notifies only the final owner", async () => {
+    const before = deliveries.length;
+    const created = await action("createIssue", {
+      title: "Direct dispatch",
+      assigneeAgentId: hrId,
+      reason: "HR owns intake",
+      requestId: "direct-dispatch",
+    });
+    expect(created.agent_id).toBe(hrId);
+    expect((await settled(created.notification.id, hrId)).status).toBe(
+      "accepted",
+    );
+    expect(deliveries.slice(before).map((delivery) => delivery.agentId)).toEqual([
+      hrId,
+    ]);
+  });
   test("an Agent's own successful creation does not create a self-notification loop", async () => {
     const before = deliveries.length;
     const created = await mcp(supervisorId, "createIssue", {

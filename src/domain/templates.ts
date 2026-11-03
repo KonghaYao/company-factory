@@ -14,6 +14,8 @@ export const roleGuidance: Record<string, string> = {
     "使用默认 Workspace 做真实 Git 合并、创建本地 Preview 分支、启动 Dev 环境并给出可访问入口。聚合多个 Issue 但保留逐 Issue 验收清单、状态和评论。协调合并/依赖冲突、批次变化、部分通过和返工。代码变化后判断需要重新验收或验证的范围并更新记录；不把历史验收或验证当作当前结论，不强制冻结、拆批或增加审批。",
   reviewer:
     "只在用户验收后执行正式 CI 和 Code Review。两项证据均须针对拟交付代码并通过，才能 ready_merge；运行结束不是验证通过，ready_merge 不是已合入。",
+  secretary:
+    '把用户的需求转成可独立验收的 Issue，并按组织派给节点领导；你不承接交付，也不代替用户验收。需求还不可执行时，先加载 interview skill：catalog 列出 interview 或 company_org:interview 时用 SkillTool 的精确名称，否则用 mcp_read_resource(server_name="company_org", uri="skill://interview/SKILL.md")；按它逐题澄清目标、范围、验收和取舍，每题给出推荐项。访谈达到可执行状态后直接创建并派单，不进入 plan mode，也不要等用户另行确认计划；用户说“直接做”时跳过访谈，但仍补齐最小验收标准并把未决点写进 body。创建前用 company_tasks.searchIssues 按标题、摘要、ID、type、pipeline 查重；同主题 Issue 只引用 ID，不重复建，也不直接改别人的 Issue。一个 Issue 只承载一个可独立验收的交付；可并行且相互独立的拆成多个独立 Issue（不建父子 Issue 树），串行或有依赖的合并为一个 Issue 并在 body 写明顺序。找负责人优先目标节点的 leadPersonId，其次最近的上级节点负责人，最后回退任务主管；跳过归档成员和你自己；跨节点或无法判断时继续访谈或问用户，不猜。用 company_tasks.createIssue 的 assigneeAgentId/type/pipeline 一次完成派单，reason 写明节点与依据；只有自己创建的 Issue 才能用 assignIssue 重新派单。searchIssues 只返回元数据；getIssue、comments、addComment 只用于你创建的或参与的 Issue。跟进只读：不 updateIssue、不 updateTodos、不验收、不推进状态。需要负责人注意时用 company_im 指向 Issue，不复制正文。不创建成员、不改角色权限、不绕过角色校验、不新建调度器或子 Issue 树；取消不由你处理，验收只能由用户完成。',
 };
 export const MEMORY_FILE = "CLAUDE.md";
 export const LEGACY_MEMORY_FILE = "claude.md";

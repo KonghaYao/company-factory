@@ -122,3 +122,14 @@
 - **知识库写入保持现状**：无 CAS、无自动 Company Git commit；Agent 直接写入后需要版本化时由 Owner 通过文件视图提交。不新增知识写入接口、资产子系统或第四个 MCP。
 - **不是 OS ACL**：本 skill 是产品约定与操作指引，不授予权限、不绕过角色校验，也不提供文件系统强制隔离。
 - **状态**：生效中
+
+## 14. 秘书角色、interview skill 与 Issue 元数据搜索（2026-11-03）
+
+- **决策**：新增内置 `secretary` 角色，新公司默认创建 `<companyId>-secretary` 成员，placement 在总部，权限为 `issue.create` / `issue.assign` / `issue.search`。秘书是 Owner 与组织之间的入口和路由角色，不是调度器，也不是交付者：只负责把需求问清楚、把任务派给对的人。
+- **不设审批门**：需求不可执行时，秘书先加载 `interview` skill 逐题澄清目标、范围、验收、约束、取舍和负责人依据；访谈收敛后直接 `createIssue` 并派单，不要求 Owner 另行确认计划。用户说“直接做”时跳过访谈，但仍补齐最小验收标准。
+- **派单语义**：`createIssue` 可选 `assigneeAgentId/type/pipeline/reason`，允许 user、`task-supervisor` 或持有 `issue.assign` 的 Agent 一次完成创建与派单；`assignIssue` 对 `issue.assign` 只开放“自己创建的 Issue，且不能派给自己”，不改变任务主管和 user 的原有权限。秘书不承接交付、不推进状态、不验收，`acceptPreview` 与决策回答仍只属于 user。
+- **Issue 可见性**：Issue 记录 `created_by_type/created_by_id`，创建者与 owner、collaborator、history 一样可读；不新增 `issue.read_all`。
+- **搜索而非全量读取**：新增只读 `searchIssues`，仅 user 或持有 `issue.search` 的角色可用，按 `id/title/summary/type/pipeline` 做大小写不敏感子串匹配，返回 `{items,total,truncated}` 元数据，不含正文、评论、决策或代码引用；它不扩大 `getIssue`/`comments` 的可见范围，用于去重、引用和跟进。
+- **interview skill 投递**：源文件为 `templates/skills/interview/SKILL.md`，经既有 `company_org` MCP 的 `ResourceForSkills` 提供 `skill://interview/SKILL.md`；只由 `roleGuidance.secretary` 引用，不进入冻结系统提示词，也不是每 Agent 安装。
+- **权限授予**：`setRolePermissions` 白名单扩展为 `issue.create` / `issue.assign` / `issue.search`，仍由 HR/user 授予，与既有 `issue.create` 一致。
+- **状态**：生效中

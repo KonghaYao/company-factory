@@ -171,7 +171,7 @@ if (!enabled)
     test("A01 real Sessions, HQ, tracked files and Git history", async () => {
       const org = await api(`/api/companies/${user.companyId}`);
       expect(org.groups[0].name).toBe("总部");
-      expect(org.agents).toHaveLength(2);
+      expect(org.agents).toHaveLength(3);
       for (const a of org.agents) {
         expect(a.sessionId).toMatch(/^[0-9a-f-]{36}$/);
         const chat = await api(

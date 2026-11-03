@@ -122,6 +122,8 @@ export type Issue = {
   pipeline?: string;
   code_ref?: string;
   collaborators?: string[];
+  created_by_type?: "user" | "agent";
+  created_by_id?: string;
   /** 服务端维护的有序待办；旧 Issue 可能缺省。 */
   todos?: TodoItem[];
 };

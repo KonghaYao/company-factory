@@ -156,7 +156,7 @@ describe("Initialization recovery", () => {
       "Fixture interrupted Agent Git",
     );
     const result = await domain.createCompany(owner, input);
-    expect(result.agents).toHaveLength(2);
+    expect(result.agents).toHaveLength(3);
     expect(provisioned.filter((id) => id.endsWith("-hr"))).toHaveLength(1);
     expect(provisioned.filter((id) => id.endsWith("-supervisor"))).toHaveLength(
       1,
@@ -209,7 +209,7 @@ describe("Initialization recovery", () => {
     const restarted = domainWith(domain.options);
     const org = await restarted.createCompany(owner, input);
     const after = await restarted.getAgentInternal(agentId);
-    expect(org.agents).toHaveLength(2);
+    expect(org.agents).toHaveLength(3);
     expect(after.sessionId).toBe(before.sessionId);
     expect(after.authToken).toBe(before.authToken);
     expect(await readFile(join(after.directory, "CLAUDE.md"), "utf8")).toBe(
@@ -223,8 +223,8 @@ describe("Initialization recovery", () => {
       authToken: before.authToken,
     });
     const replay = await restarted.createCompany(owner, input);
-    expect(replay.agents).toHaveLength(2);
-    expect(provisions).toHaveLength(3);
+    expect(replay.agents).toHaveLength(3);
+    expect(provisions).toHaveLength(4);
     await expect(
       restarted.createCompany(owner, { ...input, name: "Different intent" }),
     ).rejects.toMatchObject({ code: "idempotency_conflict" });

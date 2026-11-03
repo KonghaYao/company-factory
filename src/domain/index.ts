@@ -173,6 +173,7 @@ const cleanText = (v: unknown, label: string, max = 100000) => {
   );
   return v;
 };
+const clipText = (v: unknown, max: number) => String(v ?? "").slice(0, max);
 const cleanDecisionOptions = (value: unknown): string[] | undefined => {
   if (value === undefined) return undefined;
   requireValue(
@@ -513,6 +514,8 @@ export class CompanyDomain {
       !a ||
         a.agentId === issue.agent_id ||
         issue.collaborators.includes(a.agentId) ||
+        (issue.created_by_type === "agent" &&
+          issue.created_by_id === a.agentId) ||
         issue.history.some((h) => h.from === a.agentId || h.to === a.agentId),
       "forbidden",
       "Agent is not associated with this Issue",
@@ -651,6 +654,9 @@ export class CompanyDomain {
           roles: {
             hr: { permissions: [] },
             "task-supervisor": { permissions: ["issue.create"] },
+            secretary: {
+              permissions: ["issue.create", "issue.assign", "issue.search"],
+            },
             developer: { permissions: [] },
             preview: { permissions: [] },
             reviewer: { permissions: [] },
@@ -710,6 +716,15 @@ export class CompanyDomain {
             groupId: "headquarters",
             role: "task-supervisor",
             responsibilities: "创建、分类、选择流程、指派 Issue，协调交接。",
+            config: input.config ?? {},
+          },
+          {
+            agentId: `${id}-secretary`,
+            name: "秘书",
+            groupId: "headquarters",
+            role: "secretary",
+            responsibilities:
+              "用 interview 把用户需求转成 Issue 并派给组织领导；只跟进，不交付、不验收。",
             config: input.config ?? {},
           },
         ];
@@ -2002,9 +2017,13 @@ export class CompanyDomain {
       const role = safeId(input.role, "role");
       requireValue(
         Array.isArray(input.permissions) &&
-          input.permissions.every((p: unknown) => p === "issue.create"),
+          input.permissions.every((p: unknown) =>
+            ["issue.create", "issue.assign", "issue.search"].includes(
+              String(p),
+            ),
+          ),
         "invalid_input",
-        "Phase one supports issue.create only",
+        "Supported role permissions: issue.create, issue.assign, issue.search",
       );
       c.roles[role] = {
         permissions: [...new Set(input.permissions)] as string[],
@@ -2161,10 +2180,90 @@ export class CompanyDomain {
         (i) =>
           i.agent_id === agentId ||
           i.collaborators.includes(agentId) ||
+          (i.created_by_type === "agent" && i.created_by_id === agentId) ||
           i.history.some((h) => h.from === agentId || h.to === agentId),
       );
     }
     return all;
+  }
+  async searchIssues(ctx: CallerContext, input: Input = {}) {
+    await this.access(ctx);
+    const company = await this.company(ctx);
+    if (ctx.type === "agent") {
+      const a = await this.getAgentInternal(ctx.id);
+      requireValue(
+        company.roles[a.role]?.permissions.includes("issue.search"),
+        "forbidden",
+        "Role does not have issue.search",
+        403,
+      );
+    }
+    requireValue(
+      typeof input.query === "string",
+      "invalid_input",
+      "query must be text",
+    );
+    const query = input.query.trim().toLowerCase();
+    requireValue(
+      query.length >= 1 && query.length <= 200,
+      "invalid_input",
+      "query must be 1-200 characters",
+    );
+    if (input.status !== undefined)
+      requireValue(
+        Array.isArray(input.status) &&
+          input.status.every((status) =>
+            statuses.includes(status as IssueStatus),
+          ),
+        "invalid_input",
+        "Unknown Issue status",
+      );
+    const rows: Issue[] = [];
+    for (const file of await this.store.files(this.path(ctx, "tasks")))
+      rows.push(
+        normalizeIssueProgress(
+          await this.store.markdown<Issue>(this.path(ctx, "tasks", file)),
+        ),
+      );
+    const matches = rows
+      .filter((issue) => {
+        if (
+          input.status &&
+          !(input.status as string[]).includes(issue.status)
+        )
+          return false;
+        return [
+          issue.id,
+          issue.title,
+          issue.summary,
+          issue.type ?? "",
+          issue.pipeline ?? "",
+        ].some((value) => String(value).toLowerCase().includes(query));
+      })
+      .sort(
+        (left, right) =>
+          right.updated_at.localeCompare(left.updated_at) ||
+          left.id.localeCompare(right.id, undefined, { numeric: true }),
+      );
+    const limit = Math.min(50, Math.max(1, Number(input.limit) || 20));
+    return {
+      items: matches.slice(0, limit).map((issue) => ({
+        id: issue.id,
+        title: clipText(issue.title, 240),
+        status: issue.status,
+        agent_id: issue.agent_id,
+        type: issue.type,
+        pipeline: issue.pipeline,
+        needs_user: issue.needs_user,
+        summary: clipText(issue.summary, 500),
+        created_by_type: issue.created_by_type ?? null,
+        created_by_id: issue.created_by_id ?? null,
+        created_at: issue.created_at,
+        updated_at: issue.updated_at,
+      })),
+      total: matches.length,
+      truncated: matches.length > limit,
+    };
   }
   /**
    * Owner-only, company-wide inbox projection of unanswered decisions. Excludes
@@ -2226,6 +2325,20 @@ export class CompanyDomain {
         "Role does not have issue.create",
         403,
       );
+      const canDispatch =
+        !a ||
+        a.role === "task-supervisor" ||
+        !!company.roles[a.role]?.permissions.includes("issue.assign");
+      const dispatches =
+        input.assigneeAgentId !== undefined ||
+        input.type !== undefined ||
+        input.pipeline !== undefined;
+      requireValue(
+        !dispatches || canDispatch,
+        "forbidden",
+        "Role does not have issue.assign",
+        403,
+      );
       const roster = await this.roster(ctx);
       let supervisor: InternalAgent | undefined;
       for (const member of roster.members) {
@@ -2244,24 +2357,80 @@ export class CompanyDomain {
         "invalid_state",
         "Company has no task supervisor",
       );
+      let assignee: InternalAgent | undefined;
+      if (input.assigneeAgentId !== undefined) {
+        const assigneeId = safeId(input.assigneeAgentId, "assigneeAgentId");
+        assignee = await this.getAgentInternal(assigneeId);
+        requireValue(
+          assignee.companyId === ctx.companyId,
+          "forbidden",
+          "Cannot assign outside Company",
+          403,
+        );
+        requireValue(
+          (await this.memberStatus(ctx.companyId, assignee.agentId)) !==
+            "archived",
+          "member_archived",
+          "Cannot assign an archived member",
+          409,
+        );
+        requireValue(
+          !a || a.role === "task-supervisor" || assignee.agentId !== a.agentId,
+          "forbidden",
+          "An Agent cannot assign an Issue to itself",
+          403,
+        );
+      }
+      let type: string | null = null;
+      if (input.type !== undefined)
+        type = input.type === null ? null : cleanText(input.type, "type", 100);
+      let pipeline: string | null = null;
+      if (input.pipeline !== undefined) {
+        if (input.pipeline !== null) {
+          const pipelineId = safeId(input.pipeline, "pipeline");
+          requireValue(
+            await this.store.exists(
+              this.path(ctx, "pipelines", `${pipelineId}.md`),
+            ),
+            "not_found",
+            "Pipeline not found",
+            404,
+          );
+          pipeline = pipelineId;
+        }
+      }
       const files = await this.store.files(this.path(ctx, "tasks"));
       const id = String(
         Math.max(0, ...files.map((f) => Number.parseInt(f) || 0)) + 1,
       );
+      const ownerAgentId = assignee?.agentId ?? supervisor.agentId;
       const issue: Issue = {
         id,
         title: cleanText(input.title, "title", 500),
-        type: null,
-        pipeline: null,
+        type,
+        pipeline,
         status: "triage",
-        agent_id: supervisor.agentId,
+        agent_id: ownerAgentId,
         summary: String(input.summary ?? ""),
         progress: "",
         needs_user: false,
         decisions: [],
         preview_batch: null,
         collaborators: [],
-        history: [],
+        created_by_type: ctx.type,
+        created_by_id: ctx.id,
+        history:
+          ownerAgentId === supervisor.agentId
+            ? []
+            : [
+                {
+                  at: now(),
+                  from: supervisor.agentId,
+                  to: ownerAgentId,
+                  by: ctx.id,
+                  reason: cleanText(input.reason, "reason"),
+                },
+              ],
         code_ref: null,
         plan_ref: null,
         worktree: null,
@@ -2368,10 +2537,36 @@ export class CompanyDomain {
   }
   async assignIssue(ctx: CallerContext, input: Input) {
     return this.mutate(ctx, "assignIssue", input, async () => {
-      await this.role(ctx, ["task-supervisor"]);
+      const a = await this.access(ctx);
+      const supervised = a?.role === "task-supervisor";
+      if (a && !supervised) {
+        const company = await this.company(ctx);
+        requireValue(
+          company.roles[a.role]?.permissions.includes("issue.assign"),
+          "forbidden",
+          "Requires task-supervisor or issue.assign",
+          403,
+        );
+      }
       const issue = await this.store.markdown<Issue>(
         this.issuePath(ctx, String(input.issueId)),
       );
+      const targetId = safeId(input.agentId, "agentId");
+      if (a && !supervised) {
+        requireValue(
+          issue.created_by_type === "agent" &&
+            issue.created_by_id === a.agentId,
+          "forbidden",
+          "issue.assign may only reassign Issues you created",
+          403,
+        );
+        requireValue(
+          targetId !== a.agentId,
+          "forbidden",
+          "An Agent cannot assign an Issue to itself",
+          403,
+        );
+      }
       this.version(issue, input);
       requireValue(
         issue.status !== "cancel",
@@ -2379,9 +2574,7 @@ export class CompanyDomain {
         "Canceled Issue cannot be reassigned",
         409,
       );
-      const target = await this.getAgentInternal(
-        safeId(input.agentId, "agentId"),
-      );
+      const target = await this.getAgentInternal(targetId);
       requireValue(
         target.companyId === ctx.companyId,
         "forbidden",

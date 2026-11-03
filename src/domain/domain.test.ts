@@ -96,7 +96,7 @@ describe("Company domain — files, permissions and business invariants", () => 
   test("A01 initializes headquarters, files, role permissions and distinct bindings", async () => {
     const org = await domain.organization(user);
     expect(org.groups[0]?.name).toBe("总部");
-    expect(org.agents).toHaveLength(2);
+    expect(org.agents).toHaveLength(3);
     const a = await domain.getAgent(user, { agentId: hr.id });
     expect(a.sessionId).toBe(`unit-only-session-${hr.id}`);
     expect(await readFile(join(a.directory, "CLAUDE.md"), "utf8")).toContain(
@@ -119,7 +119,7 @@ describe("Company domain — files, permissions and business invariants", () => 
           requestId: "create-acme",
         })
       ).agents,
-    ).toHaveLength(2);
+    ).toHaveLength(3);
     await expect(
       domain.createCompany(user, {
         name: "Changed",
@@ -156,7 +156,7 @@ describe("Company domain — files, permissions and business invariants", () => 
         responsibilities: "No",
       }),
     ).rejects.toMatchObject({ code: "forbidden" });
-    expect((await domain.organization(user)).agents).toHaveLength(4);
+    expect((await domain.organization(user)).agents).toHaveLength(5);
   });
   test("Only the user edits a member definition and its dedicated system prompt", async () => {
     const before = await domain.getAgent(user, { agentId: "dev-1" });
@@ -604,7 +604,7 @@ describe("Company domain — files, permissions and business invariants", () => 
     ).rejects.toMatchObject({ code: "version_conflict" });
     expect(
       (await domain.workspace(user, { agentId: dev.id })).issues,
-    ).toHaveLength(2);
+    ).toHaveLength(3);
   });
   test("A08 exact question IDs, independent pending flags and withdrawn late answers", async () => {
     let i = await domain.getIssue(dev, { issueId: "1" });
@@ -1049,10 +1049,11 @@ describe("Initialization and global identity concurrency", () => {
       expect(replay.company.id).toBe(first.company.id);
       expect(first.agents.map((a) => a.agentId).sort()).toEqual([
         `${first.company.id}-hr`,
+        `${first.company.id}-secretary`,
         `${first.company.id}-supervisor`,
       ]);
       expect(first.agents.every((a) => a.companyId === first.company.id)).toBe(true);
-      expect(calls).toHaveLength(2);
+      expect(calls).toHaveLength(3);
       for (const changed of [
         { name: "Changed" },
         { goal: "Changed" },
@@ -1064,7 +1065,7 @@ describe("Initialization and global identity concurrency", () => {
       const second = await d.createCompany(user, { ...input, requestId: "create-two" });
       const otherCaller = await d.createCompany({ ...user, id: "another-owner" }, input);
       expect(new Set([first.company.id, second.company.id, otherCaller.company.id]).size).toBe(3);
-      expect(calls).toHaveLength(6);
+      expect(calls).toHaveLength(9);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -1153,7 +1154,7 @@ describe("Initialization and global identity concurrency", () => {
       ]);
       expect(org.company.id).toBe(companyId);
       expect(replay.company.id).toBe(companyId);
-      expect(org.agents).toHaveLength(2);
+      expect(org.agents).toHaveLength(3);
       expect(calls.filter((a) => a === `${companyId}-hr`)).toHaveLength(1);
       expect(calls.filter((a) => a === `${companyId}-supervisor`)).toHaveLength(2);
       expect((await d.store.yaml(initPath)).status).toBe("complete");
@@ -1217,7 +1218,7 @@ describe("Initialization and global identity concurrency", () => {
               companyId: companyIds[1]!,
             })
           ).agents.length,
-      ).toBe(5);
+      ).toBe(7);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

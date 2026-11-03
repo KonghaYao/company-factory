@@ -258,6 +258,7 @@ export function OrganizationSheet({
                 <option value="preview">Preview · 联合预览</option>
                 <option value="reviewer">Review · 验证</option>
                 <option value="hr">HR · 人事</option>
+                <option value="secretary">Secretary · 秘书</option>
               </select>
             </Field>
           </div>

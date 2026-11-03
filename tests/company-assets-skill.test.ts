@@ -9,7 +9,8 @@ const skillFile = join(skillsDirectory, "company-assets", "SKILL.md");
 describe("company-assets skill template", () => {
   test("is a valid MCP skill entry with non-empty metadata", async () => {
     const metas = await scanSkillsDir(skillsDirectory);
-    expect(metas.map((meta) => meta.name)).toEqual(["company-assets"]);
+    expect(metas.map((meta) => meta.name)).toContain("company-assets");
+    expect(metas.map((meta) => meta.name)).toContain("interview");
     const meta = await readSkillMeta(skillsDirectory, "company-assets");
     expect(meta).toBeDefined();
     expect(meta!.name).toBe("company-assets");

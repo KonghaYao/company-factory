@@ -199,7 +199,11 @@ function selectedIssues(
     if (
       !filter.includeHistory &&
       issue.agent_id !== caller.id &&
-      !issue.collaborators.includes(caller.id)
+      !issue.collaborators.includes(caller.id) &&
+      !(
+        issue.created_by_type === "agent" &&
+        issue.created_by_id === caller.id
+      )
     )
       return false;
     if (filter.status) return filter.status.includes(issue.status);

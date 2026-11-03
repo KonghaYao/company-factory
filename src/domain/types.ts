@@ -241,6 +241,9 @@ export type Issue = {
   decisions: Decision[];
   preview_batch: string | null;
   collaborators: string[];
+  /** Who created this Issue; omitted on legacy Issues. */
+  created_by_type?: "user" | "agent";
+  created_by_id?: string;
   history: {
     at: string;
     from: string;

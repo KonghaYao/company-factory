@@ -34,9 +34,10 @@ describe("Company creation HTTP/MCP contract with unit provisioning", () => {
     method: string,
     params: Record<string, unknown> = {},
     agentId = `${companyId}-hr`,
+    module = "company_org",
   ) {
     const agent = await application.domain.getAgentInternal(agentId);
-    const response = await fetch(base + "/company_org/mcp", {
+    const response = await fetch(base + `/${module}/mcp`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -115,14 +116,14 @@ describe("Company creation HTTP/MCP contract with unit provisioning", () => {
     const replay = await create(input, "caller-selected-scope");
     expect(replay.status).toBe(200);
     expect((await replay.json()).company.id).toBe(companyId);
-    expect(provisions).toHaveLength(2);
+    expect(provisions).toHaveLength(3);
     const conflict = await create({ ...input, goal: "不同目标" });
     expect(conflict.status).toBe(409);
     expect((await conflict.json()).error.code).toBe("idempotency_conflict");
     const next = await create({ ...input, requestId: "http-create-next" });
     expect(next.status).toBe(200);
     expect((await next.json()).company.id).not.toBe(companyId);
-    expect(provisions).toHaveLength(4);
+    expect(provisions).toHaveLength(6);
   });
   test("MCP serves the shared company-assets skill as a read-only resource", async () => {
     // This gateway is strict MCP 2026-07-28: `initialize` belongs to the
@@ -139,6 +140,7 @@ describe("Company creation HTTP/MCP contract with unit provisioning", () => {
       (resource: { uri: string }) => resource.uri,
     );
     expect(uris).toContain("skill://company-assets/SKILL.md");
+    expect(uris).toContain("skill://interview/SKILL.md");
     expect(uris).toContain("company://current/company_org");
 
     const read = await mcp("resources/read", {
@@ -153,6 +155,18 @@ describe("Company creation HTTP/MCP contract with unit provisioning", () => {
     expect(content.text).toContain("## 8. Host secrets");
     expect(content.text).toContain("mcp_read_resource");
     expect(content.text).not.toContain(".claude/skills");
+
+    const interview = await mcp("resources/read", {
+      uri: "skill://interview/SKILL.md",
+    });
+    const interviewContent = interview.result.contents[0];
+    expect(interviewContent.mimeType).toBe("text/markdown");
+    expect(interviewContent.text).toContain("name: interview");
+    expect(interviewContent.text).toContain("# Interview");
+    expect(interviewContent.text).toContain("（推荐）");
+    expect(interviewContent.text).toContain("searchIssues");
+    expect(interviewContent.text).toContain("Company Issues");
+    expect(interviewContent.text).not.toContain("$ARGUMENTS");
 
     const supervisorRead = await mcp(
       "resources/read",
@@ -252,7 +266,7 @@ describe("Company creation HTTP/MCP contract with unit provisioning", () => {
       expect((await response.json()).error.code).toBe("invalid_input");
     }
     expect(await application.domain.store.ids(join(root, "companys"))).toEqual(before);
-    expect(provisions).toHaveLength(4);
+    expect(provisions).toHaveLength(6);
   });
   test("HTTP failure retry reuses completed bindings and still rejects changed payloads", async () => {
     failSupervisor = true;
@@ -269,12 +283,35 @@ describe("Company creation HTTP/MCP contract with unit provisioning", () => {
     expect(provisions.filter((a) => a === `${id}-hr`)).toHaveLength(1);
     expect(provisions.filter((a) => a === `${id}-supervisor`)).toHaveLength(2);
     expect((await create(payload)).status).toBe(200);
-    expect(provisions).toHaveLength(7);
+    expect(provisions).toHaveLength(10);
     expect(await application.domain.store.ids(join(root, "companys"))).toHaveLength(3);
   });
   test("MCP publishes organization tree, move and lifecycle tools with expected schemas", async () => {
     const discovery = await mcp("tools/list");
     const names = discovery.result.tools.map((tool: any) => tool.name);
+    const taskDiscovery = await mcp(
+      "tools/list",
+      {},
+      `${companyId}-hr`,
+      "company_tasks",
+    );
+    const searchTool = taskDiscovery.result.tools.find(
+      (tool: any) => tool.name === "searchIssues",
+    );
+    expect(searchTool).toBeDefined();
+    expect(searchTool.annotations.readOnlyHint).toBe(true);
+    const searched = await mcp(
+      "tools/call",
+      { name: "searchIssues", arguments: { query: "nothing-yet" } },
+      `${companyId}-secretary`,
+      "company_tasks",
+    );
+    expect(searched.result.isError).not.toBe(true);
+    expect(JSON.parse(searched.result.content[0].text)).toMatchObject({
+      items: [],
+      total: 0,
+      truncated: false,
+    });
     for (const operation of [
       "createOrgNode",
       "updateOrgNode",
@@ -324,6 +361,6 @@ describe("Company creation HTTP/MCP contract with unit provisioning", () => {
     });
     expect(denied.result.isError).toBe(true);
     expect(JSON.parse(denied.result.content[0].text).error.code).toBe("forbidden");
-    expect(provisions).toHaveLength(7);
+    expect(provisions).toHaveLength(10);
   });
 });

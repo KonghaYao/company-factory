@@ -29,6 +29,7 @@ const ROLE_LABELS: Record<string, string> = {
   developer: "开发",
   preview: "预览",
   reviewer: "评审",
+  secretary: "秘书",
 };
 
 /** 未知 sender 的短 ID：保留头尾，避免撑破卡片，同时仍可人工对账。 */

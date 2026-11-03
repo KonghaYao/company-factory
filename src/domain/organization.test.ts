@@ -102,13 +102,17 @@ describe("Decoupled organization model", () => {
       parentId: null,
       status: "active",
     });
-    expect(org.placements).toHaveLength(2);
+    expect(org.placements).toHaveLength(3);
     expect(
       org.placements.map((placement: any) => placement.personId).sort(),
-    ).toEqual([hr.id, `${user.companyId}-supervisor`].sort());
+    ).toEqual([
+      hr.id,
+      `${user.companyId}-secretary`,
+      `${user.companyId}-supervisor`,
+    ].sort());
     const roster = await domain.store.yaml(file(directory, "roster.yaml"));
     expect(roster.schema).toBe("company-people/v2");
-    expect(roster.members).toHaveLength(2);
+    expect(roster.members).toHaveLength(3);
     for (const member of roster.members) {
       expect(member).not.toHaveProperty("groupId");
       expect(member).not.toHaveProperty("role");

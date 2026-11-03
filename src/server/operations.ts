@@ -18,6 +18,7 @@ export const MODULE_OPERATIONS = {
   ],
   company_tasks: [
     "listIssues",
+    "searchIssues",
     "getIssue",
     "createIssue",
     "updateIssue",
@@ -166,11 +167,36 @@ export const schemas: Record<string, z.ZodType> = {
     requestId: str,
   }),
   listIssues: z.object(contextOptions),
+  searchIssues: z.object({
+    query: str.min(1).max(200),
+    status: z
+      .array(
+        z.enum([
+          "triage",
+          "plan",
+          "code",
+          "ready_preview",
+          "preview",
+          "accepted",
+          "verifying",
+          "ready_merge",
+          "cancel",
+        ]),
+      )
+      .min(1)
+      .max(9)
+      .optional(),
+    limit: z.number().int().min(1).max(50).optional(),
+  }),
   getIssue: z.object({ issueId: str }),
   createIssue: z.looseObject({
     title: str,
     body: str.optional(),
     summary: str.optional(),
+    assigneeAgentId: str.optional(),
+    type: str.optional(),
+    pipeline: str.optional(),
+    reason: str.optional(),
     requestId: str,
   }),
   updateIssue: z.looseObject({
@@ -331,6 +357,7 @@ export const schemas: Record<string, z.ZodType> = {
 export const READ_OPERATIONS = new Set([
   "organization",
   "listIssues",
+  "searchIssues",
   "getIssue",
   "getPreview",
   "comments",
