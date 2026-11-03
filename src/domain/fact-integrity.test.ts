@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { CompanyDomain, type CallerContext, type DomainOptions } from "./index";
+import { createDepartmentWithHead } from "./test-support";
 
 const roots: string[] = [];
 afterAll(async () => {
@@ -50,7 +51,17 @@ async function company(extra: Partial<DomainOptions> = {}) {
     requestId: requestId(),
   });
   const user = { ...owner, companyId: org.company.id };
-  return { ...f, org, user };
+  const head = await createDepartmentWithHead(
+    f.domain,
+    { type: "agent", id: `${org.company.id}-hr`, companyId: org.company.id },
+    {
+      nodeId: "delivery",
+      headId: `${org.company.id}-head`,
+      nodeName: "Delivery",
+      headName: "Delivery Head",
+    },
+  );
+  return { ...f, org, user, head };
 }
 const git = (cwd: string, ...args: string[]) =>
   execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
@@ -156,9 +167,9 @@ describe("Initialization recovery", () => {
       "Fixture interrupted Agent Git",
     );
     const result = await domain.createCompany(owner, input);
-    expect(result.agents).toHaveLength(3);
+    expect(result.agents).toHaveLength(2);
     expect(provisioned.filter((id) => id.endsWith("-hr"))).toHaveLength(1);
-    expect(provisioned.filter((id) => id.endsWith("-supervisor"))).toHaveLength(
+    expect(provisioned.filter((id) => id.endsWith("-secretary"))).toHaveLength(
       1,
     );
     expect(hrCommits).toBe(2);
@@ -209,7 +220,7 @@ describe("Initialization recovery", () => {
     const restarted = domainWith(domain.options);
     const org = await restarted.createCompany(owner, input);
     const after = await restarted.getAgentInternal(agentId);
-    expect(org.agents).toHaveLength(3);
+    expect(org.agents).toHaveLength(2);
     expect(after.sessionId).toBe(before.sessionId);
     expect(after.authToken).toBe(before.authToken);
     expect(await readFile(join(after.directory, "CLAUDE.md"), "utf8")).toBe(
@@ -223,8 +234,8 @@ describe("Initialization recovery", () => {
       authToken: before.authToken,
     });
     const replay = await restarted.createCompany(owner, input);
-    expect(replay.agents).toHaveLength(3);
-    expect(provisions).toHaveLength(4);
+    expect(replay.agents).toHaveLength(2);
+    expect(provisions).toHaveLength(3);
     await expect(
       restarted.createCompany(owner, { ...input, name: "Different intent" }),
     ).rejects.toMatchObject({ code: "idempotency_conflict" });

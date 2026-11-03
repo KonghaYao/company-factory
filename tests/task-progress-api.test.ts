@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApplication } from "../src/server/app";
+import { createDepartmentWithHead } from "../src/domain/test-support";
 import {
   MODULE_OPERATIONS,
   READ_OPERATIONS,
@@ -19,7 +20,7 @@ describe("Task todo and comment-snapshot HTTP/MCP contract", () => {
   let base: string;
   let cookie: string;
   let companyId: string;
-  let supervisorId: string;
+  let headId: string;
   let hrId: string;
   let requestSeq = 0;
   const requestId = (label: string) => `${label}-${++requestSeq}`;
@@ -149,8 +150,18 @@ describe("Task todo and comment-snapshot HTTP/MCP contract", () => {
     expect(created.status).toBe(200);
     const organization = await created.json();
     companyId = organization.company.id;
-    supervisorId = `${companyId}-supervisor`;
     hrId = `${companyId}-hr`;
+    const head = await createDepartmentWithHead(
+      application.domain,
+      { type: "agent", id: hrId, companyId },
+      {
+        nodeId: "delivery",
+        headId: `${companyId}-head`,
+        nodeName: "Delivery",
+        headName: "Delivery Head",
+      },
+    );
+    headId = head.id;
   });
   afterAll(async () => {
     await application?.close();
@@ -228,7 +239,7 @@ describe("Task todo and comment-snapshot HTTP/MCP contract", () => {
   test("the owner Agent writes todos and the server appends a snapshot comment", async () => {
     const created = await issue();
     const note = "Split the work and started the first step.";
-    const written = await mcp(supervisorId, "tools/call", {
+    const written = await mcp(headId, "tools/call", {
       name: "updateTodos",
       arguments: {
         issueId: created.id,
@@ -251,7 +262,7 @@ describe("Task todo and comment-snapshot HTTP/MCP contract", () => {
       id: `${created.id}-C1`,
       issue_id: created.id,
       author_type: "agent",
-      author_id: supervisorId,
+      author_id: headId,
       body: note,
     });
     expect(payload.comment.todo_snapshot).toEqual([
@@ -276,7 +287,7 @@ describe("Task todo and comment-snapshot HTTP/MCP contract", () => {
   });
 
   test("MCP discovery exposes updateTodos only and describes note/comment/snapshot", async () => {
-    const discovery = await mcp(supervisorId, "tools/list");
+    const discovery = await mcp(headId, "tools/list");
     const tools = discovery.result.tools;
     const byName = new Map(tools.map((tool: any) => [tool.name, tool]));
     expect(byName.has("updateTodos")).toBe(true);
@@ -296,12 +307,12 @@ describe("Task todo and comment-snapshot HTTP/MCP contract", () => {
       issueId: created.id,
       expectedVersion: created.version,
       requestId: requestId("collaborator"),
-      agentId: supervisorId,
+      agentId: headId,
       collaborators: [hrId],
     });
     expect(assigned.status).toBe(200);
 
-    const written = await mcp(supervisorId, "tools/call", {
+    const written = await mcp(headId, "tools/call", {
       name: "updateTodos",
       arguments: {
         issueId: created.id,
@@ -335,7 +346,7 @@ describe("Task todo and comment-snapshot HTTP/MCP contract", () => {
     expect(collaboratorWrite.result.isError).toBe(true);
     expect(toolPayload(collaboratorWrite).error.code).toBe("not_current_owner");
 
-    const stale = await mcp(supervisorId, "tools/call", {
+    const stale = await mcp(headId, "tools/call", {
       name: "updateTodos",
       arguments: {
         issueId: created.id,
@@ -360,7 +371,7 @@ describe("Task todo and comment-snapshot HTTP/MCP contract", () => {
     });
     expect(canceled.status).toBe(200);
 
-    const rejected = await mcp(supervisorId, "tools/call", {
+    const rejected = await mcp(headId, "tools/call", {
       name: "updateTodos",
       arguments: {
         issueId: created.id,

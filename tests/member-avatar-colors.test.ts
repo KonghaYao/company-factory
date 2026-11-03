@@ -62,13 +62,13 @@ async function company(options: Partial<DomainOptions> = {}) {
     id: `${companyId}-hr`,
     companyId,
   };
-  const supervisor: CallerContext = {
+  const secretary: CallerContext = {
     type: "agent",
-    id: `${companyId}-supervisor`,
+    id: `${companyId}-secretary`,
     companyId,
   };
   const companyPath = join(root, "companys", companyId, "company.yaml");
-  return { root, domain, companyId, user, hr, supervisor, companyPath };
+  return { root, domain, companyId, user, hr, secretary, companyPath };
 }
 
 function colorOf(view: { agents: { agentId: string; avatarColor?: unknown }[] }, agentId: string) {
@@ -146,28 +146,28 @@ async function legacyCompany(
 
 describe("Company avatar colors", () => {
   test("createCompany persists distinct valid colors for both fixed members", async () => {
-    const { domain, user, hr, supervisor, companyPath } = await company();
+    const { domain, user, hr, secretary, companyPath } = await company();
     const stored = await domain.store.yaml(companyPath);
     const hrColor = stored.memberColors[hr.id];
-    const supervisorColor = stored.memberColors[supervisor.id];
+    const secretaryColor = stored.memberColors[secretary.id];
     expect(isAvatarColor(hrColor)).toBe(true);
-    expect(isAvatarColor(supervisorColor)).toBe(true);
-    expect(hrColor).not.toBe(supervisorColor);
+    expect(isAvatarColor(secretaryColor)).toBe(true);
+    expect(hrColor).not.toBe(secretaryColor);
 
     const ownerView = await domain.organization(user);
     const agentView = await domain.organization(hr);
     expect(colorOf(ownerView, hr.id)).toBe(hrColor);
-    expect(colorOf(ownerView, supervisor.id)).toBe(supervisorColor);
+    expect(colorOf(ownerView, secretary.id)).toBe(secretaryColor);
     expect(colorOf(agentView, hr.id)).toBe(hrColor);
-    expect(colorOf(agentView, supervisor.id)).toBe(supervisorColor);
+    expect(colorOf(agentView, secretary.id)).toBe(secretaryColor);
 
     const members = await domain.members(user);
     expect(members.find((member) => member.agentId === hr.id)?.avatarColor).toBe(
       hrColor,
     );
     expect(
-      members.find((member) => member.agentId === supervisor.id)?.avatarColor,
-    ).toBe(supervisorColor);
+      members.find((member) => member.agentId === secretary.id)?.avatarColor,
+    ).toBe(secretaryColor);
 
     const agentRecord = await domain.getAgent(user, { agentId: hr.id });
     expect(agentRecord).not.toHaveProperty("avatarColor");

@@ -9,6 +9,7 @@ import {
   type DomainOptions,
   type Issue,
 } from "./index";
+import { createDepartmentWithHead } from "./test-support";
 
 // Real temp-directory storage and Git; only runtime provisioning and Agent Git
 // commits are replaced. No test touches the live Company home.
@@ -27,7 +28,7 @@ describe("Issue todos and comment snapshots", () => {
   let domain: CompanyDomain;
   let user: CallerContext;
   let hr: CallerContext;
-  let supervisor: CallerContext;
+  let head: CallerContext;
   let issueCounter = 0;
   const company = () => domain.store.company(user.companyId);
 
@@ -48,7 +49,9 @@ describe("Issue todos and comment snapshots", () => {
     });
     const writes = new Set([
       "createCompany",
+      "createOrgNode",
       "createMember",
+      "updateOrgNode",
       "archiveMember",
       "createIssue",
       "updateIssue",
@@ -79,11 +82,12 @@ describe("Issue todos and comment snapshots", () => {
       id: `${created.company.id}-hr`,
       companyId: user.companyId,
     };
-    supervisor = {
-      type: "agent",
-      id: `${created.company.id}-supervisor`,
-      companyId: user.companyId,
-    };
+    head = await createDepartmentWithHead(domain, hr, {
+      nodeId: "delivery",
+      headId: `${created.company.id}-head`,
+      nodeName: "Delivery",
+      headName: "Delivery Head",
+    });
   });
   afterAll(async () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -104,7 +108,7 @@ describe("Issue todos and comment snapshots", () => {
   test("todos add, update, reopen, reorder, remove and never reuse an id", async () => {
     const issue = await newIssue();
     const initialVersion = issue.version;
-    let result = await domain.updateTodos(supervisor, {
+    let result = await domain.updateTodos(head, {
       issueId: issue.id,
       version: initialVersion,
       changes: [
@@ -125,9 +129,9 @@ describe("Issue todos and comment snapshots", () => {
       text: "First",
       status: "pending",
       created_by_type: "agent",
-      created_by_id: supervisor.id,
+      created_by_id: head.id,
       updated_by_type: "agent",
-      updated_by_id: supervisor.id,
+      updated_by_id: head.id,
     });
     expect(result.issue.todos![0]!.created_at).toEqual(
       result.issue.todos![0]!.updated_at,
@@ -136,7 +140,7 @@ describe("Issue todos and comment snapshots", () => {
     expect(result.issue.todos![2]).not.toHaveProperty("done_at");
 
     const secondId = result.issue.todos![1]!.id;
-    result = await domain.updateTodos(supervisor, {
+    result = await domain.updateTodos(head, {
       issueId: issue.id,
       version: result.issue.version,
       changes: [{ op: "update", todoId: secondId, status: "done" }],
@@ -145,7 +149,7 @@ describe("Issue todos and comment snapshots", () => {
     expect(result.issue.todos![1]!.status).toBe("done");
     expect(result.issue.todos![1]!.done_at).toBeTruthy();
 
-    result = await domain.updateTodos(supervisor, {
+    result = await domain.updateTodos(head, {
       issueId: issue.id,
       version: result.issue.version,
       changes: [{ op: "update", todoId: secondId, status: "pending" }],
@@ -155,7 +159,7 @@ describe("Issue todos and comment snapshots", () => {
     expect(result.issue.todos![1]!.done_at).toBeUndefined();
 
     const ids = result.issue.todos!.map((item) => item.id);
-    result = await domain.updateTodos(supervisor, {
+    result = await domain.updateTodos(head, {
       issueId: issue.id,
       version: result.issue.version,
       order: [ids[2]!, ids[0]!, ids[1]!],
@@ -167,7 +171,7 @@ describe("Issue todos and comment snapshots", () => {
       ids[1]!,
     ]);
 
-    result = await domain.updateTodos(supervisor, {
+    result = await domain.updateTodos(head, {
       issueId: issue.id,
       version: result.issue.version,
       changes: [{ op: "update", todoId: ids[0]!, text: "First renamed" }],
@@ -183,13 +187,13 @@ describe("Issue todos and comment snapshots", () => {
 
     // Delete the highest id, then add again: the numeric suffix must not repeat.
     const removed = result.issue.todos!.find((item) => item.id === ids[2]!)!;
-    result = await domain.updateTodos(supervisor, {
+    result = await domain.updateTodos(head, {
       issueId: issue.id,
       version: result.issue.version,
       changes: [{ op: "remove", todoId: removed.id }],
       note: "Removed the last step.",
     });
-    result = await domain.updateTodos(supervisor, {
+    result = await domain.updateTodos(head, {
       issueId: issue.id,
       version: result.issue.version,
       changes: [{ op: "add", text: "Fourth" }],
@@ -213,7 +217,7 @@ describe("Issue todos and comment snapshots", () => {
     const issue = await newIssue();
     let version = issue.version;
     await expect(
-      domain.updateTodos(supervisor, {
+      domain.updateTodos(head, {
         issueId: issue.id,
         version,
         changes: Array.from({ length: 21 }, (_, i) => ({
@@ -224,7 +228,7 @@ describe("Issue todos and comment snapshots", () => {
       }),
     ).rejects.toMatchObject({ code: "invalid_input" });
     await expect(
-      domain.updateTodos(supervisor, {
+      domain.updateTodos(head, {
         issueId: issue.id,
         version,
         changes: [{ op: "add", text: "x".repeat(501) }],
@@ -232,7 +236,7 @@ describe("Issue todos and comment snapshots", () => {
       }),
     ).rejects.toMatchObject({ code: "invalid_input" });
     await expect(
-      domain.updateTodos(supervisor, {
+      domain.updateTodos(head, {
         issueId: issue.id,
         version,
         changes: [{ op: "add", text: "line one\nline two" }],
@@ -240,7 +244,7 @@ describe("Issue todos and comment snapshots", () => {
       }),
     ).rejects.toMatchObject({ code: "invalid_input" });
     await expect(
-      domain.updateTodos(supervisor, {
+      domain.updateTodos(head, {
         issueId: issue.id,
         version,
         changes: [{ op: "update", todoId: `${issue.id}-T999`, text: "nope" }],
@@ -248,7 +252,7 @@ describe("Issue todos and comment snapshots", () => {
       }),
     ).rejects.toMatchObject({ code: "not_found", status: 404 });
     await expect(
-      domain.updateTodos(supervisor, {
+      domain.updateTodos(head, {
         issueId: issue.id,
         version,
         changes: [{ op: "remove", todoId: `${issue.id}-T999` }],
@@ -256,7 +260,7 @@ describe("Issue todos and comment snapshots", () => {
       }),
     ).rejects.toMatchObject({ code: "not_found", status: 404 });
     await expect(
-      domain.updateTodos(supervisor, {
+      domain.updateTodos(head, {
         issueId: issue.id,
         version,
         changes: [{ op: "add", text: "only one" }],
@@ -265,7 +269,7 @@ describe("Issue todos and comment snapshots", () => {
       }),
     ).rejects.toMatchObject({ code: "invalid_input" });
     await expect(
-      domain.updateTodos(supervisor, {
+      domain.updateTodos(head, {
         issueId: issue.id,
         version,
         note: "No changes.",
@@ -273,7 +277,7 @@ describe("Issue todos and comment snapshots", () => {
     ).rejects.toMatchObject({ code: "invalid_input" });
 
     for (const count of [20, 20, 10]) {
-      const result = await domain.updateTodos(supervisor, {
+      const result = await domain.updateTodos(head, {
         issueId: issue.id,
         version,
         changes: Array.from({ length: count }, (_, i) => ({
@@ -286,7 +290,7 @@ describe("Issue todos and comment snapshots", () => {
     }
     expect((await current(issue.id)).todos).toHaveLength(50);
     await expect(
-      domain.updateTodos(supervisor, {
+      domain.updateTodos(head, {
         issueId: issue.id,
         version,
         changes: [{ op: "add", text: "fifty first" }],
@@ -299,14 +303,14 @@ describe("Issue todos and comment snapshots", () => {
   test("version CAS serializes concurrent todo writes and skips the losing comment", async () => {
     const issue = await newIssue();
     const results = await Promise.allSettled([
-      domain.updateTodos(supervisor, {
+      domain.updateTodos(head, {
         issueId: issue.id,
         version: issue.version,
         changes: [{ op: "add", text: "concurrent A" }],
         note: "Concurrent A.",
         requestId: "concurrent-a",
       }),
-      domain.updateTodos(supervisor, {
+      domain.updateTodos(head, {
         issueId: issue.id,
         version: issue.version,
         changes: [{ op: "add", text: "concurrent B" }],
@@ -329,7 +333,7 @@ describe("Issue todos and comment snapshots", () => {
     expect(comments.items).toHaveLength(1);
     expect(comments.items[0]!.body).toMatch(/^Concurrent [AB]\.$/);
     await expect(
-      domain.updateTodos(supervisor, {
+      domain.updateTodos(head, {
         issueId: issue.id,
         version: issue.version,
         changes: [{ op: "add", text: "stale" }],
@@ -341,14 +345,14 @@ describe("Issue todos and comment snapshots", () => {
   test("every Agent todo write requires a note and appends a snapshot comment", async () => {
     const issue = await newIssue();
     await expect(
-      domain.updateTodos(supervisor, {
+      domain.updateTodos(head, {
         issueId: issue.id,
         version: issue.version,
         changes: [{ op: "add", text: "no note" }],
       }),
     ).rejects.toMatchObject({ code: "invalid_input" });
     await expect(
-      domain.updateTodos(supervisor, {
+      domain.updateTodos(head, {
         issueId: issue.id,
         version: issue.version,
         changes: [{ op: "add", text: "long note" }],
@@ -357,7 +361,7 @@ describe("Issue todos and comment snapshots", () => {
     ).rejects.toMatchObject({ code: "invalid_input" });
 
     const note = "Added the first two steps and started the second.";
-    const result = await domain.updateTodos(supervisor, {
+    const result = await domain.updateTodos(head, {
       issueId: issue.id,
       version: issue.version,
       changes: [
@@ -371,7 +375,7 @@ describe("Issue todos and comment snapshots", () => {
       id: `${issue.id}-C1`,
       issue_id: issue.id,
       author_type: "agent",
-      author_id: supervisor.id,
+      author_id: head.id,
       version: 1,
       body: note,
     });
@@ -396,7 +400,7 @@ describe("Issue todos and comment snapshots", () => {
     );
     expect(file.body).toBe(note);
     expect(file.todo_snapshot).toEqual(expectedSnapshot);
-    const comments = await domain.comments(supervisor, { issueId: issue.id });
+    const comments = await domain.comments(head, { issueId: issue.id });
     expect(comments.items).toHaveLength(1);
     expect(comments.items[0]!.body).toBe(note);
     expect(comments.items[0]!.todo_snapshot).toEqual(expectedSnapshot);
@@ -404,13 +408,13 @@ describe("Issue todos and comment snapshots", () => {
 
   test("updateComment edits the body and preserves the todo snapshot", async () => {
     const issue = await newIssue();
-    const created = await domain.updateTodos(supervisor, {
+    const created = await domain.updateTodos(head, {
       issueId: issue.id,
       version: issue.version,
       changes: [{ op: "add", text: "keep snapshot" }],
       note: "Original note.",
     });
-    const edited = await domain.updateComment(supervisor, {
+    const edited = await domain.updateComment(head, {
       issueId: issue.id,
       commentId: created.comment.id,
       version: created.comment.version,
@@ -437,10 +441,10 @@ describe("Issue todos and comment snapshots", () => {
       }),
     ).rejects.toMatchObject({ code: "forbidden", status: 403 });
 
-    const assigned = await domain.assignIssue(supervisor, {
+    const assigned = await domain.assignIssue(user, {
       issueId: issue.id,
       version: issue.version,
-      agentId: supervisor.id,
+      agentId: head.id,
       collaborators: [hr.id],
     });
     await expect(
@@ -478,7 +482,7 @@ describe("Issue todos and comment snapshots", () => {
       }),
     ).rejects.toMatchObject({ code: "member_archived", status: 403 });
 
-    const written = await domain.updateTodos(supervisor, {
+    const written = await domain.updateTodos(head, {
       issueId: issue.id,
       version: assigned.version,
       changes: [{ op: "add", text: "owner todo" }],
@@ -494,14 +498,14 @@ describe("Issue todos and comment snapshots", () => {
 
   test("canceled Issues reject todo changes but accept ordinary comments", async () => {
     const issue = await newIssue();
-    const canceled = await domain.cancelIssue(supervisor, {
+    const canceled = await domain.cancelIssue(head, {
       issueId: issue.id,
       version: issue.version,
       reason: "No longer needed",
     });
     expect(canceled.status).toBe("cancel");
     await expect(
-      domain.updateTodos(supervisor, {
+      domain.updateTodos(head, {
         issueId: issue.id,
         version: canceled.version,
         changes: [{ op: "add", text: "revive" }],
@@ -509,15 +513,15 @@ describe("Issue todos and comment snapshots", () => {
       }),
     ).rejects.toMatchObject({ code: "terminal_issue", status: 409 });
     expect(
-      (await domain.comments(supervisor, { issueId: issue.id })).items,
+      (await domain.comments(head, { issueId: issue.id })).items,
     ).toHaveLength(0);
 
-    const late = await domain.addComment(supervisor, {
+    const late = await domain.addComment(head, {
       issueId: issue.id,
       body: "Post-cancel retrospective evidence.",
     });
     expect(late).not.toHaveProperty("todo_snapshot");
-    const comments = await domain.comments(supervisor, { issueId: issue.id });
+    const comments = await domain.comments(head, { issueId: issue.id });
     expect(comments.items.map((item) => item.id)).toEqual([late.id]);
     expect(comments.items[0]!.body).toBe(
       "Post-cancel retrospective evidence.",
@@ -527,7 +531,7 @@ describe("Issue todos and comment snapshots", () => {
 
   test("listIssues, workspace, re-instantiation and Company Git keep todos and comments", async () => {
     const issue = await newIssue();
-    const todo = await domain.updateTodos(supervisor, {
+    const todo = await domain.updateTodos(head, {
       issueId: issue.id,
       version: issue.version,
       changes: [{ op: "add", text: "persisted todo" }],
@@ -547,8 +551,8 @@ describe("Issue todos and comment snapshots", () => {
     expect(listed.todos).toHaveLength(1);
     expect(listed).not.toHaveProperty("latest_update");
 
-    const workspace = await domain.workspace(supervisor, {
-      agentId: supervisor.id,
+    const workspace = await domain.workspace(head, {
+      agentId: head.id,
     });
     const wsIssue = workspace.issues.find((item) => item.id === issue.id)!;
     expect(wsIssue.todos![0]!.text).toBe("persisted todo");
@@ -581,8 +585,8 @@ describe("Issue todos and comment snapshots", () => {
       note: "idempotent note",
       requestId: "idempotent-todos",
     };
-    const first = await domain.updateTodos(supervisor, input);
-    const replay = await domain.updateTodos(supervisor, input);
+    const first = await domain.updateTodos(head, input);
+    const replay = await domain.updateTodos(head, input);
     expect(replay.issue.version).toBe(first.issue.version);
     expect(replay.issue.todos).toEqual(first.issue.todos);
     expect(replay.comment.id).toBe(first.comment.id);
@@ -590,7 +594,7 @@ describe("Issue todos and comment snapshots", () => {
       await domain.store.files(join(company(), "comments", issue.id)),
     ).toHaveLength(1);
     await expect(
-      domain.updateTodos(supervisor, {
+      domain.updateTodos(head, {
         ...input,
         changes: [{ op: "add", text: "different input" }],
       }),
@@ -613,7 +617,7 @@ describe("Issue todos and comment snapshots", () => {
         id: "legacy-U1",
         created_at: "2026-01-01T00:00:00.000Z",
         author_type: "agent",
-        author_id: supervisor.id,
+        author_id: head.id,
         kind: "progress",
         excerpt: "stale projection",
       },

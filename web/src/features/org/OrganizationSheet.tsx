@@ -257,6 +257,7 @@ export function OrganizationSheet({
                 <option value="developer">Dev · 开发</option>
                 <option value="preview">Preview · 联合预览</option>
                 <option value="reviewer">Review · 验证</option>
+                <option value="department-head">Department Head · 部长</option>
                 <option value="hr">HR · 人事</option>
                 <option value="secretary">Secretary · 秘书</option>
               </select>

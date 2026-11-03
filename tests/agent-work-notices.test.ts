@@ -5,12 +5,13 @@ import { join } from "node:path";
 import { createApplication } from "../src/server/app";
 import { AgentWorkNotices } from "../src/server/agent-work-notices";
 import type { CallerContext } from "../src/domain";
+import { createDepartmentWithHead } from "../src/domain/test-support";
 
 describe("Company fact notices through the HTTP/MCP boundary", () => {
   let root: string,
     app: Awaited<ReturnType<typeof createApplication>>,
     cookie: string;
-  let companyId: string, supervisorId: string, hrId: string;
+  let companyId: string, headId: string, hrId: string;
   const deliveries: { agentId: string; text: string; requestId: string }[] = [];
   let fail: "none" | "not_sent" | "unknown" = "none";
   const origin = "http://127.0.0.1:3000";
@@ -28,7 +29,7 @@ describe("Company fact notices through the HTTP/MCP boundary", () => {
     expect(response.status).toBe(200);
     return data;
   }
-  async function settled(id: string, agentId = supervisorId) {
+  async function settled(id: string, agentId = headId) {
     for (let attempt = 0; attempt < 200; attempt++) {
       const response = await app.app.request(
         `${origin}/api/agents/${agentId}/notices/${id}?companyId=${companyId}`,
@@ -131,10 +132,19 @@ describe("Company fact notices through the HTTP/MCP boundary", () => {
       "company_org",
     );
     companyId = org.company.id;
-    supervisorId = org.agents.find(
-      (a: any) => a.role === "task-supervisor",
-    ).agentId;
     hrId = org.agents.find((a: any) => a.role === "hr").agentId;
+    headId = (
+      await createDepartmentWithHead(
+        app.domain,
+        { type: "agent", id: hrId, companyId },
+        {
+          nodeId: "delivery",
+          headId: `${companyId}-head`,
+          nodeName: "Delivery",
+          headName: "Delivery Head",
+        },
+      )
+    ).id;
   });
   afterAll(async () => {
     await app.close();
@@ -198,7 +208,7 @@ describe("Company fact notices through the HTTP/MCP boundary", () => {
     };
     const created = await action("createIssue", input);
     expect((await settled(created.notification.id)).status).toBe("accepted");
-    expect(deliveries.at(-1)!.agentId).toBe(supervisorId);
+    expect(deliveries.at(-1)!.agentId).toBe(headId);
     expect(deliveries.at(-1)!.text).toContain("Decide your own next action");
     expect(deliveries.at(-1)!.text).not.toContain("DO_NOT_COPY_BODY");
     const before = deliveries.length;
@@ -241,11 +251,11 @@ describe("Company fact notices through the HTTP/MCP boundary", () => {
   });
   test("an Agent's own successful creation does not create a self-notification loop", async () => {
     const before = deliveries.length;
-    const created = await mcp(supervisorId, "createIssue", {
+    const created = await mcp(headId, "createIssue", {
       title: "self-created",
       requestId: "self-task",
     });
-    expect(created.agent_id).toBe(supervisorId);
+    expect(created.agent_id).toBe(headId);
     expect(created.notification).toBeUndefined();
     expect(deliveries).toHaveLength(before);
   });
@@ -332,8 +342,8 @@ describe("Company fact notices through the HTTP/MCP boundary", () => {
       expect(events.at(-1)!.error).toContain("not configured");
       await expect(
         notices.retry(
-          { type: "agent", id: supervisorId, companyId },
-          supervisorId,
+          { type: "agent", id: headId, companyId },
+          headId,
           notice.id,
         ),
       ).rejects.toMatchObject({ code: "forbidden" });
@@ -347,15 +357,15 @@ describe("Company fact notices through the HTTP/MCP boundary", () => {
       await expect(
         notices.retry(
           { ...owner, companyId: other.company.id },
-          supervisorId,
+          headId,
           notice.id,
         ),
       ).rejects.toMatchObject({ code: "forbidden" });
       fail = "none";
       const before = deliveries.length;
       const retries = await Promise.all([
-        notices.retry(owner, supervisorId, notice.id),
-        notices.retry(owner, supervisorId, notice.id),
+        notices.retry(owner, headId, notice.id),
+        notices.retry(owner, headId, notice.id),
       ]);
       expect(retries.every((record) => record.id === notice.id)).toBe(true);
       await notices.close();
@@ -366,7 +376,7 @@ describe("Company fact notices through the HTTP/MCP boundary", () => {
         inputId: "input-" + notice.id,
         error: null,
       });
-      const accepted = await notices.retry(owner, supervisorId, notice.id);
+      const accepted = await notices.retry(owner, headId, notice.id);
       expect(accepted.status).toBe("accepted");
       expect(deliveries).toHaveLength(before + 1);
       expect(
@@ -404,7 +414,7 @@ describe("Company fact notices through the HTTP/MCP boundary", () => {
       read.mockRestore();
       await notices.close();
     }
-    await notices.retry(owner, supervisorId, notice.id);
+    await notices.retry(owner, headId, notice.id);
     await notices.close();
     expect((await settled(notice.id)).status).toBe("accepted");
     expect(deliveries).toHaveLength(before + 1);
@@ -431,7 +441,7 @@ describe("Company fact notices through the HTTP/MCP boundary", () => {
       await notices.close();
       const before = deliveries.length;
       await expect(
-        notices.retry(owner, supervisorId, uncertain.id),
+        notices.retry(owner, headId, uncertain.id),
       ).rejects.toMatchObject({
         code: "notice_not_retryable",
         status: 409,
@@ -456,12 +466,12 @@ describe("Company fact notices through the HTTP/MCP boundary", () => {
       });
       fail = "none";
       const count = deliveries.length;
-      await notices.retry(owner, supervisorId, notice.id);
+      await notices.retry(owner, headId, notice.id);
       await notices.close();
       expect((await settled(notice.id)).status).toBe("skipped");
       expect(deliveries).toHaveLength(count);
       await expect(
-        notices.retry(owner, supervisorId, notice.id),
+        notices.retry(owner, headId, notice.id),
       ).rejects.toMatchObject({
         code: "notice_not_retryable",
       });
@@ -488,7 +498,7 @@ describe("Company fact notices through the HTTP/MCP boundary", () => {
       requestId: "visible-retry",
     });
     const id = created.notification.id;
-    const base = `${origin}/api/agents/${supervisorId}`;
+    const base = `${origin}/api/agents/${headId}`;
     const query = `?companyId=${companyId}`;
     expect((await settled(id)).status).toBe("failed");
     const list = await app.app.request(`${base}/notices${query}`, {
@@ -572,11 +582,11 @@ describe("Company fact notices through the HTTP/MCP boundary", () => {
     expect(deliveries.at(-1)!.text).toContain(asked.decisions[0].id);
   });
   test("MCP lists use the bounded Agent projection; owner HTTP remains compatible", async () => {
-    const page = await mcp(supervisorId, "listIssues", { limit: 2 });
+    const page = await mcp(headId, "listIssues", { limit: 2 });
     expect(page.items).toHaveLength(2);
     expect(page.nextCursor).toBeString();
     expect(page.items[0]).not.toHaveProperty("body");
-    const workspace = await mcp(supervisorId, "workspace", {});
+    const workspace = await mcp(headId, "workspace", {});
     expect(workspace.profile.memory).toBe("CLAUDE.md");
     const ownerList = await action("listIssues", {});
     expect(Array.isArray(ownerList)).toBe(true);

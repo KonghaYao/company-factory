@@ -25,6 +25,7 @@ export type CompanyImThreadView = {
 
 const ROLE_LABELS: Record<string, string> = {
   hr: "HR",
+  "department-head": "部长",
   "task-supervisor": "任务主管",
   developer: "开发",
   preview: "预览",

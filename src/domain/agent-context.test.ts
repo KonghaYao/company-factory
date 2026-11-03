@@ -4,11 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CompanyDomain, type CallerContext, type Issue } from "./index";
 import { AgentContextView, CONTEXT_PAGE_BYTES } from "./agent-context";
+import { createDepartmentWithHead } from "./test-support";
 import { schemas } from "../server/operations";
 
 describe("Agent context is a bounded index of current facts", () => {
   let root: string, domain: CompanyDomain, view: AgentContextView;
-  let user: CallerContext, supervisor: CallerContext, hr: CallerContext;
+  let user: CallerContext, head: CallerContext, hr: CallerContext;
   let unansweredThreadId: string;
   beforeAll(async () => {
     root = await mkdtemp(join(tmpdir(), "company-context-view-"));
@@ -27,16 +28,17 @@ describe("Agent context is a bounded index of current facts", () => {
       { name: "Context fixture", requestId: "create" },
     );
     user = { type: "user", id: "owner", companyId: org.company.id };
-    supervisor = {
-      type: "agent",
-      id: org.agents.find((a) => a.role === "task-supervisor")!.agentId,
-      companyId: user.companyId,
-    };
     hr = {
       type: "agent",
       id: org.agents.find((a) => a.role === "hr")!.agentId,
       companyId: user.companyId,
     };
+    head = await createDepartmentWithHead(domain, hr, {
+      nodeId: "delivery",
+      headId: `${org.company.id}-head`,
+      nodeName: "Delivery",
+      headName: "Delivery Head",
+    });
     const seed = await domain.createIssue(user, {
       title: "seed",
       requestId: "seed",
@@ -58,7 +60,7 @@ describe("Agent context is a bounded index of current facts", () => {
         issue,
       );
     }
-    const asked = await domain.ask(supervisor, {
+    const asked = await domain.ask(head, {
       recipientId: hr.id,
       subject: "Waiting for a colleague",
       body: "UNANSWERED_MESSAGE_SENTINEL",
@@ -76,7 +78,7 @@ describe("Agent context is a bounded index of current facts", () => {
     // The first batch must remain discoverable through an Agent read surface.
     const oldPreview = await domain.savePreview(user, {
       id: "P1",
-      owner_id: supervisor.id,
+      owner_id: head.id,
       issue_ids: [issue.id],
       branch: "preview/old",
       code_refs: { [issue.id]: "old-code" },
@@ -142,7 +144,7 @@ describe("Agent context is a bounded index of current facts", () => {
     const ids: string[] = [];
     let cursor: string | undefined;
     do {
-      const page = await view.issues(supervisor, {
+      const page = await view.issues(head, {
         limit: 50,
         ...(cursor ? { cursor } : {}),
       });
@@ -156,18 +158,18 @@ describe("Agent context is a bounded index of current facts", () => {
     expect(new Set(ids).size).toBe(65);
     expect(ids[0]).toBe("1");
     expect(ids.at(-1)).toBe("65");
-    const full = await domain.getIssue(supervisor, { issueId: "1" });
+    const full = await domain.getIssue(head, { issueId: "1" });
     expect(full.body).toContain("FULL_BODY_SENTINEL");
   });
   test("history and status are explicit, cursors cannot be reused across filters or Agents", async () => {
-    const cancelled = await view.issues(supervisor, {
+    const cancelled = await view.issues(head, {
       status: ["cancel"],
       includeHistory: true,
     });
     expect(cancelled.items).toHaveLength(10);
-    const first = await view.issues(supervisor, { limit: 1 });
+    const first = await view.issues(head, { limit: 1 });
     await expect(
-      view.issues(supervisor, {
+      view.issues(head, {
         cursor: first.nextCursor,
         includeHistory: true,
       }),
@@ -182,13 +184,13 @@ describe("Agent context is a bounded index of current facts", () => {
       code: "invalid_input",
     });
     await expect(
-      domain.listIssues(hr, { agentId: supervisor.id }),
+      domain.listIssues(hr, { agentId: head.id }),
     ).rejects.toMatchObject({ code: "forbidden" });
     expect((await domain.listIssues(user)).length).toBe(75); // owner workbench compatibility
   });
   test("workspace exposes a bounded profile and lookup routes, not every historical body", async () => {
-    const result = await view.workspace(supervisor, {
-      agentId: supervisor.id,
+    const result = await view.workspace(head, {
+      agentId: head.id,
       limit: 50,
     });
     expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(
@@ -200,18 +202,18 @@ describe("Agent context is a bounded index of current facts", () => {
     expect(JSON.stringify(result)).not.toContain("FULL_BODY_SENTINEL");
   });
   test("an unanswered outgoing request remains discoverable without an inbox reply", async () => {
-    expect((await domain.inbox(supervisor)).items).toHaveLength(0);
-    const workspace = await view.workspace(supervisor, {});
+    expect((await domain.inbox(head)).items).toHaveLength(0);
+    const workspace = await view.workspace(head, {});
     const thread = workspace.threads.find(
       (row) => row.id === unansweredThreadId,
     );
     expect(thread).toMatchObject({
-      asker_id: supervisor.id,
+      asker_id: head.id,
       recipient_id: hr.id,
       status: "open",
       detail: { operation: "thread", threadId: unansweredThreadId },
     });
-    const detail = await domain.thread(supervisor, thread!.detail);
+    const detail = await domain.thread(head, thread!.detail);
     expect(detail.items[0].body).toBe("UNANSWERED_MESSAGE_SENTINEL");
     expect(JSON.stringify(workspace)).not.toContain(
       "UNANSWERED_MESSAGE_SENTINEL",
@@ -219,16 +221,16 @@ describe("Agent context is a bounded index of current facts", () => {
   });
   test("historical Previews retain a discoverable detail entry after replacement", async () => {
     expect(
-      (await domain.getIssue(supervisor, { issueId: "1" })).preview_batch,
+      (await domain.getIssue(head, { issueId: "1" })).preview_batch,
     ).toBe("P2");
-    const workspace = await view.workspace(supervisor, {});
+    const workspace = await view.workspace(head, {});
     const old = workspace.previews.find((row) => row.id === "P1");
     expect(old).toMatchObject({
-      owner_id: supervisor.id,
+      owner_id: head.id,
       issue_count: 1,
       detail: { operation: "getPreview", batchId: "P1" },
     });
-    const detail = await domain.getPreview(supervisor, old!.detail);
+    const detail = await domain.getPreview(head, old!.detail);
     expect(detail.body).toBe("OLD_PREVIEW_BODY_SENTINEL");
     expect(JSON.stringify(workspace)).not.toContain(
       "OLD_PREVIEW_BODY_SENTINEL",
@@ -241,7 +243,7 @@ describe("Agent context is a bounded index of current facts", () => {
     let moreThreads = true,
       morePreviews = true;
     do {
-      const result = await view.workspace(supervisor, {
+      const result = await view.workspace(head, {
         limit: 50,
         ...(threadCursor ? { threadCursor } : {}),
         ...(previewCursor ? { previewCursor } : {}),
@@ -274,24 +276,24 @@ describe("Agent context is a bounded index of current facts", () => {
     ]);
   });
   test("workspace schema preserves separate cursors and rejects cross-index or cross-Agent reuse", async () => {
-    const first = await view.workspace(supervisor, { limit: 1 });
+    const first = await view.workspace(head, { limit: 1 });
     const input = schemas.workspace.parse({
       limit: 1,
       cursor: first.nextCursor,
       threadCursor: first.nextThreadCursor,
       previewCursor: first.nextPreviewCursor,
     }) as Record<string, unknown>;
-    const second = await view.workspace(supervisor, input);
+    const second = await view.workspace(head, input);
     expect(second.issues[0].id).toBe("2");
     expect(second.threads[0].id).toBe("T2");
     expect(first.previews[0].id).toBe("P01");
     expect(second.previews[0].id).toBe("P1");
-    const issueOnly = await view.issues(supervisor, {
+    const issueOnly = await view.issues(head, {
       limit: 1,
       cursor: first.nextCursor,
     });
     expect(issueOnly.items).toEqual(second.issues);
-    const threadsOnly = await view.workspace(supervisor, {
+    const threadsOnly = await view.workspace(head, {
       limit: 1,
       threadCursor: first.nextThreadCursor,
     });
@@ -299,10 +301,10 @@ describe("Agent context is a bounded index of current facts", () => {
     expect(threadsOnly.previews[0].id).toBe("P01");
     expect(threadsOnly.threads[0].id).toBe("T2");
     await expect(
-      view.workspace(supervisor, { threadCursor: first.nextPreviewCursor }),
+      view.workspace(head, { threadCursor: first.nextPreviewCursor }),
     ).rejects.toMatchObject({ code: "invalid_input" });
     await expect(
-      view.workspace(supervisor, { previewCursor: first.nextCursor }),
+      view.workspace(head, { previewCursor: first.nextCursor }),
     ).rejects.toMatchObject({ code: "invalid_input" });
     await expect(
       view.workspace(hr, { threadCursor: first.nextThreadCursor }),
@@ -312,10 +314,10 @@ describe("Agent context is a bounded index of current facts", () => {
     ).rejects.toMatchObject({ code: "invalid_input" });
   });
   test("Issue summaries expose todo counts only", async () => {
-    const issue = await domain.getIssue(supervisor, { issueId: "1" });
+    const issue = await domain.getIssue(head, { issueId: "1" });
     const note =
       "short progress ".repeat(20) + "COMMENT_NOTE_SENTINEL";
-    const updated = await domain.updateTodos(supervisor, {
+    const updated = await domain.updateTodos(head, {
       issueId: issue.id,
       version: issue.version,
       changes: [
@@ -329,7 +331,7 @@ describe("Agent context is a bounded index of current facts", () => {
     });
     expect(updated.issue.todos![0]!.status).toBe("pending");
     expect(updated.comment.body).toBe(note);
-    const page = await view.issues(supervisor, { limit: 50 });
+    const page = await view.issues(head, { limit: 50 });
     expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThanOrEqual(
       CONTEXT_PAGE_BYTES,
     );
@@ -340,9 +342,9 @@ describe("Agent context is a bounded index of current facts", () => {
     expect(encoded).not.toContain("TODO_FULL_TEXT_SENTINEL");
     expect(encoded).not.toContain("COMMENT_NOTE_SENTINEL");
     // Full records and comment snapshots remain reachable through their reads.
-    const full = await domain.getIssue(supervisor, { issueId: issue.id });
+    const full = await domain.getIssue(head, { issueId: issue.id });
     expect(full.todos![0]!.text).toContain("TODO_FULL_TEXT_SENTINEL");
-    const comments = await domain.comments(supervisor, { issueId: issue.id });
+    const comments = await domain.comments(head, { issueId: issue.id });
     expect(comments.items[0]!.body).toBe(note);
     expect(comments.items[0]!.todo_snapshot).toEqual([
       {

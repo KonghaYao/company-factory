@@ -303,7 +303,7 @@ export default function App() {
       { companyId, agentId: target },
       { tab: "tasks", issueId: String(issue.id) },
     );
-    setToast(`Issue #${issue.id} 已创建，任务主管已成为当前负责人。`);
+    setToast(`Issue #${issue.id} 已创建并交给负责人处理。`);
   };
   const onAskHR = (text: string) => {
     const hr = agents.find((item) => item.role === "hr");

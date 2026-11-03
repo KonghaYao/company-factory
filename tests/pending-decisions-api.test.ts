@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApplication } from "../src/server/app";
+import { createDepartmentWithHead } from "../src/domain/test-support";
 import {
   MODULE_OPERATIONS,
   READ_OPERATIONS,
@@ -19,7 +20,7 @@ describe("Pending decision inbox HTTP/MCP contract", () => {
   let base: string;
   let cookie: string;
   let companyId: string;
-  let supervisorId: string;
+  let headId: string;
   let requestSeq = 0;
   const requestId = (label: string) => `${label}-${++requestSeq}`;
 
@@ -96,7 +97,7 @@ describe("Pending decision inbox HTTP/MCP contract", () => {
   }
   async function ask(issueId: string, question: string, options?: string[]) {
     const current = await read(issueId);
-    const written = await mcp(supervisorId, "tools/call", {
+    const written = await mcp(headId, "tools/call", {
       name: "askDecision",
       arguments: {
         issueId,
@@ -171,7 +172,17 @@ describe("Pending decision inbox HTTP/MCP contract", () => {
     expect(created.status).toBe(200);
     const organization = await created.json();
     companyId = organization.company.id;
-    supervisorId = `${companyId}-supervisor`;
+    const head = await createDepartmentWithHead(
+      application.domain,
+      { type: "agent", id: `${companyId}-hr`, companyId },
+      {
+        nodeId: "delivery",
+        headId: `${companyId}-head`,
+        nodeName: "Delivery",
+        headName: "Delivery Head",
+      },
+    );
+    headId = head.id;
   });
   afterAll(async () => {
     await application?.close();
@@ -239,7 +250,7 @@ describe("Pending decision inbox HTTP/MCP contract", () => {
       issueId: created.id,
       issueTitle: "Pending inbox A",
       issueStatus: "triage",
-      agentId: supervisorId,
+      agentId: headId,
       decisionId: `${created.id}-Q1`,
       question: "Which plan?",
       options: ["Plan A", "Plan B"],
@@ -345,7 +356,7 @@ describe("Pending decision inbox HTTP/MCP contract", () => {
     const archived = await actionJson(
       "archiveMember",
       {
-        agentId: supervisorId,
+        agentId: headId,
         expectedVersion: organization.organization.version,
         requestId: requestId("archive"),
       },
@@ -359,7 +370,7 @@ describe("Pending decision inbox HTTP/MCP contract", () => {
       (candidate) => candidate.issueId === created.id,
     )!;
     expect(item).toMatchObject({
-      agentId: supervisorId,
+      agentId: headId,
       decisionId: `${created.id}-Q1`,
       question: "Keep or drop?",
       options: ["Keep", "Drop"],
@@ -387,10 +398,10 @@ describe("Pending decision inbox HTTP/MCP contract", () => {
     expect(anonymous.status).toBe(401);
     expect((await anonymous.json()).error.code).toBe("unauthorized");
 
-    const supervisor = await application.domain
-      .getAgentInternal(supervisorId)
+    const head = await application.domain
+      .getAgentInternal(headId)
       .catch(() => undefined);
-    const bearer = supervisor?.authToken ?? randomBytes(32).toString("hex");
+    const bearer = head?.authToken ?? randomBytes(32).toString("hex");
     const agentCall = await fetch(
       base + "/api/decisions/pending?companyId=" + companyId,
       { headers: { authorization: `Bearer ${bearer}` } },

@@ -330,6 +330,19 @@ export class CompanyDomain {
       rosterRaw: roster.raw,
     };
   }
+  /**
+   * Department heads are an organization fact, not a role permission: every
+   * active node's `leadPersonId` grants the runtime authority below. Archiving
+   * a member clears those fields, so the authority disappears with it.
+   */
+  private async companyLeadIds(ctx: CallerContext): Promise<Set<string>> {
+    const { organization } = await this.organizationState(ctx);
+    return new Set(
+      organization.nodes
+        .filter((node) => node.status === "active" && !!node.leadPersonId)
+        .map((node) => node.leadPersonId as string),
+    );
+  }
   private async putOrganization(
     ctx: CallerContext,
     organization: Organization,
@@ -653,7 +666,9 @@ export class CompanyDomain {
           goal: String(input.goal ?? ""),
           roles: {
             hr: { permissions: [] },
-            "task-supervisor": { permissions: ["issue.create"] },
+            // A label only: department-head authority comes from an active
+            // organization node's leadPersonId at runtime.
+            "department-head": { permissions: [] },
             secretary: {
               permissions: ["issue.create", "issue.assign", "issue.search"],
             },
@@ -708,14 +723,6 @@ export class CompanyDomain {
             groupId: "headquarters",
             role: "hr",
             responsibilities: "讨论岗位职责、能力与交付要求，创建正式 Agent。",
-            config: input.config ?? {},
-          },
-          {
-            agentId: `${id}-supervisor`,
-            name: "任务主管",
-            groupId: "headquarters",
-            role: "task-supervisor",
-            responsibilities: "创建、分类、选择流程、指派 Issue，协调交接。",
             config: input.config ?? {},
           },
           {
@@ -2191,8 +2198,10 @@ export class CompanyDomain {
     const company = await this.company(ctx);
     if (ctx.type === "agent") {
       const a = await this.getAgentInternal(ctx.id);
+      const leads = await this.companyLeadIds(ctx);
       requireValue(
-        company.roles[a.role]?.permissions.includes("issue.search"),
+        leads.has(a.agentId) ||
+          company.roles[a.role]?.permissions.includes("issue.search"),
         "forbidden",
         "Role does not have issue.search",
         403,
@@ -2315,12 +2324,49 @@ export class CompanyDomain {
     await this.related(ctx, issue);
     return issue;
   }
+  /**
+   * Default owner for a newly created Issue: headquarters' department head
+   * first, then the first active node lead in organization order, then the
+   * legacy task supervisor. Departments are preferred over the old model.
+   */
+  private async defaultIssueOwnerId(
+    ctx: CallerContext,
+  ): Promise<string | undefined> {
+    const { organization, roster } = await this.organizationState(ctx);
+    const headquarters = organization.nodes.find(
+      (node) =>
+        node.id === "headquarters" &&
+        node.status === "active" &&
+        !!node.leadPersonId,
+    );
+    const lead = headquarters
+      ? headquarters.leadPersonId
+      : organization.nodes.find(
+          (node) => node.status === "active" && !!node.leadPersonId,
+        )?.leadPersonId;
+    if (lead) return lead;
+    for (const member of roster.members) {
+      if (member.status !== "active") continue;
+      const candidate = await this.getAgentInternal(member.agentId);
+      if (
+        candidate.companyId === ctx.companyId &&
+        candidate.role === "task-supervisor"
+      )
+        return candidate.agentId;
+    }
+    return undefined;
+  }
   async createIssue(ctx: CallerContext, input: Input) {
     return this.mutate(ctx, "createIssue", input, async () => {
       const a = await this.access(ctx);
       const company = await this.company(ctx);
+      const leads = await this.companyLeadIds(ctx);
+      const isLead = !!a && leads.has(a.agentId);
       requireValue(
-        !a || company.roles[a.role]?.permissions.includes("issue.create"),
+        !a ||
+          a.role === "task-supervisor" ||
+          isLead ||
+          company.roles[a.role]?.permissions.includes("issue.create"),
         "forbidden",
         "Role does not have issue.create",
         403,
@@ -2328,6 +2374,7 @@ export class CompanyDomain {
       const canDispatch =
         !a ||
         a.role === "task-supervisor" ||
+        isLead ||
         !!company.roles[a.role]?.permissions.includes("issue.assign");
       const dispatches =
         input.assigneeAgentId !== undefined ||
@@ -2339,24 +2386,7 @@ export class CompanyDomain {
         "Role does not have issue.assign",
         403,
       );
-      const roster = await this.roster(ctx);
-      let supervisor: InternalAgent | undefined;
-      for (const member of roster.members) {
-        if (member.status !== "active") continue;
-        const candidate = await this.getAgentInternal(member.agentId);
-        if (
-          candidate.companyId === ctx.companyId &&
-          candidate.role === "task-supervisor"
-        ) {
-          supervisor = candidate;
-          break;
-        }
-      }
-      requireValue(
-        supervisor,
-        "invalid_state",
-        "Company has no task supervisor",
-      );
+      const defaultOwnerId = await this.defaultIssueOwnerId(ctx);
       let assignee: InternalAgent | undefined;
       if (input.assigneeAgentId !== undefined) {
         const assigneeId = safeId(input.assigneeAgentId, "assigneeAgentId");
@@ -2375,12 +2405,17 @@ export class CompanyDomain {
           409,
         );
         requireValue(
-          !a || a.role === "task-supervisor" || assignee.agentId !== a.agentId,
+          !a || assignee.agentId !== a.agentId,
           "forbidden",
           "An Agent cannot assign an Issue to itself",
           403,
         );
       }
+      requireValue(
+        !!assignee || !!defaultOwnerId,
+        "invalid_state",
+        "Company has no department head; create a department and its head first",
+      );
       let type: string | null = null;
       if (input.type !== undefined)
         type = input.type === null ? null : cleanText(input.type, "type", 100);
@@ -2403,7 +2438,7 @@ export class CompanyDomain {
       const id = String(
         Math.max(0, ...files.map((f) => Number.parseInt(f) || 0)) + 1,
       );
-      const ownerAgentId = assignee?.agentId ?? supervisor.agentId;
+      const ownerAgentId = assignee?.agentId ?? defaultOwnerId!;
       const issue: Issue = {
         id,
         title: cleanText(input.title, "title", 500),
@@ -2420,17 +2455,17 @@ export class CompanyDomain {
         created_by_type: ctx.type,
         created_by_id: ctx.id,
         history:
-          ownerAgentId === supervisor.agentId
-            ? []
-            : [
+          assignee && defaultOwnerId && assignee.agentId !== defaultOwnerId
+            ? [
                 {
                   at: now(),
-                  from: supervisor.agentId,
+                  from: defaultOwnerId,
                   to: ownerAgentId,
                   by: ctx.id,
                   reason: cleanText(input.reason, "reason"),
                 },
-              ],
+              ]
+            : [],
         code_ref: null,
         plan_ref: null,
         worktree: null,
@@ -2538,13 +2573,15 @@ export class CompanyDomain {
   async assignIssue(ctx: CallerContext, input: Input) {
     return this.mutate(ctx, "assignIssue", input, async () => {
       const a = await this.access(ctx);
-      const supervised = a?.role === "task-supervisor";
-      if (a && !supervised) {
+      const leads = a ? await this.companyLeadIds(ctx) : new Set<string>();
+      const companyWide =
+        !a || a.role === "task-supervisor" || leads.has(a.agentId);
+      if (a && !companyWide) {
         const company = await this.company(ctx);
         requireValue(
           company.roles[a.role]?.permissions.includes("issue.assign"),
           "forbidden",
-          "Requires task-supervisor or issue.assign",
+          "Requires user, department head or issue.assign",
           403,
         );
       }
@@ -2552,7 +2589,7 @@ export class CompanyDomain {
         this.issuePath(ctx, String(input.issueId)),
       );
       const targetId = safeId(input.agentId, "agentId");
-      if (a && !supervised) {
+      if (a && !companyWide) {
         requireValue(
           issue.created_by_type === "agent" &&
             issue.created_by_id === a.agentId,
@@ -2560,13 +2597,13 @@ export class CompanyDomain {
           "issue.assign may only reassign Issues you created",
           403,
         );
-        requireValue(
-          targetId !== a.agentId,
-          "forbidden",
-          "An Agent cannot assign an Issue to itself",
-          403,
-        );
       }
+      requireValue(
+        !a || targetId !== a.agentId,
+        "forbidden",
+        "An Agent cannot assign an Issue to itself",
+        403,
+      );
       this.version(issue, input);
       requireValue(
         issue.status !== "cancel",

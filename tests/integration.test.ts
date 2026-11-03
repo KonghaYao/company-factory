@@ -32,7 +32,7 @@ if (!enabled)
       cookie: string;
     let user: CallerContext,
       hr: CallerContext,
-      supervisor: CallerContext,
+      head: CallerContext,
       dev: CallerContext,
       preview: CallerContext;
     const requestId = () => crypto.randomUUID();
@@ -155,11 +155,6 @@ if (!enabled)
       });
       user = { type: "user", id: "owner", companyId: company.id };
       hr = { type: "agent", id: `${company.id}-hr`, companyId: company.id };
-      supervisor = {
-        type: "agent",
-        id: `${company.id}-supervisor`,
-        companyId: company.id,
-      };
       dev = { type: "agent", id: "integrated-dev", companyId: company.id };
       preview = { type: "agent", id: "integrated-preview", companyId: company.id };
     }, 120000);
@@ -171,7 +166,7 @@ if (!enabled)
     test("A01 real Sessions, HQ, tracked files and Git history", async () => {
       const org = await api(`/api/companies/${user.companyId}`);
       expect(org.groups[0].name).toBe("总部");
-      expect(org.agents).toHaveLength(3);
+      expect(org.agents).toHaveLength(2);
       for (const a of org.agents) {
         expect(a.sessionId).toMatch(/^[0-9a-f-]{36}$/);
         const chat = await api(
@@ -234,6 +229,31 @@ if (!enabled)
           (await application.domain.getAgentInternal(ctx.id)).sessionId,
         ).toMatch(/^[0-9a-f-]{36}$/);
       }
+      const headId = `${user.companyId}-head`;
+      r = await mcp(hr.id, "company_org", "tools/call", {
+        name: "createMember",
+        arguments: {
+          agentId: headId,
+          name: "工程部长",
+          groupId: "engineering",
+          role: "department-head",
+          responsibilities: "Lead the engineering department",
+          requestId: requestId(),
+        },
+      });
+      expect(r.data.result.isError).not.toBe(true);
+      const organization = await application.domain.organization(user);
+      r = await mcp(hr.id, "company_org", "tools/call", {
+        name: "updateOrgNode",
+        arguments: {
+          id: "engineering",
+          leadPersonId: headId,
+          expectedVersion: organization.organization.version,
+          requestId: requestId(),
+        },
+      });
+      expect(r.data.result.isError).not.toBe(true);
+      head = { type: "agent", id: headId, companyId: user.companyId };
       await expect(
         call("company_org", "createMember", {
           agentId: "impersonated",
@@ -278,14 +298,14 @@ if (!enabled)
       );
       expect(new Set(chats.map((x) => x.sessionId)).size).toBe(1);
     }, 30000);
-    test("A04/05 user+supervisor create, role deny writes no file, comments and CAS persist", async () => {
+    test("A04/05 user+head create, role deny writes no file, comments and CAS persist", async () => {
       const one: any = await call("company_tasks", "createIssue", {
         title: "Independent one",
         body: "Initial body",
       });
-      expect(one.agent_id).toBe(supervisor.id);
+      expect(one.agent_id).toBe(head.id);
       expect(one.status).toBe("triage");
-      const two = await mcp(supervisor.id, "company_tasks", "tools/call", {
+      const two = await mcp(head.id, "company_tasks", "tools/call", {
         name: "createIssue",
         arguments: { title: "Independent two", requestId: requestId() },
       });
@@ -326,7 +346,7 @@ if (!enabled)
             body: "Steal",
             expectedVersion: 2,
           },
-          supervisor,
+          head,
         ),
       ).rejects.toMatchObject({ code: "forbidden" });
       expect(
@@ -350,7 +370,7 @@ if (!enabled)
             type: "software-change",
             pipeline: "software-delivery",
           },
-          supervisor,
+          head,
         );
       }
       let i = await application.domain.getIssue(dev, { issueId: "1" });
@@ -595,7 +615,7 @@ if (!enabled)
             reason: "Joint preview",
             collaborators: [dev.id],
           },
-          supervisor,
+          head,
         );
         check[issueId] = [`Fixture Issue ${issueId} is reachable`];
       }
@@ -779,7 +799,7 @@ if (!enabled)
       const forged = await fetch(base + "/company_tasks/mcp", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ caller: supervisor }),
+        body: JSON.stringify({ caller: head }),
       });
       expect(forged.status).toBe(401);
       const csrf = await fetch(base + "/api/action", {
@@ -807,15 +827,15 @@ if (!enabled)
         dev,
       );
       expect(granted.status).toBe("triage");
-      expect(granted.agent_id).toBe(supervisor.id);
+      expect(granted.agent_id).toBe(head.id);
       const views = await Promise.all(
-        [dev.id, supervisor.id, preview.id, hr.id, dev.id].map((agentId) =>
+        [dev.id, head.id, preview.id, hr.id, dev.id].map((agentId) =>
           api(`/api/agents/${agentId}/workspace?companyId=${user.companyId}`),
         ),
       );
       expect(views.map((v) => v.agentId)).toEqual([
         dev.id,
-        supervisor.id,
+        head.id,
         preview.id,
         hr.id,
         dev.id,
@@ -825,7 +845,7 @@ if (!enabled)
       expect(anonymous.status).toBe(401);
     });
     test("A15 actual MCP 0728 subscriptions stream resource invalidations after durable mutation", async () => {
-      const a = await application.domain.getAgentInternal(supervisor.id);
+      const a = await application.domain.getAgentInternal(head.id);
       const controller = new AbortController();
       const method = "subscriptions/listen";
       const response = await fetch(`${base}/company_tasks/mcp`, {

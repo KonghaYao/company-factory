@@ -35,7 +35,7 @@ export function CreateCompany({
     <Sheet
       open
       title="建立你的 Company"
-      subtitle="一个组织，一份事实来源。初始化会创建总部、HR 与任务主管，以及各自的固定会话。"
+      subtitle="一个组织，一份事实来源。初始化会创建总部、HR 与秘书，以及各自的固定会话。"
       onClose={onClose}
     >
       <form

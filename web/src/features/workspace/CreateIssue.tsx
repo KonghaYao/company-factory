@@ -35,7 +35,7 @@ export function CreateIssue({
     <Sheet
       open
       title="创建 Issue"
-      subtitle="新 Issue 进入待分类，由任务主管接收、选择流程并分派。聊天不会自动生成任务。"
+      subtitle="新 Issue 默认交给第一个部门的部长；部门尚未建立时会提示先创建部门与部长。聊天不会自动生成任务。"
       onClose={onClose}
     >
       <form

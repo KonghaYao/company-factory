@@ -122,7 +122,7 @@ export function TasksView({
         <EmptyState
           icon={<GitBranch size={22} />}
           title="还没有关联任务"
-          description="新建一个 Issue，任务主管会接收并分派；聊天不会被自动记成任务。"
+          description="新建一个 Issue，部门部长会接收并分派；聊天不会被自动记成任务。"
         >
           <Button variant="secondary" size="sm" onClick={onCreate}>
             <Plus size={14} />

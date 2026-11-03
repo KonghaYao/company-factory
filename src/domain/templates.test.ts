@@ -16,6 +16,7 @@ describe("member managed profile", () => {
   test("injects multitasking, colleague trust, task progress, decision and company asset guidance for every role", () => {
     for (const role of [
       "hr",
+      "department-head",
       "task-supervisor",
       "secretary",
       "developer",
@@ -76,6 +77,8 @@ describe("member managed profile", () => {
         expect(block).toContain("searchIssues");
         expect(block).toContain("assignIssue");
         expect(block).toContain("不承接交付");
+        expect(block).toContain("leadPersonId");
+        expect(block).not.toContain("回退任务主管");
       } else {
         expect(block).not.toContain("interview");
       }

@@ -133,3 +133,14 @@
 - **interview skill 投递**：源文件为 `templates/skills/interview/SKILL.md`，经既有 `company_org` MCP 的 `ResourceForSkills` 提供 `skill://interview/SKILL.md`；只由 `roleGuidance.secretary` 引用，不进入冻结系统提示词，也不是每 Agent 安装。
 - **权限授予**：`setRolePermissions` 白名单扩展为 `issue.create` / `issue.assign` / `issue.search`，仍由 HR/user 授予，与既有 `issue.create` 一致。
 - **状态**：生效中
+
+## 15. 部门部长取代默认任务主管（2026-11-03）
+
+- **决策**：新公司只创建总部、HR 和秘书两个默认成员，不再预置 `task-supervisor` 成员或角色。部门部长成为默认负责人：只要是 active 组织节点的 `leadPersonId`，运行时即获得 `issue.create`、`issue.assign`、`issue.search`，不依赖 `company.yaml.roles` 中给部长角色配置权限。
+- **组织事实**：`department-head` 是默认标签角色，`permissions` 为空；谁是部长完全由组织节点 `leadPersonId` 决定。`archiveMember` 清空节点 `leadPersonId` 后，部长权限自动失效。`assignIssue` 的部长授权是公司级改派，可改派任意未取消 Issue，但仍禁止任何 Agent 把 Issue 派给自己。
+- **默认 owner**：`createIssue` 未传 `assigneeAgentId` 时，优先总部 `leadPersonId`，其次按 `organization.nodes` 顺序第一个 active 节点负责人；旧公司仍可回退 active `task-supervisor`。两者都没有时返回 `invalid_state`，提示先创建部门与部长。
+- **HR 建部门流程**：HR 成立部门时先创建 `department-head` 部长成员，再 `updateOrgNode` 设为该节点 `leadPersonId`，然后创建其他成员；这是部门成立流程的一部分，不向用户确认，也不新增“原子创建部门+部长”的服务端接口。
+- **秘书派单**：秘书继续使用 `company_org.organization` 返回的 `responsibilities`、`orgPath` 与节点 `leadPersonId`，按“目标节点负责人 → 最近 active 祖先节点负责人 → 继续访谈/追问用户”找负责人，不再回退任务主管，也不新增查询接口。
+- **兼容**：旧公司的 `task-supervisor` 角色、成员、默认 owner 回退和公司级改派能力原样保留；不做静默迁移。UI 新成员岗位下拉不再提供任务主管，但历史消息标签保留。
+- **边界**：不新增 MCP 操作、通知类型、状态机、调度器或工作流引擎；部长不是新的硬编码权限角色。
+- **状态**：生效中

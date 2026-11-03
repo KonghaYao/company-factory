@@ -128,9 +128,9 @@ async function fixture(outcome: () => Outcome) {
       id: "dev-1",
       companyId: company.id,
     },
-    supervisor: {
+    secretary: {
       type: "agent" as const,
-      id: `${company.id}-supervisor`,
+      id: `${company.id}-secretary`,
       companyId: company.id,
     },
   };
@@ -152,7 +152,7 @@ describe("IM delivery state machine", () => {
   test("in-flight deliveries expose metadata only while the process is sending", async () => {
     const f = await fixture(() => "deferred");
     const ask = await f.domain.ask(f.dev, {
-      recipientId: f.supervisor.id,
+      recipientId: f.secretary.id,
       subject: "In flight",
       body: "Still sending",
       requestId: "ask-in-flight",
@@ -163,7 +163,7 @@ describe("IM delivery state machine", () => {
       companyId: f.dev.companyId,
       messageId: ask.messageId,
       threadId: ask.threadId,
-      recipientId: f.supervisor.id,
+      recipientId: f.secretary.id,
     });
     expect(typeof inFlight[0]!.startedAt).toBe("string");
     expect(f.domain.inFlightDeliveries("other-company")).toEqual([]);
@@ -184,7 +184,7 @@ describe("IM delivery state machine", () => {
     const f = await fixture(() => "failed");
     const delivered = f.nextDelivery();
     const ask = await f.domain.ask(f.dev, {
-      recipientId: f.supervisor.id,
+      recipientId: f.secretary.id,
       subject: "Failed",
       body: "Retryable",
       requestId: "ask-failed",
@@ -217,7 +217,7 @@ describe("IM delivery state machine", () => {
     const f = await fixture(() => "unknown");
     const delivered = f.nextDelivery();
     const ask = await f.domain.ask(f.dev, {
-      recipientId: f.supervisor.id,
+      recipientId: f.secretary.id,
       subject: "Unknown",
       body: "Do not resend",
       requestId: "ask-unknown",
@@ -244,7 +244,7 @@ describe("IM delivery state machine", () => {
     const f = await fixture(() => "unknown-receipt");
     const delivered = f.nextDelivery();
     const ask = await f.domain.ask(f.dev, {
-      recipientId: f.supervisor.id,
+      recipientId: f.secretary.id,
       subject: "Unknown receipt",
       body: "No proof of admission",
       requestId: "ask-unknown-receipt",
@@ -268,7 +268,7 @@ describe("IM delivery state machine", () => {
     const f = await fixture(() => "throw");
     const delivered = f.nextDelivery();
     const ask = await f.domain.ask(f.dev, {
-      recipientId: f.supervisor.id,
+      recipientId: f.secretary.id,
       subject: "Thrown",
       body: "Adapter crashed",
       requestId: "ask-throw",

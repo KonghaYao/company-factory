@@ -703,7 +703,7 @@ Agent 交付 UI 改动时附一张简短结果表，包含以下内容；检查�
 
 ### 13.1 为什么需要秘书 Agent
 
-Owner 或公司层面的想法、会议记录、文档片段和临时需求，通常还不是可直接执行的 Issue：需要澄清目标、拆成可独立验收的交付，再找到合适的组织节点和负责人。现有入口只有“用户直接建 Issue（默认交给任务主管分类）”或“与某个成员聊天”，缺少一个稳定的入口承担“把话说清楚”和“把人找对”。
+Owner 或公司层面的想法、会议记录、文档片段和临时需求，通常还不是可直接执行的 Issue：需要澄清目标、拆成可独立验收的交付，再找到合适的组织节点和负责人。现有入口只有“用户直接建 Issue（默认交给部门部长分类）”或“与某个成员聊天”，缺少一个稳定的入口承担“把话说清楚”和“把人找对”。
 
 秘书就是这个入口：把原始输入转化为 1..n 条 Issue，按组织负责人派单并启动领导的固定 Session，后续只读跟进。需求还不可执行时，秘书先加载 `interview` skill 逐题澄清；访谈收敛后直接创建并派单，不设“先给 Owner 看计划再创建”的审批门。它不替领导交付，不替 Owner 验收，也不引入新的调度器、工作流引擎或 Issue 层级。一句话：秘书负责“把话说清楚”和“把人找对”，不负责“把活干完”，也不负责“验收”。
 
@@ -727,13 +727,13 @@ Owner 或公司层面的想法、会议记录、文档片段和临时需求，�
 | 2. 读取事实 | 读 `company_org.organization`、`listPipelines`；需要时搜索 `knowledgebase/`；读自己创建的或参与的 Issue | 得到组织、负责人、流程和既有工作 |
 | 3. 访谈 / 澄清 | 需求已可执行时直接进入创建；否则加载 `interview` skill，按它逐题澄清交付物、验收标准、范围、约束和负责人依据，每题给出推荐项 | 每条拟创建 Issue 都有目标、验收、边界和负责人依据 |
 | 4. 查重 | 用 `searchIssues` 按标题、摘要、ID、type、pipeline 搜索同主题 Issue；同主题只引用 ID，不重复创建 | 避免重复任务，并保留引用 |
-| 5. 拆分与找领导 | 按“目标节点 `leadPersonId` → 最近的 active 祖先节点负责人 → `task-supervisor` → 继续访谈 / 追问”确定负责人；跳过归档成员和自己 | 形成 Issue 草案与负责人建议 |
+| 5. 拆分与找领导 | 按“目标节点 `leadPersonId` → 最近的 active 祖先节点负责人（部长）→ 继续访谈 / 追问”确定负责人；跳过归档成员和自己 | 形成 Issue 草案与负责人建议 |
 | 6. 直接创建 / 派单 | 访谈收敛后逐条 `createIssue`，带 `assigneeAgentId`、可选 `type` / `pipeline` / `reason`；不等待 Owner 另行确认计划；用户说“直接做”时跳过访谈但仍补齐最小验收标准 | Issue 直接归属领导；写一条 history；只向最终 owner 发一次事实通知 |
 | 7. 领导启动 | 既有事实通知唤醒领导的固定 Session；领导自行决定 plan / code / preview 等步骤 | 不新增“领取 / 开始”操作，不新增状态 |
 | 8. 跟进 | 秘书只读 `getIssue`、`comments`，必要时 `addComment`；需要领导注意时用 `company_im` 指向 Issue | 秘书不推进状态；评论、状态、todo 不触发通知，秘书是 pull 式跟进 |
 | 9. 完成与验收 | 领导沿用现有流水线推进；reviewer 记录验证；Owner 验收 | `acceptPreview` 仍只能由 user 执行，秘书永不验收 |
 
-**找领导的回退规则**：目标节点没有负责人就向上找最近的 active 祖先节点负责人；仍没有则回退任务主管；任务明显属于某部门但只能回退主管、跨节点归属不清、或多个候选同样合理时，先问 Owner，不猜。**找领导是 Agent 读组织后的语义判断，不新增 `findNodeLeader` 领域方法或 MCP 操作。**
+**找领导的回退规则**：目标节点没有负责人就向上找最近的 active 祖先节点负责人（部长）；仍没有则继续访谈或追问 Owner。跨节点归属不清、多个候选同样合理或任务明显属于某部门但该部门没有部长时，先问 Owner，不猜。部长是节点 `leadPersonId` 这一组织事实，不新增 `findNodeLeader` 领域方法或 MCP 操作。
 
 **失败与回退**：
 
@@ -742,15 +742,15 @@ Owner 或公司层面的想法、会议记录、文档片段和临时需求，�
 | 访谈中答案互相矛盾 / 验收无法确定 | 继续访谈或明确报告冲突；不创建 |
 | 用户说“直接做” | 停止访谈；用现有信息创建，未决点写进 `body`；仍补齐最小验收标准 |
 | `interview` skill 无法加载 | 报告 `company_org` MCP 错误；可在 Chat 中按同样规则继续访谈，但不要假装已加载 skill |
-| 目标节点及祖先都没有负责人 | 回退 `task-supervisor`；任务明显属于某部门时继续访谈或追问 |
+| 目标节点及祖先都没有负责人 | 继续访谈或追问 Owner；任务明显属于某部门时先补齐该部门部长 |
 | 领导或节点已归档 | 跳过该候选继续向上；绝不向归档成员派单 |
 | 多个领导都合理 | 拆成多条 Issue 分别派；无法拆则继续访谈或追问 |
 | 领导就是秘书自己 | 跳过，向上回退或继续追问；服务端也禁止自派 |
-| 公司没有 `task-supervisor` | `createIssue` 返回 `invalid_state`；如实报告 Owner，不绕过 |
+| 公司没有部门部长 | `createIssue` 返回 `invalid_state`；如实报告 Owner，先由 HR 创建部门与部长，不绕过 |
 | `pipeline` 不存在 | 返回 `not_found`；改用 `listPipelines` 中存在的流程或留空 |
 | 领导 Session 忙或未配置模型 | 既有通知记为 failed，Owner 在 WorkNotices 看到并可重试；秘书不假装已启动 |
 | 领导归档后 Issue 仍在 | 秘书作为 creator 可按 Owner 指示改派自己创建的 Issue |
-| 领导需要再分派 | 领导没有 `issue.assign`；通过 IM 指向 Issue，请秘书或主管改派，或使用 Subagent 执行 |
+| 领导需要再分派 | 部长通过 `leadPersonId` 自动拥有公司级改派；其他领导可请秘书或部长改派，或使用 Subagent 执行 |
 | 需要修正 Issue body | 秘书不能 `updateIssue`；用评论记录修正并 IM 提醒 owner，或请 Owner 直接改 |
 
 “启动”沿用 `createIssue` / `assignIssue` 的既有事实通知机制，向最终 owner 发一次通知并唤醒领导的固定 Session；不新增领取 / 开始操作、通知类型或状态机。“完成”沿用现有流水线。MVP 不做定时跟进、超时升级或自动重试。
@@ -765,8 +765,8 @@ Owner 或公司层面的想法、会议记录、文档片段和临时需求，�
 
 ### 13.5 权限与可见性
 
-- **创建与派单**：`createIssue` 接受可选 `assigneeAgentId`、`type`、`pipeline`、`reason`。user、`task-supervisor` 和持有 `issue.assign` 的角色可指定负责人；创建即归属领导，只生成一条 history（主管 → 领导，`by` 为秘书），只向最终 owner 发一次事实通知，不先给主管再改派。
-- **改派**：持有 `issue.assign` 的 Agent 只能改派自己创建的 Issue，且不能派给自己；`task-supervisor` 和 user 的既有权力不变。授权看权限，不硬编码角色名。
+- **创建与派单**：`createIssue` 接受可选 `assigneeAgentId`、`type`、`pipeline`、`reason`。user、旧公司的 `task-supervisor`、active 节点部长（`leadPersonId`）和持有 `issue.assign` 的角色可指定负责人；显式负责人不同于默认负责人时生成一条 history（默认负责人 → 领导，`by` 为秘书），只向最终 owner 发一次事实通知，不先给默认负责人再改派。
+- **改派**：持有 `issue.assign` 的 Agent 只能改派自己创建的 Issue；`task-supervisor`、active 节点部长和 user 保留公司级改派权。所有 Agent（包括任务主管和部长）都不能把 Issue 派给自己。授权优先看 active 节点 `leadPersonId` 与角色权限，旧公司保留 `task-supervisor` 兼容分支。
 - **创建者可见性**：Issue 记录 `created_by_type` / `created_by_id`，并纳入 `related()`、`listIssues` 和 `AgentContextView.selectedIssues`。秘书因此能读自己创建的 Issue、读评论、追加评论；但不自动成为 collaborator，因为 collaborator 表示参与执行。
 - **只读跟进**：秘书不能 `updateIssue`、`updateTodos`、`askDecision`、`cancelIssue`，不能验收或验证；这些仍是当前 owner 或 user 的权限。验收只能由 Owner 完成。
 - **读取范围**：MVP 秘书只读自己创建的 Issue + Owner 在对话中提供的内容；不获得公司全部 Issue 的读取权，也不新增 `issue.read_all`。若未来需要引用任意历史 Issue 或去重，单独设计只读权限，并与评论写权限分开。
@@ -777,23 +777,24 @@ Owner 或公司层面的想法、会议记录、文档片段和临时需求，�
 | 角色 | 与秘书的边界 |
 | --- | --- |
 | Owner | 需求来源、拆分确认和验收的唯一主体；可取消任何 Issue；秘书不代替 Owner 做验收或回答决策 |
-| task-supervisor | 默认协调人和找不到领导时的回退；保留全量改派权；秘书不取代任务主管，也不改变主管的默认 owner 语义 |
-| HR | 负责组织建设、成员创建和角色权限；不是交付回退人选；秘书不创建成员或改权限 |
-| 节点负责人 | 被派单后的 Issue owner，可继续用 IM 请秘书 / 主管改派；自己不会因职位自动获得 `issue.assign` |
+| 部门部长 | active 组织节点的 `leadPersonId`；默认 owner 和公司级改派者，负责本部门协作与任务分流。不是硬编码权限角色，归档清空 lead 后自动失效 |
+| task-supervisor（旧公司） | 旧模型兼容角色：保留默认 owner 回退和公司级改派权；新公司不再创建，秘书不再回退到它 |
+| HR | 负责组织建设、成员创建和角色权限；成立部门时先创建部长并设置 `leadPersonId`，不向用户确认；不是交付回退人选 |
+| 节点负责人 | 被派单后的 Issue owner；作为部长时自动拥有 `issue.create` / `issue.assign` / `issue.search`，普通成员不会因职位自动获得 |
 | developer / preview / reviewer | 权限和流水线不变；reviewer 仍按真实证据记录验证，验收仍只属于 Owner |
 
 ### 13.7 新公司与现有公司
 
-**新公司（已确认）**：`company.yaml` 预置 `secretary` 角色，权限为 `["issue.create","issue.assign","issue.search"]`，并在 `headquarters` 默认创建 `<companyId>-secretary` 作为第三个固定成员。秘书不设置 `leadPersonId`，避免被当作交付负责人或自派对象。初始化、重试和幂等沿用现有成员创建逻辑；代价是多一个固定 Session 和相应测试计数。
+**新公司（已确认）**：`company.yaml` 预置 `secretary` 角色（权限为 `["issue.create","issue.assign","issue.search"]`）和空的 `department-head` 标签角色，并在 `headquarters` 默认创建 `<companyId>-hr` 与 `<companyId>-secretary` 两个固定成员；不再创建 `task-supervisor` 角色或成员。秘书不设置 `leadPersonId`，避免被当作交付负责人或自派对象。初始化、重试和幂等沿用现有成员创建逻辑；代价是两个固定 Session 和相应测试计数。
 
-**现有公司**：不做静默迁移，也不写迁移脚本。Owner 通过 HR 对话完成一次性设置：先用 `company_org.setRolePermissions` 新建角色 `secretary` 并授予 `issue.create`、`issue.assign`、`issue.search`，再用 `company_org.createMember` 在总部创建「秘书」成员。新成员创建时自动获得固定 Session 和 `roleGuidance.secretary`，不需要重启或 profile 刷新；已有成员不需要重建 Session。直接改 `company.yaml` 会绕过领域校验、CAS 和 Git 提交，不采用。
+**现有公司**：不做静默迁移，也不写迁移脚本。旧公司的 `task-supervisor` 角色、成员、默认 owner 回退和公司级改派能力原样保留；新公司不再创建该角色。需接入新模型的现有公司由 Owner 通过 HR 对话创建部门与部长：先 `createOrgNode`，再创建 `role: "department-head"` 成员，最后 `updateOrgNode` 设置该节点 `leadPersonId`。新成员自动获得固定 Session 和对应 `roleGuidance`，不需要重启或 profile 刷新；已有成员不需要重建 Session。
 
 ### 13.8 UI 影响
 
-- 组织设置的角色下拉增加 `secretary`（显示为「Secretary · 秘书」），让新公司和现有公司都能通过“交给 HR 创建”获得秘书。
-- IM 消息行的角色标签增加 `secretary: "秘书"`。
-- 组织侧栏在没有 placement title 时可能显示原始 `secretary`；可接受，后续可由 Owner 用 `moveMember` 设置展示岗位「秘书」，或统一角色标签映射。
-- **不改**创建 Issue 弹窗的负责人选择：Owner 走秘书；直接建 Issue 仍默认交给主管分类。
+- 组织设置的角色下拉增加 `secretary`（显示为「Secretary · 秘书」）和 `department-head`（显示为「Department Head · 部长」），让新公司和现有公司都能通过“交给 HR 创建”获得秘书与部长。
+- IM 消息行的角色标签增加 `secretary: "秘书"` 与 `"department-head": "部长"`；保留 `"task-supervisor": "任务主管"` 以显示旧公司历史消息。
+- 组织侧栏在没有 placement title 时可能显示原始 `secretary` 或 `department-head`；可接受，后续可由 Owner 用 `moveMember` 设置展示岗位，或统一角色标签映射。
+- **更新**创建 Issue 弹窗文案：新 Issue 默认交给第一个部门部长；部门尚未建立时提示先创建部门与部长，不再出现“任务主管”。
 - **不改**角色权限编辑 UI；现有公司通过 HR 对话设置权限。
 - **不默认**把 Owner 的聊天对象切到秘书；首屏仍按现有 roster 顺序（HR）。
 - **不新增**秘书专属页面、skill 安装状态或副本管理；秘书以普通成员行和普通 Chat 出现。
@@ -804,11 +805,12 @@ Owner 或公司层面的想法、会议记录、文档片段和临时需求，�
 **MVP 必须**：
 
 - `secretary` 角色、`issue.create` + `issue.assign` + `issue.search` 权限、`roleGuidance.secretary`。
+- `department-head` 标签角色与 active 节点 `leadPersonId` 运行时的 `issue.create` / `issue.assign` / `issue.search` 授权；`roleGuidance["department-head"]`。
 - `interview` skill（`templates/skills/interview/SKILL.md`，经 `company_org` MCP 投递）。
-- 新公司默认秘书成员（已确认，不设开关）。
-- `createIssue` 的可选 `assigneeAgentId` / `type` / `pipeline` / `reason`。
-- `assignIssue` 的 creator-only 分支和禁止自派。
-- 只读 `searchIssues`（元数据、`issue.search`、query 必填、上限 50）。
+- 新公司默认 HR + 秘书成员，不预置任务主管（已确认，不设开关）。
+- `createIssue` 默认 owner 优先部门部长、旧公司回退任务主管；可选 `assigneeAgentId` / `type` / `pipeline` / `reason`。
+- `assignIssue` 的 creator-only 分支、部长公司级改派和禁止自派。
+- 只读 `searchIssues`（元数据、`issue.search`、query 必填、上限 50），部长同样可用。
 - `created_by_*` 及三处可见性；UI 岗位下拉和 IM 角色标签。
 - 领域、通知、可见性、搜索、skill 与初始化测试，以及 `CONTRACTS.md` / `DECISIONS.md` 更新。
 
@@ -827,22 +829,23 @@ Owner 或公司层面的想法、会议记录、文档片段和临时需求，�
 1. **新公司默认创建秘书成员**：新公司固定创建 `<companyId>-secretary`，placement 在总部；现有公司不自动迁移，由 HR 按需创建。
 2. **创建 Issue 不需要 Owner 另行确认**：秘书必须先用 `interview` skill 把需求问清楚；访谈收敛后直接创建并派单。访谈本身是确认过程，不是审批门。
 3. **不读取全部 Issue**：不新增 `issue.read_all`；秘书用 `searchIssues` 搜索元数据做去重、引用和跟进，正文仍受 owner / collaborator / creator / history 可见性约束。
+4. **部门部长取代默认任务主管**：新公司只创建 HR + 秘书；部长由 active 节点 `leadPersonId` 定义，不依赖角色权限；HR 建部门时先创建部长并设置 lead，不向用户确认；旧公司 `task-supervisor` 原样兼容。
 
 实现采用的两个计划级默认（推荐项，未单独取得 Owner sign-off）：
 
-4. **`searchIssues` 授权面**：仅 user 与持有 `issue.search` 的角色（当前只有秘书）可调用；返回 `id/title/status/agent_id/type/pipeline/needs_user/summary/created_by_*/时间`，不含正文、评论或决策。
-5. **权限授予**：`setRolePermissions` 继续由 HR/user 授予，白名单扩展为 `issue.create` / `issue.assign` / `issue.search`；未按目标权限分级收紧。
+5. **`searchIssues` 授权面**：仅 user、active 节点部长与持有 `issue.search` 的角色（当前只有秘书）可调用；返回 `id/title/status/agent_id/type/pipeline/needs_user/summary/created_by_*/时间`，不含正文、评论或决策。
+6. **权限授予**：`setRolePermissions` 继续由 HR/user 授予，白名单保持 `issue.create` / `issue.assign` / `issue.search`；部长权限不由此授予，而由组织节点 `leadPersonId` 在运行时推导。
 
 ### 13.11 实现落点
 
 - `src/domain/types.ts`：Issue 增加 `created_by_type` / `created_by_id`。
-- `src/domain/index.ts`：默认 `secretary` 角色；新公司第三个固定成员；`setRolePermissions` 白名单加入 `issue.assign` / `issue.search`；`createIssue` 支持可选派单字段；`assignIssue` 增加 creator-only / 禁止自派分支；新增 `searchIssues`；`related()` 与 `listIssues` 纳入创建者可见性。
+- `src/domain/index.ts`：默认角色改为 `hr` / `department-head` / `secretary` / `developer` / `preview` / `reviewer`，移除 `task-supervisor`；新公司只创建 HR 与秘书；新增 active 节点 `leadPersonId` 推导、默认 owner 解析、部长在 `createIssue` / `assignIssue` / `searchIssues` 的授权；保留旧公司 `task-supervisor` 兼容分支；`createIssue` 支持可选派单字段；`assignIssue` 增加 creator-only / 禁止自派分支。
 - `src/domain/agent-context.ts`：`selectedIssues` 纳入创建者可见性。
-- `src/domain/templates.ts`：`roleGuidance.secretary`，写入托管块，不改冻结系统提示词。
+- `src/domain/templates.ts`：`roleGuidance.hr` 部门成立流程、`roleGuidance["department-head"]`、`roleGuidance.secretary` 负责人回退链；保留 `roleGuidance["task-supervisor"]` 供旧公司成员使用；写入托管块，不改冻结系统提示词。
 - `templates/skills/interview/SKILL.md`：新增 `interview` skill，经 `company_org` MCP 的 `ResourceForSkills` 投递为 `skill://interview/SKILL.md`。
 - `src/server/operations.ts`：`createIssue` schema 的可选字段、新增 `searchIssues` schema 与工具描述、`READ_OPERATIONS`。
-- UI：`OrganizationSheet` 岗位下拉、`CompanyImMessageRow` 角色标签；前端类型补 `created_by_*`。
-- 测试与契约：初始化数量断言、可见性、通知、改派、搜索、interview skill、`CONTRACTS.md`、`DECISIONS.md`。
+- UI：`OrganizationSheet` 岗位下拉（`department-head`、保留 `secretary`）、`CompanyImMessageRow` 角色标签（新增部长、保留旧任务主管）、`CreateCompany` / `CreateIssue` / 运行与任务视图文案；前端类型补 `created_by_*`。
+- 测试与契约：初始化数量断言、部长 fixture、可见性、通知、改派、搜索、interview skill、`CONTRACTS.md`、`DECISIONS.md`。
 
 ## 14. 将规范接入 Agent
 

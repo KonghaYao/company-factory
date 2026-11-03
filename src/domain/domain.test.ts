@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CompanyDomain, type CallerContext, type DomainOptions } from "./index";
 import { AVATAR_COLORS, type AvatarColor } from "./avatar";
+import { createDepartmentWithHead } from "./test-support";
 
 // 这些单测使用 provisioning/delivery 和 Agent Git 测试替身，不执行无沙箱的 Agent 命令。
 // 公司文件与 Git 仍走真实存储；真实 Agent Git/Peri 证据由各自的隔离集成测试负责。
@@ -20,9 +21,10 @@ function unitDomain(options: DomainOptions) {
 describe("Company domain — files, permissions and business invariants", () => {
   let root: string, domain: CompanyDomain;
   let delivered = 0;
+  let initialAgentIds: string[] = [];
   let user: CallerContext,
     hr: CallerContext,
-    supervisor: CallerContext,
+    head: CallerContext,
     dev: CallerContext,
     preview: CallerContext;
   beforeAll(async () => {
@@ -74,18 +76,22 @@ describe("Company domain — files, permissions and business invariants", () => 
       },
     });
     user = { type: "user", id: "local-user", companyId: "" };
-    const { company } = await domain.createCompany(user, {
+    const created = await domain.createCompany(user, {
       name: "ACME",
       goal: "Build responsibly",
       requestId: "create-acme",
     });
+    const { company } = created;
+    initialAgentIds = created.agents.map((agent) => agent.agentId);
     user = { ...user, companyId: company.id };
     hr = { type: "agent", id: `${company.id}-hr`, companyId: company.id };
-    supervisor = {
-      type: "agent",
-      id: `${company.id}-supervisor`,
-      companyId: company.id,
-    };
+    head = await createDepartmentWithHead(domain, hr, {
+      nodeId: "delivery",
+      headId: `${company.id}-head`,
+      nodeName: "交付部",
+      headName: "Engineering Head",
+      responsibilities: "Deliver software",
+    });
     dev = { type: "agent", id: "dev-1", companyId: company.id };
     preview = { type: "agent", id: "preview-1", companyId: company.id };
   });
@@ -94,6 +100,9 @@ describe("Company domain — files, permissions and business invariants", () => 
     await rm(root, { recursive: true, force: true });
   });
   test("A01 initializes headquarters, files, role permissions and distinct bindings", async () => {
+    expect(initialAgentIds.sort()).toEqual(
+      [`${user.companyId}-hr`, `${user.companyId}-secretary`].sort(),
+    );
     const org = await domain.organization(user);
     expect(org.groups[0]?.name).toBe("总部");
     expect(org.agents).toHaveLength(3);
@@ -513,7 +522,7 @@ describe("Company domain — files, permissions and business invariants", () => 
   });
   test("A04 create permission is real role config; forbidden creates no file", async () => {
     await domain.createIssue(user, { title: "One", requestId: "one" });
-    await domain.createIssue(supervisor, { title: "Two", requestId: "two" });
+    await domain.createIssue(head, { title: "Two", requestId: "two" });
     await expect(
       domain.createIssue(dev, { title: "Forbidden" }),
     ).rejects.toMatchObject({ code: "forbidden" });
@@ -527,7 +536,7 @@ describe("Company domain — files, permissions and business invariants", () => 
       version: org.company.version,
     });
     const issue = await domain.createIssue(dev, { title: "Permitted" });
-    expect(issue.agent_id).toBe(supervisor.id);
+    expect(issue.agent_id).toBe(head.id);
     expect(issue.status).toBe("triage");
   });
   test("Repeated request IDs are deduplicated; different payload conflicts", async () => {
@@ -545,7 +554,7 @@ describe("Company domain — files, permissions and business invariants", () => 
       requestId: "comment1",
     });
     await expect(
-      domain.updateComment(supervisor, {
+      domain.updateComment(head, {
         issueId: "1",
         commentId: c.id,
         version: c.version,
@@ -572,7 +581,7 @@ describe("Company domain — files, permissions and business invariants", () => 
   test("A07 assignments preserve flat Issue and Agent identity, stale writers fail", async () => {
     for (const issueId of ["1", "2"]) {
       let i = await domain.getIssue(user, { issueId });
-      i = await domain.assignIssue(supervisor, {
+      i = await domain.assignIssue(head, {
         issueId,
         version: i.version,
         agentId: dev.id,
@@ -584,7 +593,7 @@ describe("Company domain — files, permissions and business invariants", () => 
     }
     const issue = await domain.getIssue(dev, { issueId: "1" });
     await expect(
-      domain.updateIssue(supervisor, {
+      domain.updateIssue(head, {
         issueId: "1",
         version: issue.version,
         patch: { status: "code" },
@@ -748,21 +757,21 @@ describe("Company domain — files, permissions and business invariants", () => 
   test("A09 IM persists, delivers once, replies distinct from delivery and does not create Issues", async () => {
     const before = (await domain.listIssues(user)).length;
     const ask = await domain.ask(dev, {
-      recipientId: supervisor.id,
+      recipientId: head.id,
       subject: "Question",
       body: "Can we clarify?",
       requestId: "im-one",
     });
     await new Promise((r) => setTimeout(r, 80));
     const repeat = await domain.ask(dev, {
-      recipientId: supervisor.id,
+      recipientId: head.id,
       subject: "Question",
       body: "Can we clarify?",
       requestId: "im-one",
     });
     expect(repeat.message.delivery_status).toBe("delivered");
     expect(delivered).toBe(1);
-    const reply = await domain.reply(supervisor, {
+    const reply = await domain.reply(head, {
       threadId: ask.threadId,
       messageId: ask.messageId,
       body: "Yes",
@@ -774,7 +783,7 @@ describe("Company domain — files, permissions and business invariants", () => 
       version: ask.thread.version,
       status: "resolved",
     });
-    const late = await domain.reply(supervisor, {
+    const late = await domain.reply(head, {
       threadId: ask.threadId,
       messageId: ask.messageId,
       body: "A late note",
@@ -787,14 +796,14 @@ describe("Company domain — files, permissions and business invariants", () => 
   });
   test("inbox is self-scoped for Agents and explicitly rejects cross-Agent reads", async () => {
     const sent = await domain.ask(dev, {
-      recipientId: supervisor.id,
+      recipientId: head.id,
       subject: "Inbox scope",
       body: "Only the recipient may read this.",
       requestId: "im-inbox-scope",
     });
     // Let the asynchronous post-save delivery settle before the shared temp root is removed.
     for (let attempt = 0; attempt < 100; attempt += 1) {
-      const item = (await domain.inbox(supervisor)).items.find(
+      const item = (await domain.inbox(head)).items.find(
         (entry) => entry.id === sent.messageId,
       );
       if (item?.delivery_status === "delivered") break;
@@ -804,11 +813,11 @@ describe("Company domain — files, permissions and business invariants", () => 
     expect(own.items.every((item) => item.recipient_id === dev.id)).toBe(true);
     expect(own.items.some((item) => item.id === sent.messageId)).toBe(false);
     await expect(
-      domain.inbox(dev, { agentId: supervisor.id }),
+      domain.inbox(dev, { agentId: head.id }),
     ).rejects.toMatchObject({ code: "forbidden", status: 403 });
-    const recipient = await domain.inbox(supervisor);
+    const recipient = await domain.inbox(head);
     expect(recipient.items.some((item) => item.id === sent.messageId)).toBe(true);
-    const ownerView = await domain.inbox(user, { agentId: supervisor.id });
+    const ownerView = await domain.inbox(user, { agentId: head.id });
     expect(ownerView.items.map((item) => item.id)).toEqual(
       recipient.items.map((item) => item.id),
     );
@@ -826,7 +835,7 @@ describe("Company domain — files, permissions and business invariants", () => 
           code_ref: `commit-${issueId}`,
         },
       });
-      await domain.assignIssue(supervisor, {
+      await domain.assignIssue(head, {
         issueId,
         version: i.version,
         agentId: preview.id,
@@ -935,7 +944,7 @@ describe("Company domain — files, permissions and business invariants", () => 
         code_ref: "same-code",
       },
     });
-    i = await domain.assignIssue(supervisor, {
+    i = await domain.assignIssue(head, {
       issueId: i.id,
       version: i.version,
       agentId: preview.id,
@@ -995,7 +1004,7 @@ describe("Company domain — files, permissions and business invariants", () => 
       ),
     );
     const i = await domain.getIssue(user, { issueId: "3" });
-    await domain.updateIssue(supervisor, {
+    await domain.updateIssue(head, {
       issueId: i.id,
       version: i.version,
       patch: { summary: "Updated only summary" },
@@ -1050,10 +1059,9 @@ describe("Initialization and global identity concurrency", () => {
       expect(first.agents.map((a) => a.agentId).sort()).toEqual([
         `${first.company.id}-hr`,
         `${first.company.id}-secretary`,
-        `${first.company.id}-supervisor`,
       ]);
       expect(first.agents.every((a) => a.companyId === first.company.id)).toBe(true);
-      expect(calls).toHaveLength(3);
+      expect(calls).toHaveLength(2);
       for (const changed of [
         { name: "Changed" },
         { goal: "Changed" },
@@ -1065,7 +1073,7 @@ describe("Initialization and global identity concurrency", () => {
       const second = await d.createCompany(user, { ...input, requestId: "create-two" });
       const otherCaller = await d.createCompany({ ...user, id: "another-owner" }, input);
       expect(new Set([first.company.id, second.company.id, otherCaller.company.id]).size).toBe(3);
-      expect(calls).toHaveLength(9);
+      expect(calls).toHaveLength(6);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -1114,7 +1122,7 @@ describe("Initialization and global identity concurrency", () => {
       root,
       provisionAgent: async (i) => {
         calls.push(i.agentId);
-        if (i.agentId.endsWith("-supervisor") && fail) {
+        if (i.agentId.endsWith("-secretary") && fail) {
           fail = false;
           throw Object.assign(new Error("缺少独立 sqld 配置：companyId、agentId、url、authToken"), {
             code: "wasm_store_not_configured", status: 503,
@@ -1154,9 +1162,9 @@ describe("Initialization and global identity concurrency", () => {
       ]);
       expect(org.company.id).toBe(companyId);
       expect(replay.company.id).toBe(companyId);
-      expect(org.agents).toHaveLength(3);
+      expect(org.agents).toHaveLength(2);
       expect(calls.filter((a) => a === `${companyId}-hr`)).toHaveLength(1);
-      expect(calls.filter((a) => a === `${companyId}-supervisor`)).toHaveLength(2);
+      expect(calls.filter((a) => a === `${companyId}-secretary`)).toHaveLength(2);
       expect((await d.store.yaml(initPath)).status).toBe("complete");
       expect(await d.store.ids(join(root, "companys"))).toEqual([companyId]);
     } finally {
@@ -1218,7 +1226,7 @@ describe("Initialization and global identity concurrency", () => {
               companyId: companyIds[1]!,
             })
           ).agents.length,
-      ).toBe(7);
+      ).toBe(5);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

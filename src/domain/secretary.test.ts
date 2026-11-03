@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CompanyDomain, type CallerContext } from "./index";
+import { createDepartmentWithHead } from "./test-support";
 
 function requestId() {
   return randomUUID();
@@ -14,7 +15,7 @@ describe("secretary role, dispatch and Issue metadata search", () => {
   let domain: CompanyDomain;
   let user: CallerContext;
   let hr: CallerContext;
-  let supervisor: CallerContext;
+  let head: CallerContext;
   let secretary: CallerContext;
   let dev: CallerContext;
   let preview: CallerContext;
@@ -44,8 +45,13 @@ describe("secretary role, dispatch and Issue metadata search", () => {
       companyId: user.companyId,
     });
     hr = context("hr");
-    supervisor = context("task-supervisor");
     secretary = context("secretary");
+    head = await createDepartmentWithHead(domain, hr, {
+      nodeId: "delivery",
+      headId: `${user.companyId}-head`,
+      nodeName: "Delivery",
+      headName: "Delivery Head",
+    });
     for (const [agentId, role, name] of [
       ["dev-1", "developer", "Developer"],
       ["preview-1", "preview", "Preview"],
@@ -97,7 +103,7 @@ describe("secretary role, dispatch and Issue metadata search", () => {
     expect(issue.created_by_id).toBe(secretary.id);
     expect(issue.history).toHaveLength(1);
     expect(issue.history[0]).toMatchObject({
-      from: supervisor.id,
+      from: head.id,
       to: dev.id,
       by: secretary.id,
       reason: "Developer owns delivery",

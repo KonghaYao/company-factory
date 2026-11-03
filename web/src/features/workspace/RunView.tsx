@@ -108,7 +108,7 @@ export function RunView({
             ))
           ) : (
             <EmptyState title="还没有关联任务">
-              新建 Issue 后由任务主管接收、选择流程并分派。
+              新建 Issue 后由部门部长接收、选择流程并分派。
             </EmptyState>
           )}
         </section>

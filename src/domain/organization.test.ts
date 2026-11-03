@@ -18,6 +18,7 @@ import {
 } from "./index";
 import { storeScopeId } from "../runtime/wasm-store";
 import { runtimeScopeId } from "./org";
+import { createDepartmentWithHead } from "./test-support";
 
 const roots: string[] = [];
 let sequence = 0;
@@ -67,12 +68,7 @@ async function company(options: Partial<DomainOptions> = {}) {
     id: `${org.company.id}-hr`,
     companyId: org.company.id,
   };
-  const supervisor: CallerContext = {
-    type: "agent",
-    id: `${org.company.id}-supervisor`,
-    companyId: org.company.id,
-  };
-  return { ...f, organization: org, user, hr, supervisor };
+  return { ...f, organization: org, user, hr };
 }
 
 const file = (root: string, ...parts: string[]) => join(root, ...parts);
@@ -102,17 +98,13 @@ describe("Decoupled organization model", () => {
       parentId: null,
       status: "active",
     });
-    expect(org.placements).toHaveLength(3);
+    expect(org.placements).toHaveLength(2);
     expect(
       org.placements.map((placement: any) => placement.personId).sort(),
-    ).toEqual([
-      hr.id,
-      `${user.companyId}-secretary`,
-      `${user.companyId}-supervisor`,
-    ].sort());
+    ).toEqual([hr.id, `${user.companyId}-secretary`].sort());
     const roster = await domain.store.yaml(file(directory, "roster.yaml"));
     expect(roster.schema).toBe("company-people/v2");
-    expect(roster.members).toHaveLength(3);
+    expect(roster.members).toHaveLength(2);
     for (const member of roster.members) {
       expect(member).not.toHaveProperty("groupId");
       expect(member).not.toHaveProperty("role");
@@ -467,6 +459,12 @@ describe("Legacy organization compatibility", () => {
 describe("moveMember", () => {
   async function moveFixture() {
     const f = await company();
+    await createDepartmentWithHead(f.domain, f.hr, {
+      nodeId: "delivery",
+      headId: `${f.user.companyId}-head`,
+      nodeName: "交付部",
+      headName: "交付部长",
+    });
     await f.domain.createGroup(f.hr, {
       id: "platform",
       name: "平台部",
@@ -1110,7 +1108,13 @@ describe("Organization tree and member lifecycle", () => {
   });
 
   test("archived members cannot be assigned work, collaborate, or receive new IM", async () => {
-    const { domain, hr, supervisor, user } = await company();
+    const { domain, hr, user } = await company();
+    await createDepartmentWithHead(domain, hr, {
+      nodeId: "delivery",
+      headId: `${user.companyId}-head`,
+      nodeName: "交付部",
+      headName: "交付部长",
+    });
     await domain.createMember(hr, {
       agentId: "dev-1",
       name: "开发",
@@ -1131,7 +1135,7 @@ describe("Organization tree and member lifecycle", () => {
     });
     const issueId = String(issue.id);
     await expect(
-      domain.assignIssue(supervisor, {
+      domain.assignIssue(user, {
         issueId,
         agentId: "dev-1",
         expectedVersion: issue.version,
@@ -1139,11 +1143,12 @@ describe("Organization tree and member lifecycle", () => {
       }),
     ).rejects.toMatchObject({ code: "member_archived" });
     await expect(
-      domain.assignIssue(supervisor, {
+      domain.assignIssue(user, {
         issueId,
-        agentId: supervisor.id,
+        agentId: hr.id,
         collaborators: ["dev-1"],
         expectedVersion: issue.version,
+        reason: "fixture",
         requestId: requestId(),
       }),
     ).rejects.toMatchObject({ code: "member_archived" });
