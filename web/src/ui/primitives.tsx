@@ -1,5 +1,6 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { AlertCircle, LoaderCircle, X } from "lucide-react";
+import { avatarColorAttribute } from "../lib/avatar";
 
 type Variant = "primary" | "secondary" | "ghost" | "danger";
 type Size = "sm" | "md";
@@ -50,14 +51,22 @@ export function Avatar({
   name,
   tone = "agent",
   size = "sm",
+  color,
 }: {
   name: string;
   tone?: "agent" | "user" | "system";
   size?: "xs" | "sm" | "md";
+  /** Company 成员调色板 id；仅 agent 头像使用，user/system 始终忽略。 */
+  color?: string;
 }) {
   const label = (name || "?").trim().slice(0, 1).toUpperCase() || "?";
+  const avatarColor = tone === "agent" ? avatarColorAttribute(color) : undefined;
   return (
-    <span className={`avatar avatar-${tone} avatar-${size}`} aria-hidden="true">
+    <span
+      className={`avatar avatar-${tone} avatar-${size}`}
+      data-avatar-color={avatarColor}
+      aria-hidden="true"
+    >
       {tone === "user" ? "我" : label}
     </span>
   );

@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CompanyDomain, type CallerContext, type DomainOptions } from "./index";
+import { AVATAR_COLORS, type AvatarColor } from "./avatar";
 
 // 这些单测使用 provisioning/delivery 和 Agent Git 测试替身，不执行无沙箱的 Agent 命令。
 // 公司文件与 Git 仍走真实存储；真实 Agent Git/Peri 证据由各自的隔离集成测试负责。
@@ -219,6 +220,103 @@ describe("Company domain — files, permissions and business invariants", () => 
       (a) => a.agentId === "dev-1",
     );
     expect(visibleToAgent).not.toHaveProperty("systemPrompt");
+  });
+  test("avatar colors are user-only Company facts, not AgentRecord fields", async () => {
+    const created = await domain.createMember(hr, {
+      agentId: "color-1",
+      name: "Color One",
+      role: "developer",
+      responsibilities: "Verify avatar color projection",
+    });
+    expect(created).not.toHaveProperty("avatarColor");
+    const companyPath = join(root, "companys", user.companyId, "company.yaml");
+    const companyBefore = await domain.store.yaml(companyPath);
+    const initial = companyBefore.memberColors["color-1"];
+    expect(AVATAR_COLORS as readonly string[]).toContain(initial);
+    const target: AvatarColor = initial === "rose" ? "blue" : "rose";
+    const other: AvatarColor =
+      target === ("teal" as AvatarColor) ? "slate" : "teal";
+    const updated = await domain.updateMember(user, {
+      agentId: "color-1",
+      avatarColor: target,
+      version: created.version,
+    });
+    expect(updated.version).toBe(created.version + 1);
+    const companyAfter = await domain.store.yaml(companyPath);
+    expect(companyAfter.memberColors["color-1"]).toBe(target);
+    expect(companyAfter.version).toBe(companyBefore.version + 1);
+    expect(
+      (await domain.organization(user)).agents.find(
+        (a) => a.agentId === "color-1",
+      )!.avatarColor,
+    ).toBe(target);
+    expect(
+      (await domain.organization(hr)).agents.find(
+        (a) => a.agentId === "color-1",
+      )!.avatarColor,
+    ).toBe(target);
+    expect(
+      (await domain.members(user)).find((m) => m.agentId === "color-1")!
+        .avatarColor,
+    ).toBe(target);
+    expect(await readFile(join(created.directory, "agent.yaml"), "utf8")).not.toContain(
+      "avatarColor",
+    );
+    await expect(
+      domain.updateMember(hr, {
+        agentId: "color-1",
+        avatarColor: other,
+        version: updated.version,
+      }),
+    ).rejects.toMatchObject({ code: "forbidden" });
+    await expect(
+      domain.updateMember(user, {
+        agentId: "color-1",
+        avatarColor: "chartreuse",
+        version: updated.version,
+      }),
+    ).rejects.toMatchObject({ code: "invalid_input" });
+    await expect(
+      domain.updateMember(user, {
+        agentId: "color-1",
+        avatarColor: other,
+        version: created.version,
+      }),
+    ).rejects.toMatchObject({ code: "version_conflict" });
+    const requestId = "avatar-color-idempotency";
+    const first = await domain.updateMember(user, {
+      agentId: "color-1",
+      avatarColor: other,
+      version: updated.version,
+      requestId,
+    });
+    await expect(
+      domain.updateMember(user, {
+        agentId: "color-1",
+        avatarColor: target,
+        version: first.version,
+        requestId,
+      }),
+    ).rejects.toMatchObject({ code: "idempotency_conflict" });
+    const replay = await domain.updateMember(user, {
+      agentId: "color-1",
+      avatarColor: other,
+      version: updated.version,
+      requestId,
+    });
+    expect(replay.version).toBe(first.version);
+    await expect(
+      domain.createMember(hr, {
+        agentId: "color-forbidden",
+        name: "Color Forbidden",
+        role: "developer",
+        responsibilities: "Must not be created",
+        avatarColor: "rose",
+      }),
+    ).rejects.toMatchObject({ code: "forbidden" });
+    expect(await domain.store.exists(join(root, "agents", "color-forbidden"))).toBe(
+      false,
+    );
   });
   test("updateMember migrates a legacy lowercase claude.md to canonical CLAUDE.md", async () => {
     await domain.createMember(hr, {

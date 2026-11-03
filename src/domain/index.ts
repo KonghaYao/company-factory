@@ -4,6 +4,17 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { CompanyStore, safeId, digest } from "../storage/company-store";
 import { z } from "zod";
 import { applyAgentMemory, prepareAgentMemory } from "./agent-memory";
+import {
+  AVATAR_COLORS,
+  fallbackAvatarColor,
+  fillMissingMemberColors,
+  isAvatarColor,
+  memberColorsChanged,
+  nextAvatarColor,
+  readMemberColors,
+  resolveMemberColors,
+  type AvatarColor,
+} from "./avatar";
 import { completeMutation } from "./mutation-completion";
 import {
   applyTodoChanges,
@@ -67,6 +78,7 @@ import {
   type TodoItem,
 } from "./types";
 export * from "./types";
+export * from "./avatar";
 export { CompanyStore } from "../storage/company-store";
 
 type Input = Record<string, any>;
@@ -228,6 +240,39 @@ export class CompanyDomain {
   private async company(ctx: CallerContext) {
     return this.store.yaml<Company>(this.path(ctx, "company.yaml"));
   }
+  private memberColorState(
+    company: Company,
+    members: readonly { agentId: string }[],
+  ) {
+    const stored = readMemberColors(company.memberColors);
+    const effective = resolveMemberColors(
+      members.map((member) => ({
+        agentId: member.agentId,
+        color: stored[member.agentId],
+      })),
+      Object.values(stored),
+    );
+    return { stored, effective };
+  }
+  private async putMemberColors(
+    ctx: CallerContext,
+    company: Company,
+    stored: Record<string, unknown>,
+    next: Record<string, unknown>,
+  ) {
+    if (!memberColorsChanged(stored, next)) return false;
+    const previousVersion = Number.isInteger(company.version)
+      ? company.version
+      : 0;
+    company.memberColors = next as Record<string, AvatarColor>;
+    company.version = previousVersion + 1;
+    await this.store.putYaml(
+      this.path(ctx, "company.yaml"),
+      company,
+      previousVersion,
+    );
+    return true;
+  }
   private async rosterDocument(
     ctx: CallerContext,
   ): Promise<{ roster: Roster; raw: string | null }> {
@@ -356,6 +401,7 @@ export class CompanyDomain {
     org: Organization,
     status: OrgMemberStatus,
     privateProjection: boolean,
+    avatarColor: AvatarColor,
   ): OrgMemberView & Partial<AgentRecord> {
     const placement =
       status === "active" ? placementFor(org, agent.agentId) ?? null : null;
@@ -369,6 +415,7 @@ export class CompanyDomain {
       groupId: placement?.nodeId ?? null,
       orgPath: placement ? nodePath(org, placement.nodeId) : [],
       placement,
+      avatarColor,
     };
     return privateProjection ? { ...publicAgent(agent), ...shared } : shared;
   }
@@ -752,6 +799,7 @@ export class CompanyDomain {
     await this.access(ctx);
     const company = await this.company(ctx);
     const { organization, roster } = await this.organizationState(ctx);
+    const { effective } = this.memberColorState(company, roster.members);
     const agents = await Promise.all(
       roster.members.map(async (member) => {
         const agent = await this.getAgentInternal(member.agentId);
@@ -760,6 +808,8 @@ export class CompanyDomain {
           organization,
           member.status,
           ctx.type === "user",
+          effective.get(member.agentId) ??
+            fallbackAvatarColor(member.agentId),
         );
       }),
     );
@@ -1283,6 +1333,23 @@ export class CompanyDomain {
       await this.commitProvisionedAgent(existing);
       return publicAgent(existing);
     }
+    // Freeze legacy fallbacks before choosing the new member's color so a
+    // failed provision retry reuses the same reserved color for this agentId.
+    const { stored: memberColors, effective } = this.memberColorState(
+      company,
+      state.roster.members,
+    );
+    const nextMemberColors = fillMissingMemberColors(
+      memberColors,
+      state.roster.members,
+      effective,
+    );
+    const reservedColor = nextMemberColors[agentId];
+    const avatarColor = isAvatarColor(reservedColor)
+      ? reservedColor
+      : nextAvatarColor(Object.values(nextMemberColors));
+    nextMemberColors[agentId] = avatarColor;
+    await this.putMemberColors(ctx, company, memberColors, nextMemberColors);
     const token = randomBytes(32).toString("hex");
     const knowledgeDirectory = this.path(ctx, "knowledgebase");
     const baseUrl = this.options.baseUrl ?? "http://127.0.0.1:3000";
@@ -1407,6 +1474,12 @@ export class CompanyDomain {
   async createMember(ctx: CallerContext, input: Input) {
     return this.mutate(ctx, "createMember", input, async () => {
       await this.role(ctx, ["hr"], false);
+      requireValue(
+        input.avatarColor === undefined,
+        "forbidden",
+        "Only the user may set a member avatar color",
+        403,
+      );
       const rawConfig = input.config ?? {};
       const agentEditable = new Set([
         "modelProfile",
@@ -1858,10 +1931,36 @@ export class CompanyDomain {
         );
       if (input.systemPrompt !== undefined)
         a.systemPrompt = promptText(input.systemPrompt);
+      let avatarColor: AvatarColor | undefined;
+      if (input.avatarColor !== undefined) {
+        requireValue(
+          isAvatarColor(input.avatarColor),
+          "invalid_input",
+          `avatarColor must be one of ${AVATAR_COLORS.join(", ")}`,
+        );
+        avatarColor = input.avatarColor;
+      }
       const profile = this.memoryProfile(ctx, a, a.effectiveConfig);
       // Validation and memory application precede member writes: a malformed or
       // unsafe memory file cannot leave a rejected member edit half-applied.
       await applyAgentMemory(this.store, profile);
+      if (avatarColor !== undefined) {
+        // Freeze every legacy fallback before applying the owner's choice, so
+        // later member changes cannot recolor an unrelated member.
+        const company = await this.company(ctx);
+        const { roster } = await this.organizationState(ctx);
+        const { stored, effective } = this.memberColorState(
+          company,
+          roster.members,
+        );
+        const next = fillMissingMemberColors(
+          stored,
+          roster.members,
+          effective,
+        );
+        next[a.agentId] = avatarColor;
+        await this.putMemberColors(ctx, company, stored, next);
+      }
       a.version++;
       await this.store.putYaml(
         join(a.directory, "agent.yaml"),
@@ -2992,7 +3091,9 @@ export class CompanyDomain {
   }
   async members(ctx: CallerContext, input: Input = {}) {
     await this.access(ctx);
+    const company = await this.company(ctx);
     const { roster, organization } = await this.organizationState(ctx);
+    const { effective } = this.memberColorState(company, roster.members);
     const rows = await Promise.all(
       roster.members.map(async (member) => {
         const a = await this.getAgentInternal(member.agentId);
@@ -3009,6 +3110,9 @@ export class CompanyDomain {
           name: a.name,
           role: a.role,
           responsibilities: a.responsibilities,
+          avatarColor:
+            effective.get(member.agentId) ??
+            fallbackAvatarColor(member.agentId),
         };
       }),
     );

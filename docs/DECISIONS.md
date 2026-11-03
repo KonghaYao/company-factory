@@ -103,3 +103,11 @@
 - **边界**：接手人先 `getIssue` 读取现状、version 与归属，完成后留下可核对结果再转交；真正并行的工作拆成子 Issue；IM 只用于指向 Issue 和同步，不替代任务事实；单负责人/协作评论模型不变。
 - **落地**：全局 system prompt「Company operating rules」、每个成员托管块 `## Multi-person tasks`、任务主管与开发角色指引，以及 `company_im` 工具描述；旧 Session 系统提示词保持冻结，成员通过托管块迁移获得规则。
 - **状态**：生效中
+
+## 12. 成员头像颜色是 Company 业务事实（2026-11-02）
+
+- **决策**：成员头像颜色使用 12 个固定调色板 id（不接受任意 hex），存入 `companys/<companyId>/company.yaml` 的可选 `memberColors: Record<agentId, paletteId>`，随 Company Git 提交；不写入 `agent.yaml`、`CLAUDE.md`、roster、runtime 配置或浏览器本地状态。
+- **权限与默认**：只有 user-only 的 `updateMember` 能改色；HR 通过 `createMember` 显式传色返回 `forbidden`，新建成员由公司锁内的默认分配从未使用/最少使用颜色中随机选色。默认色写入 `company.yaml` 并做 Company version CAS，Agent 文件仍使用原有 `agent.version` CAS。
+- **旧数据兼容**：旧公司无 `memberColors` 时按 agentId 做确定性 FNV-1a 回退；读取永不写盘、不做启动迁移。新建成员或 owner 改色时先把 roster 中缺失颜色的旧成员回退色一次性冻结写入，之后不再漂移；保留未知/历史 key。
+- **投影**：`organization()` 与 `members()` 的成员行增加 `avatarColor`；`AgentRecord` 和 `agent.yaml` 不新增该字段。不新增 MCP 工具、HTTP 路由、数据库或迁移脚本。
+- **状态**：生效中

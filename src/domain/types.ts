@@ -1,3 +1,5 @@
+import type { AvatarColor } from "./avatar";
+
 /** Trusted adapter-created identity. Never populate this from a tool's input. */
 export type CallerContext = Readonly<{
   type: "user" | "agent";
@@ -165,6 +167,8 @@ export type OrgMemberView = {
   groupId: string | null;
   orgPath: OrgPathEntry[];
   placement: OrgPlacement | null;
+  /** Company palette id; a membership projection, not an AgentRecord field. */
+  avatarColor: AvatarColor;
 };
 export type Company = {
   id: string;
@@ -173,6 +177,8 @@ export type Company = {
   roles: Record<string, { permissions: string[] }>;
   created_at: string;
   version: number;
+  /** Owner-defined avatar palette ids by agentId; omitted on legacy companies. */
+  memberColors?: Record<string, AvatarColor>;
 };
 export type Decision = {
   id: string;

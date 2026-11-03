@@ -85,6 +85,7 @@
 | 成功 | `--success` / `--success-soft` | `#1c7c54` / `#e8f5ee` | 已有证据支持的成功状态 |
 | 注意 | `--warning` / `--warning-soft` | `#a46a12` / `#fdf3e2` | 待裁定、需关注的阻塞 |
 | 错误 | `--danger` / `--danger-soft` | `#b4372e` / `#fdeceb` | 当前错误、失败、破坏性操作 |
+| 头像色板 | `--avatar-<id>-bg/fg` | 12 组 | 成员头像，白字对比 ≥4.5:1 |
 
 **可读性约束：** 新增或修改的信息文字采用至少 `4.5:1` 的文字 / 背景对比度目标。按当前色值计算，`--muted` 在白底约 `4.33:1`，`--faint` 约 `2.64:1`，`--warning` 在 `--warning-soft` 上约 `4.11:1`；不能因为它们是已有 token 就认定小字可读性达标。需要读清的辅助文字优先用 `--ink-soft`；黄色提示可保留背景与图标，将文字改用深色。若需新的弱文字色，应在 token 层统一定义并核对对比度，不在各组件分别补色。
 
@@ -279,7 +280,7 @@ Runtime、Issue、Decision、WorkNotice 分别按其领域解释。`WorkNotice.a
 | `Button` | `primary / secondary / ghost / danger`，`sm / md` | 主动作 primary，普通动作 secondary，低权重操作 ghost；非提交动作显式 `type="button"` |
 | `IconButton` | `label`、原生 button 属性 | 必须有具体的 label；关键动作不只用图标表达 |
 | `Badge` | `neutral / positive / warning / danger / active` | 短状态，不放长句；颜色之外必须有文字 |
-| `Avatar` | `xs / sm / md` | 成员身份使用，不用头像样式包装一般字段图标 |
+| `Avatar` | `xs / sm / md` + 可选成员色 | 成员身份使用，不用头像样式包装一般字段图标；颜色只用于成员身份 |
 | `Field` | `label / hint / children` | 标签、控件与错误建立可访问关联，placeholder 不代替 label |
 | `EmptyState` | `icon / title / description / children` | 说明放在 `description`；`children` 用于操作，不塞一段没有排版约束的裸文本 |
 | `ErrorBox` / `Loading` | 错误 / 加载展示 | 复用反馈结构；业务消息先归一，不依赖 `String(object)` 表达复杂错误 |

@@ -48,8 +48,9 @@ export function MessagesView({
   });
   const items =
     query.data?.pages.flatMap((page) => list<IMMessage>(page, "messages")) || [];
-  const nameOf = (id?: string) =>
-    agents.find((agent) => (agent.agentId || agent.id) === id)?.name || id || "?";
+  const memberOf = (id?: string) =>
+    agents.find((agent) => (agent.agentId || agent.id) === id);
+  const nameOf = (id?: string) => memberOf(id)?.name || id || "?";
 
   if (thread)
     return (
@@ -76,6 +77,8 @@ export function MessagesView({
         <ErrorBox error={query.error} />
         <div className="im-thread">
           {items.map((message) => {
+            const senderId = message.sender_id || message.author_id;
+            const sender = memberOf(senderId);
             const status =
               message.delivery_status || message.delivery?.status || "saved";
             const delivery = deliveryView(
@@ -86,10 +89,11 @@ export function MessagesView({
               <article key={message.id} className="im-message">
                 <header>
                   <Avatar
-                    name={nameOf(message.sender_id || message.author_id)}
+                    name={nameOf(senderId)}
+                    color={sender?.avatarColor}
                     size="xs"
                   />
-                  <strong>{nameOf(message.sender_id || message.author_id)}</strong>
+                  <strong>{nameOf(senderId)}</strong>
                   <time>{shortDate(message.created_at)}</time>
                 </header>
                 <Markdown>{message.body}</Markdown>
@@ -202,7 +206,7 @@ export function MessagesView({
               )
             }
           >
-            <Avatar name={agent.name} size="sm" />
+            <Avatar name={agent.name} color={agent.avatarColor} size="sm" />
             <span className="colleague-copy">
               <strong>{agent.name}</strong>
               <small>

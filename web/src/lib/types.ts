@@ -60,6 +60,8 @@ export type Agent = {
   role: string;
   responsibilities?: string;
   systemPrompt?: string;
+  /** Company 成员调色板 id；旧成员缺省时由共享 Avatar 回退为默认黑底。 */
+  avatarColor?: string;
   version?: number;
   sessionId?: string;
   session_id?: string;

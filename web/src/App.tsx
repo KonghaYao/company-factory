@@ -643,7 +643,7 @@ export default function App() {
           onClose={() => setEditAgentId("")}
           onSaved={() => {
             setEditAgentId("");
-            setToast("员工定义已保存，将从下一条消息起生效。");
+            setToast("员工定义与头像颜色已保存；提示词从下一条消息起生效。");
           }}
         />
       )}

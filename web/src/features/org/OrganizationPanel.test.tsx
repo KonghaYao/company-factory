@@ -40,6 +40,7 @@ const agents: Agent[] = [
     name: "人事",
     role: "hr",
     status: "active",
+    avatarColor: "navy",
     placement: {
       personId: "c-1-hr",
       nodeId: "headquarters",
@@ -56,6 +57,7 @@ const agents: Agent[] = [
     name: "未分配开发",
     role: "developer",
     status: "active",
+    avatarColor: "rose",
     placement: null,
   },
   {
@@ -63,6 +65,7 @@ const agents: Agent[] = [
     name: "已归档开发",
     role: "developer",
     status: "archived",
+    avatarColor: "teal",
     placement: null,
   },
 ];
@@ -102,6 +105,13 @@ function render(
     />,
   );
 }
+
+const agentRow = (html: string, id: string) =>
+  html.match(
+    new RegExp(
+      `<button[^>]*data-testid="agent-${id}"[^>]*>[\\s\\S]*?</button>`,
+    ),
+  )?.[0] ?? "";
 
 describe("OrganizationPanel", () => {
   test("node actions stay behind a more menu", () => {
@@ -155,6 +165,24 @@ describe("OrganizationPanel", () => {
     const html = render(agents.filter((agent) => agent.status !== "archived"));
 
     expect(html).not.toContain('data-testid="org-archived-trigger"');
+  });
+
+  test("member avatars use the color from the organization projection", () => {
+    const html = render();
+
+    expect(agentRow(html, "c-1-hr")).toContain('data-avatar-color="navy"');
+    expect(agentRow(html, "dev-1")).toContain('data-avatar-color="rose"');
+    expect(agentRow(html, "c-1-hr")).toContain("avatar-agent avatar-sm");
+  });
+
+  test("legacy members without a color keep the default avatar", () => {
+    const html = render(
+      agents.map(({ avatarColor: _avatarColor, ...legacy }) => legacy),
+    );
+
+    expect(agentRow(html, "c-1-hr")).toContain("avatar-agent avatar-sm");
+    expect(agentRow(html, "c-1-hr")).not.toContain("data-avatar-color");
+    expect(agentRow(html, "dev-1")).not.toContain("data-avatar-color");
   });
 
   test("pending questions sit above the org tree, outside its scroll area", () => {

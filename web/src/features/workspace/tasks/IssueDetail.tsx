@@ -312,14 +312,16 @@ export function IssueDetail({
           data-testid="comment-timeline"
         >
           {allComments.map((item) => {
+            const member =
+              item.author_type === "user"
+                ? undefined
+                : agents.find(
+                    (agent) => (agent.agentId || agent.id) === item.author_id,
+                  );
             const author =
               item.author_type === "user"
                 ? "你"
-                : agents.find(
-                    (agent) => (agent.agentId || agent.id) === item.author_id,
-                  )?.name ||
-                  item.author_id ||
-                  "未知成员";
+                : member?.name || item.author_id || "未知成员";
             const isUser = item.author_type === "user";
             const isEditingComment = editComment?.id === item.id;
             return (
@@ -334,6 +336,7 @@ export function IssueDetail({
                     name={author}
                     size="xs"
                     tone={isUser ? "user" : "agent"}
+                    color={member?.avatarColor}
                   />
                 </span>
                 <article

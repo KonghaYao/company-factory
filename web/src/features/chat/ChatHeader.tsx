@@ -28,7 +28,7 @@ export function ChatHeader({
   );
   return (
     <header className="chat-header">
-      <Avatar name={agent.name} size="md" />
+      <Avatar name={agent.name} color={agent.avatarColor} size="md" />
       <div className="chat-heading-copy">
         <div className="chat-title-line">
           <h1>{agent.name}</h1>

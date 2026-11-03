@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AVATAR_COLORS } from "../domain/avatar";
 export const MODULE_OPERATIONS = {
   company_org: [
     "organization",
@@ -154,6 +155,7 @@ export const schemas: Record<string, z.ZodType> = {
     name: str.optional(),
     responsibilities: str.optional(),
     systemPrompt: str.optional(),
+    avatarColor: z.enum(AVATAR_COLORS).optional(),
     expectedVersion: z.number(),
     requestId: str,
   }),

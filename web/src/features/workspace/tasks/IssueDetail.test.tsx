@@ -21,7 +21,12 @@ const issue: Issue = {
   version: 1,
 };
 const agents: Agent[] = [
-  { agentId: "agent-1", name: "开发一号", role: "developer" },
+  {
+    agentId: "agent-1",
+    name: "开发一号",
+    role: "developer",
+    avatarColor: "teal",
+  },
 ];
 const comments: Comment[] = [
   {
@@ -266,6 +271,12 @@ describe("IssueDetail", () => {
     expect(html).toContain("comment is-agent");
     expect(html).toContain("avatar-user");
     expect(html).toContain("avatar-agent");
+    const userAvatar =
+      html.match(/<span[^>]*class="avatar avatar-user[^"]*"[^>]*>/)?.[0] ?? "";
+    const agentAvatar =
+      html.match(/<span[^>]*class="avatar avatar-agent[^"]*"[^>]*>/)?.[0] ?? "";
+    expect(userAvatar).not.toContain("data-avatar-color");
+    expect(agentAvatar).toContain('data-avatar-color="teal"');
     expect(html).toContain("开发一号");
     expect((html.match(/aria-label="编辑我的评论"/g) ?? []).length).toBe(1);
   });

@@ -344,7 +344,7 @@ export function OrganizationPanel({
           title={`${agent.name} · ${agent.role}`}
         >
           <span className="agent-avatar-wrap">
-            <Avatar name={agent.name} size="sm" />
+            <Avatar name={agent.name} color={agent.avatarColor} size="sm" />
             {agent.busy && (
               <span className="agent-busy" title="正在运行">
                 <Spinner size={10} />
@@ -530,7 +530,11 @@ export function OrganizationPanel({
             return (
               <div className="agent-row" key={id}>
                 <span className="agent-main agent-archived-copy">
-                  <Avatar name={agent.name} size="sm" />
+                  <Avatar
+                    name={agent.name}
+                    color={agent.avatarColor}
+                    size="sm"
+                  />
                   <span className="agent-copy">
                     <span className="agent-name">{agent.name}</span>
                     <span className="agent-role">已归档 · 权限已拒绝</span>

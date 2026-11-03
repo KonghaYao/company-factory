@@ -27,6 +27,32 @@
   --danger: #b4372e;
   --danger-soft: #fdeceb;
 
+  /* 成员头像色板：12 组深底白字，白字对比度均 ≥ 4.5:1。 */
+  --avatar-blue-bg: #3b5bdb;
+  --avatar-blue-fg: #ffffff;
+  --avatar-navy-bg: #1e3a8a;
+  --avatar-navy-fg: #ffffff;
+  --avatar-violet-bg: #7048e8;
+  --avatar-violet-fg: #ffffff;
+  --avatar-plum-bg: #86198f;
+  --avatar-plum-fg: #ffffff;
+  --avatar-rose-bg: #c2255c;
+  --avatar-rose-fg: #ffffff;
+  --avatar-red-bg: #c92a2a;
+  --avatar-red-fg: #ffffff;
+  --avatar-orange-bg: #c2410c;
+  --avatar-orange-fg: #ffffff;
+  --avatar-amber-bg: #a16207;
+  --avatar-amber-fg: #ffffff;
+  --avatar-olive-bg: #5c6f00;
+  --avatar-olive-fg: #ffffff;
+  --avatar-green-bg: #1b7f4b;
+  --avatar-green-fg: #ffffff;
+  --avatar-teal-bg: #0b7285;
+  --avatar-teal-fg: #ffffff;
+  --avatar-slate-bg: #495057;
+  --avatar-slate-fg: #ffffff;
+
   --radius-sm: 6px;
   --radius: 10px;
   --radius-lg: 14px;

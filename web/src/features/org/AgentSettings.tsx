@@ -5,6 +5,7 @@ import type { Agent, Runtime, Scope } from "../../lib/types";
 import { agentId, agentOrgPath } from "../../lib/types";
 import { action, api, post, scoped } from "../../lib/api";
 import { uuid } from "../../lib/uuid";
+import { AVATAR_COLOR_OPTIONS, isAvatarColorId } from "../../lib/avatar";
 import {
   appliedTierRows,
   libraryProfile,
@@ -15,6 +16,7 @@ import {
   shortRevision,
 } from "../../lib/model";
 import {
+  Avatar,
   Button,
   ErrorBox,
   Field,
@@ -319,7 +321,26 @@ export function AgentConfiguration({
   );
 }
 
-/** 员工定义编辑：姓名、职责与专属系统提示词段。 */
+/** 员工定义编辑：姓名、职责、专属系统提示词段与头像颜色。 */
+export type AgentEditorDraft = {
+  name: string;
+  responsibilities: string;
+  systemPrompt: string;
+  avatarColor: string;
+};
+
+/** updateMember 的输入；JSON 也用于判断是否需要新的幂等 requestId。 */
+export function agentUpdateInput(agent: Agent, draft: AgentEditorDraft) {
+  return {
+    agentId: agentId(agent),
+    name: draft.name,
+    responsibilities: draft.responsibilities,
+    systemPrompt: draft.systemPrompt,
+    avatarColor: draft.avatarColor,
+    expectedVersion: agent.version ?? 0,
+  };
+}
+
 export function AgentEditor({
   companyId,
   agent,
@@ -337,16 +358,20 @@ export function AgentEditor({
     agent.responsibilities || "",
   );
   const [systemPrompt, setSystemPrompt] = useState(agent.systemPrompt || "");
+  const [avatarColor, setAvatarColor] = useState<string>(
+    isAvatarColorId(agent.avatarColor)
+      ? agent.avatarColor
+      : AVATAR_COLOR_OPTIONS[0].id,
+  );
   const submission = useRef<{ payload: string; requestId: string } | null>(null);
   const save = useMutation({
     mutationFn: () => {
-      const input = {
-        agentId: agentId(agent),
+      const input = agentUpdateInput(agent, {
         name,
         responsibilities,
         systemPrompt,
-        expectedVersion: agent.version ?? 0,
-      };
+        avatarColor,
+      });
       const payload = JSON.stringify(input);
       if (submission.current?.payload !== payload)
         submission.current = { payload, requestId: uuid() };
@@ -366,7 +391,7 @@ export function AgentEditor({
     <Sheet
       open
       title={`${agent.name} · 编辑员工`}
-      subtitle="保存后写回该员工的 agent.yaml；提示词随下一条消息生效。组织归属由组织树管理，移动不影响身份、固定会话与权限。"
+      subtitle="保存后写回员工定义；头像颜色存入公司数据。提示词随下一条消息生效。组织归属由组织树管理，移动不影响身份、固定会话与权限。"
       onClose={onClose}
     >
       <form
@@ -404,6 +429,45 @@ export function AgentEditor({
             required
           />
         </Field>
+        <div className="field">
+          <span className="field-label" id="agent-avatar-color-label">
+            头像颜色
+          </span>
+          <span
+            className="agent-avatar-color-preview"
+            data-testid="agent-avatar-preview"
+          >
+            <Avatar name={name || agent.name} color={avatarColor} size="md" />
+          </span>
+          <div
+            className="avatar-color-options"
+            role="radiogroup"
+            aria-labelledby="agent-avatar-color-label"
+            data-testid="agent-color-picker"
+          >
+            {AVATAR_COLOR_OPTIONS.map((option) => (
+              <label className="avatar-color-option" key={option.id}>
+                <input
+                  type="radio"
+                  name="avatarColor"
+                  value={option.id}
+                  checked={avatarColor === option.id}
+                  onChange={() => setAvatarColor(option.id)}
+                  data-testid={`agent-color-${option.id}`}
+                />
+                <span
+                  className="avatar-swatch"
+                  data-avatar-color={option.id}
+                  aria-hidden="true"
+                />
+                <span className="avatar-color-name">{option.label}</span>
+              </label>
+            ))}
+          </div>
+          <small className="field-hint">
+            用于组织树、任务、评论和消息中的头像；新成员默认随机分配。
+          </small>
+        </div>
         <div className="identity-strip">
           <span>{agent.role}</span>
           <span>Agent ID · {agentId(agent)}</span>
