@@ -1,81 +1,122 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { PointerEvent, ReactNode } from "react";
+import { useEffect, useState } from "react";
+import type { CSSProperties, ReactNode } from "react";
+import {
+  Group,
+  Panel,
+  Separator,
+  useDefaultLayout,
+  type LayoutStorage,
+} from "react-resizable-panels";
 
-export type ColumnSizes = [number, number, number];
+const PANEL_IDS = ["workbench-org", "workbench-chat", "workbench-data"];
+const LAYOUT_ID = "company.workbench.layout";
+const LEGACY_STORAGE_KEY = "company.workbench.columns";
+const NARROW_QUERY = "(max-width: 900px)";
 
-const STORAGE_KEY = "company.workbench.columns";
-const DEFAULT_SIZES: ColumnSizes = [18, 34, 48];
-const MINIMUMS: ColumnSizes = [200, 320, 360];
-const GUTTER = 6;
-const GUTTERS = GUTTER * 2;
+/** Panel 的内层容器默认 overflow:auto；三栏内部各自滚动，这里保持旧的裁切行为。 */
+const PANEL_STYLE: CSSProperties = { overflow: "hidden" };
+
+function isStoredLayout(raw: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return false;
+    }
+    const layout = parsed as Record<string, unknown>;
+    if (Object.keys(layout).length !== PANEL_IDS.length) return false;
+    const values = PANEL_IDS.map((id) => layout[id]);
+    if (
+      !values.every(
+        (value) =>
+          typeof value === "number" &&
+          Number.isFinite(value) &&
+          value >= 0 &&
+          value <= 100,
+      )
+    ) {
+      return false;
+    }
+    // 库保存的是归一化百分比；总和明显偏离 100 视为损坏数据。
+    const total = (values as number[]).reduce((sum, value) => sum + value, 0);
+    return Math.abs(total - 100) <= 0.5;
+  } catch {
+    return false;
+  }
+}
 
 /**
- * 三列可分配的宽度：元素内容盒宽度再扣除两条 gutter。
- * clientWidth 包含 padding、不含滚动条；computed padding 兼容 1180px 处的 14→10 切换。
+ * 旧键保存的是三栏像素数组；按总和折算成库需要的百分比。
+ * 读取或折算失败时返回 null，由 useDefaultLayout 回退到 Panel 默认比例。
  */
-function availableWidth(container: HTMLElement): number {
-  const style = getComputedStyle(container);
-  const padding =
-    Number.parseFloat(style.paddingLeft) +
-    Number.parseFloat(style.paddingRight);
-  return Math.max(0, container.clientWidth - padding - GUTTERS);
-}
-
-function clampSizes(next: number[], total: number): ColumnSizes {
-  const sizes: ColumnSizes = [
-    Math.max(MINIMUMS[0], next[0]),
-    Math.max(MINIMUMS[1], next[1]),
-    Math.max(MINIMUMS[2], next[2]),
-  ];
-  let overflow = sizes.reduce((a, b) => a + b, 0) - total;
-  if (overflow > 0) {
-    // 优先从最宽的列回收，尽量保住三列的最小宽度。
-    const order = [...sizes.keys()].sort((a, b) => sizes[b] - sizes[a]);
-    for (const index of order) {
-      const take = Math.min(sizes[index] - MINIMUMS[index], overflow);
-      sizes[index] -= take;
-      overflow -= take;
-      if (overflow <= 0) break;
-    }
-    // 901–911px 的极端窄桌面：最小宽度之和仍超出可用宽度，
-    // 由最宽列继续吸收，宁可略低于最小宽度也不能溢出视口。
-    if (overflow > 0) {
-      for (const index of order) {
-        const take = Math.min(sizes[index], overflow);
-        sizes[index] -= take;
-        overflow -= take;
-        if (overflow <= 0) break;
-      }
-    }
-  }
-  return sizes;
-}
-
-function readSizes(
-  container: HTMLElement | null,
-  total: number,
-): ColumnSizes | null {
+function legacyLayout(): string | null {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw || !container || !total) return null;
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed) || parsed.length !== 3) return null;
-    const pixels = parsed.map((value: number) =>
-      value <= 100 ? (value / 100) * total : value,
-    ) as ColumnSizes;
-    const sum = pixels.reduce((a, b) => a + b, 0);
-    const scaled =
-      sum > 0 ? pixels.map((value) => (value / sum) * total) : pixels;
-    return clampSizes(scaled, total);
+    const raw = localStorage.getItem(LEGACY_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length !== PANEL_IDS.length) {
+      return null;
+    }
+    if (
+      !parsed.every(
+        (value) =>
+          typeof value === "number" && Number.isFinite(value) && value > 0,
+      )
+    ) {
+      return null;
+    }
+    const sizes = parsed as number[];
+    const total = sizes.reduce((sum, value) => sum + value, 0);
+    if (total <= 0) return null;
+    const layout = Object.fromEntries(
+      PANEL_IDS.map((id, index) => [id, (sizes[index] / total) * 100]),
+    );
+    return JSON.stringify(layout);
   } catch {
     return null;
   }
 }
 
+/** 新键损坏或旧键不可迁移时都回退默认布局，不让存储问题打断渲染。 */
+const layoutStorage: LayoutStorage = {
+  getItem(key) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) return isStoredLayout(raw) ? raw : null;
+      return legacyLayout();
+    } catch {
+      return null;
+    }
+  },
+  setItem(key, value) {
+    try {
+      localStorage.setItem(key, value);
+    } catch {
+      // 存储不可用时不阻断拖拽。
+    }
+  },
+};
+
+function useIsNarrow(): boolean {
+  const [isNarrow, setIsNarrow] = useState(
+    () =>
+      typeof window !== "undefined" && window.matchMedia(NARROW_QUERY).matches,
+  );
+
+  useEffect(() => {
+    const media = window.matchMedia(NARROW_QUERY);
+    const update = () => setIsNarrow(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+
+  return isNarrow;
+}
+
 /**
  * 三栏工作台：组织 / 会话 / 数据工作区。
- * 尺寸以像素保存；以扣除左右 padding 和两条 gutter 后的可用宽度为基准，
- * 窗口缩放时按新基准重新分配，避免右列被裁切。
+ * 宽屏使用 react-resizable-panels 提供拖拽与键盘调整；
+ * 窄屏直接渲染纵向堆叠容器，避免库的内联 flex 布局与 CSS 媒体查询相互覆盖。
  */
 export function SplitWorkspace({
   sidebar,
@@ -86,114 +127,67 @@ export function SplitWorkspace({
   chat: ReactNode;
   workspace: ReactNode;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [sizes, setSizes] = useState<ColumnSizes | null>(null);
-  const drag = useRef<{
-    index: number;
-    startX: number;
-    start: ColumnSizes;
-  } | null>(null);
+  const isNarrow = useIsNarrow();
+  const { defaultLayout, onLayoutChanged } = useDefaultLayout({
+    id: LAYOUT_ID,
+    panelIds: PANEL_IDS,
+    storage: layoutStorage,
+    onlySaveAfterUserInteractions: true,
+  });
 
-  const persist = useCallback((next: ColumnSizes) => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    } catch {
-      // 存储不可用时不阻断拖拽。
-    }
-  }, []);
-
-  useEffect(() => {
-    const container = ref.current;
-    if (!container) return;
-    const total = availableWidth(container);
-    const stored = readSizes(container, total);
-    setSizes(
-      stored ??
-        clampSizes(
-          DEFAULT_SIZES.map((value) => (value / 100) * total),
-          total,
-        ),
+  if (isNarrow) {
+    return (
+      <div className="workbench">
+        <aside className="workbench-column workbench-sidebar">{sidebar}</aside>
+        <section className="workbench-column workbench-chat">{chat}</section>
+        <section className="workbench-column workbench-data">
+          {workspace}
+        </section>
+      </div>
     );
-    const onResize = () => {
-      const width = availableWidth(container);
-      if (!width) return;
-      setSizes((current) => {
-        if (!current) return current;
-        const currentTotal = current.reduce((a, b) => a + b, 0);
-        if (!currentTotal) {
-          return clampSizes(
-            DEFAULT_SIZES.map((value) => (value / 100) * width),
-            width,
-          );
-        }
-        const scale = width / currentTotal;
-        return clampSizes(
-          current.map((value) => value * scale),
-          width,
-        );
-      });
-    };
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
-
-  const onPointerDown = (index: number) => (event: PointerEvent) => {
-    if (!sizes) return;
-    event.preventDefault();
-    (event.target as HTMLElement).setPointerCapture(event.pointerId);
-    drag.current = { index, startX: event.clientX, start: [...sizes] };
-  };
-
-  const onPointerMove = (event: PointerEvent) => {
-    const state = drag.current;
-    const container = ref.current;
-    if (!state || !container) return;
-    const total = availableWidth(container);
-    const delta = event.clientX - state.startX;
-    const next = [...state.start] as ColumnSizes;
-    next[state.index] = state.start[state.index] + delta;
-    next[state.index + 1] = state.start[state.index + 1] - delta;
-    setSizes(clampSizes(next, total));
-  };
-
-  const onPointerUp = () => {
-    if (drag.current && sizes) persist(sizes);
-    drag.current = null;
-  };
+  }
 
   return (
-    <div
-      ref={ref}
+    <Group
       className="workbench"
-      style={
-        sizes
-          ? {
-              gridTemplateColumns: `${sizes[0]}px ${GUTTER}px ${sizes[1]}px ${GUTTER}px ${sizes[2]}px`,
-            }
-          : undefined
-      }
+      defaultLayout={defaultLayout}
+      onLayoutChanged={onLayoutChanged}
     >
-      <aside className="workbench-column workbench-sidebar">{sidebar}</aside>
-      <div
-        className="column-gutter"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="调整组织栏宽度"
-        onPointerDown={onPointerDown(0)}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-      />
-      <section className="workbench-column workbench-chat">{chat}</section>
-      <div
-        className="column-gutter"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="调整工作区宽度"
-        onPointerDown={onPointerDown(1)}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-      />
-      <section className="workbench-column workbench-data">{workspace}</section>
-    </div>
+      <Panel
+        id={PANEL_IDS[0]}
+        className="workbench-column workbench-sidebar"
+        defaultSize="18%"
+        minSize={200}
+        style={PANEL_STYLE}
+        role="region"
+        aria-label="组织栏"
+      >
+        {sidebar}
+      </Panel>
+      <Separator className="column-gutter" aria-label="调整组织栏宽度" />
+      <Panel
+        id={PANEL_IDS[1]}
+        className="workbench-column workbench-chat"
+        defaultSize="34%"
+        minSize={320}
+        style={PANEL_STYLE}
+        role="region"
+        aria-label="会话栏"
+      >
+        {chat}
+      </Panel>
+      <Separator className="column-gutter" aria-label="调整工作区宽度" />
+      <Panel
+        id={PANEL_IDS[2]}
+        className="workbench-column workbench-data"
+        defaultSize="48%"
+        minSize={360}
+        style={PANEL_STYLE}
+        role="region"
+        aria-label="工作区"
+      >
+        {workspace}
+      </Panel>
+    </Group>
   );
 }

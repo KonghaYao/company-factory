@@ -1,13 +1,11 @@
 /* 工作台三栏 + 组织栏。 */
 .workbench {
-  display: grid;
+  display: flex;
+  flex-direction: row;
   flex: 1;
+  min-width: 0;
   min-height: 0;
-  gap: 0;
   padding: 0 14px 14px;
-  /* 两条 6px gutter 先占位，fr 只分配剩余内容宽度；
-     原来的 18%+34%+48% 再加 12px 会把右侧 padding 挤掉。 */
-  grid-template-columns: minmax(0, 18fr) 6px minmax(0, 34fr) 6px minmax(0, 48fr);
 }
 
 .workbench-column {
@@ -24,6 +22,7 @@
 
 .column-gutter {
   position: relative;
+  width: 6px;
   cursor: col-resize;
   touch-action: none;
 }
@@ -629,16 +628,11 @@
   }
 
   .workbench {
-    display: flex !important;
     flex-direction: column;
     gap: 10px;
     overflow: visible;
     flex: 1;
     padding: 0 10px 16px;
-  }
-
-  .column-gutter {
-    display: none;
   }
 
   .workbench-column {

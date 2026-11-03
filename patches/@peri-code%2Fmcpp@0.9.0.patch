@@ -1,0 +1,15 @@
+diff --git a/src/files/handle.ts b/src/files/handle.ts
+index 71b71f35566ce81653dd6f89c1981e5a123f8263..0c0cd44b21c4585a8b8d9cb186a5e037b67f14ed 100644
+--- a/src/files/handle.ts
++++ b/src/files/handle.ts
+@@ -247,7 +247,9 @@ export function createUploadedFile(
+       lease.check();
+       const stream = await open();
+       await pipeline(
+-        Readable.fromWeb(stream as import("node:stream/web").ReadableStream),
++        Readable.fromWeb(
++          stream as unknown as import("node:stream/web").ReadableStream,
++        ),
+         createWriteStream(path, { mode: 0o600, flags: "wx" }),
+         { signal: lease.controller.signal },
+       );
