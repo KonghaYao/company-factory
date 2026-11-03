@@ -10,7 +10,14 @@ import {
   MessageSquare,
   Pencil,
 } from "lucide-react";
-import type { Agent, Comment, Issue, Preview, Scope } from "../../../lib/types";
+import type {
+  Agent,
+  Comment,
+  Issue,
+  Preview,
+  Scope,
+  Workspace,
+} from "../../../lib/types";
 import { action, list } from "../../../lib/api";
 import { uuid } from "../../../lib/uuid";
 import { shortDate, statusLabel, statusTone } from "../../../lib/format";
@@ -27,6 +34,8 @@ import { CollapsibleText } from "../../../ui/CollapsibleText";
 import { StreamdownText } from "../../../peri/chat/timeline/StreamdownText";
 import { DecisionCard } from "./DecisionCard";
 import { PreviewCard } from "./PreviewCard";
+import { TodoSection } from "./TodoSection";
+import { UpdatesSection } from "./UpdatesSection";
 
 const STATUS_OPTIONS = [
   "triage",
@@ -39,7 +48,7 @@ const STATUS_OPTIONS = [
   "ready_merge",
 ];
 
-/** Issue 详情：编辑、裁定、Preview 验收与评论时间线。 */
+/** Issue 详情：待办/进展、编辑、裁定、Preview 验收与评论时间线。 */
 export function IssueDetail({
   scope,
   issue,
@@ -98,7 +107,28 @@ export function IssueDetail({
     qc.invalidateQueries({
       queryKey: ["comments", scope.companyId, scope.agentId, issue.id],
     });
+    qc.invalidateQueries({
+      queryKey: ["updates", scope.companyId, scope.agentId, issue.id],
+    });
     qc.invalidateQueries({ queryKey: ["company", scope.companyId] });
+  };
+  /**
+   * todo/进展写操作返回完整 Issue：先写回 workspace cache，让连续操作
+   * 立即拿到新 version，避免下一次请求立刻 version_conflict。
+   */
+  const applyIssue = (next: Issue) => {
+    qc.setQueryData<Workspace>(
+      ["workspace", scope.companyId, scope.agentId],
+      (current) =>
+        current
+          ? {
+              ...current,
+              issues: current.issues.map((item) =>
+                String(item.id) === String(next.id) ? next : item,
+              ),
+            }
+          : current,
+    );
   };
   const update = useMutation({
     mutationFn: (capture: {
@@ -188,6 +218,21 @@ export function IssueDetail({
           onSuccess={refresh}
         />
       ))}
+
+      <TodoSection
+        scope={scope}
+        issue={issue}
+        onIssue={applyIssue}
+        onRefresh={refresh}
+      />
+
+      <UpdatesSection
+        scope={scope}
+        issue={issue}
+        agents={agents}
+        onIssue={applyIssue}
+        onRefresh={refresh}
+      />
 
       <CollapsibleSection
         className="panel-section"

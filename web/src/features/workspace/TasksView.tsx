@@ -1,6 +1,11 @@
 import { ArrowUpRight, GitBranch, Plus } from "lucide-react";
 import type { Agent, Issue, Preview, Scope } from "../../lib/types";
 import { statusLabel, statusTone } from "../../lib/format";
+import {
+  taskUpdateKindLabels,
+  taskUpdateKindTone,
+  todoProgress,
+} from "../../lib/taskProgress";
 import { Badge, Button, EmptyState } from "../../ui/primitives";
 import { IssueDetail } from "./tasks/IssueDetail";
 
@@ -66,6 +71,7 @@ export function TasksView({
               item.decisions?.filter(
                 (decision) => decision.status === "pending",
               ).length || 0;
+            const todo = todoProgress(item.todos);
             return (
               <button
                 key={item.id}
@@ -84,7 +90,45 @@ export function TasksView({
                   )}
                 </div>
                 <strong>{item.title}</strong>
-                <p>{item.progress || item.summary || "尚未填写摘要"}</p>
+                {todo.total > 0 && (
+                  <div
+                    className="task-card-progress"
+                    data-testid={`issue-${item.id}-todo-progress`}
+                    role="progressbar"
+                    aria-label="待办进度"
+                    aria-valuemin={0}
+                    aria-valuemax={todo.total}
+                    aria-valuenow={todo.done}
+                  >
+                    <span className="task-card-progress-track">
+                      <span
+                        className="task-card-progress-fill"
+                        style={{ width: `${todo.percent}%` }}
+                      />
+                    </span>
+                    <span className="task-card-progress-label">
+                      {todo.done}/{todo.total}
+                      {todo.inProgress > 0 &&
+                        ` · ${todo.inProgress} 进行中`}
+                    </span>
+                  </div>
+                )}
+                {item.latest_update ? (
+                  <p
+                    className="task-card-update"
+                    data-testid={`issue-${item.id}-latest-update`}
+                  >
+                    <Badge
+                      value={taskUpdateKindLabels[item.latest_update.kind]}
+                      tone={taskUpdateKindTone[item.latest_update.kind]}
+                    />
+                    <span className="task-card-update-text">
+                      {item.latest_update.excerpt}
+                    </span>
+                  </p>
+                ) : (
+                  <p>{item.progress || item.summary || "尚未填写摘要"}</p>
+                )}
                 <div className="task-card-foot">
                   <span>{owner?.name || item.agent_id}</span>
                   <ArrowUpRight size={13} />

@@ -1,7 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { Agent, Comment, Issue, Preview } from "../../../lib/types";
+import type {
+  Agent,
+  Comment,
+  Issue,
+  Preview,
+  TaskUpdate,
+  TodoItem,
+  TodoStatus,
+} from "../../../lib/types";
 import { IssueDetail } from "./IssueDetail";
 
 const scope = { companyId: "c-1", agentId: "agent-1" };
@@ -33,6 +41,52 @@ const comments: Comment[] = [
     created_at: "2026-01-01T11:00:00Z",
   },
 ];
+const todo = (id: string, text: string, status: TodoStatus): TodoItem => ({
+  id,
+  text,
+  status,
+  created_at: "2026-01-01T09:00:00Z",
+  created_by_type: "agent",
+  created_by_id: "agent-1",
+  updated_at: "2026-01-01T09:00:00Z",
+  updated_by_type: "agent",
+  updated_by_id: "agent-1",
+  ...(status === "done" ? { done_at: "2026-01-01T12:00:00Z" } : {}),
+});
+const todos: TodoItem[] = [
+  todo("1-T1", "梳理接口", "done"),
+  todo("1-T2", "实现页面", "done"),
+  todo("1-T3", "补充测试", "in_progress"),
+  todo("1-T4", "验收", "pending"),
+];
+const updates: TaskUpdate[] = [
+  {
+    schema: "company-update/v1",
+    id: "1-U2",
+    issue_id: "1",
+    author_type: "agent",
+    author_id: "agent-1",
+    kind: "blocker",
+    created_at: "2026-01-03T10:00:00Z",
+    version: 1,
+    status: "code",
+    todo_counts: { total: 4, done: 2, in_progress: 1 },
+    body: "**等待** 依赖",
+  },
+  {
+    schema: "company-update/v1",
+    id: "1-U1",
+    issue_id: "1",
+    author_type: "user",
+    author_id: "user-1",
+    kind: "decision",
+    created_at: "2026-01-02T10:00:00Z",
+    version: 1,
+    status: "triage",
+    todo_counts: { total: 0, done: 0, in_progress: 0 },
+    body: "决定先做 **待办**",
+  },
+];
 
 const tag = (html: string, testId: string) =>
   html.match(new RegExp(`<[^>]+data-testid="${testId}"[^>]*>`))?.[0] ?? "";
@@ -43,6 +97,8 @@ function render(
     nextCursor?: string | null;
     issue?: Issue;
     previews?: Preview[];
+    updates?: TaskUpdate[];
+    updatesCursor?: string | null;
   } = {},
 ): string {
   const currentIssue = options.issue ?? issue;
@@ -54,6 +110,18 @@ function render(
         {
           items: options.comments ?? comments,
           nextCursor: options.nextCursor ?? null,
+        },
+      ],
+      pageParams: [undefined],
+    },
+  );
+  qc.setQueryData(
+    ["updates", scope.companyId, scope.agentId, currentIssue.id],
+    {
+      pages: [
+        {
+          items: options.updates ?? [],
+          nextCursor: options.updatesCursor ?? null,
         },
       ],
       pageParams: [undefined],
@@ -93,6 +161,94 @@ describe("IssueDetail", () => {
     expect(html).toContain("Agent 回复");
     expect(html).toContain("--collapsible-h:160px");
     expect(html).not.toContain("--collapsible-h:240px");
+  });
+
+  test("todo and progress sections render before description and comments", () => {
+    const html = render();
+
+    expect(tag(html, "todos-section-trigger")).toContain('aria-expanded="true"');
+    expect(tag(html, "updates-section-trigger")).toContain(
+      'aria-expanded="true"',
+    );
+    expect(tag(html, "todos-section-body")).not.toContain("inert");
+    expect(tag(html, "updates-section-body")).not.toContain("inert");
+
+    const order = [
+      html.indexOf('data-testid="todos-section"'),
+      html.indexOf('data-testid="updates-section"'),
+      html.indexOf('data-testid="description-section"'),
+      html.indexOf('data-testid="comments-section"'),
+    ];
+    expect(order.every((index) => index > -1)).toBe(true);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+  });
+
+  test("todo progress, per-item status and empty state", () => {
+    const html = render({ issue: { ...issue, todos } });
+    const progress = tag(html, "todo-progress");
+
+    expect(progress).toContain('role="progressbar"');
+    expect(progress).toContain('aria-valuenow="2"');
+    expect(progress).toContain('aria-valuemax="4"');
+    expect(html).toContain("已完成 2/4 · 1 进行中");
+    expect(html).toContain("2/4 · 50%");
+    expect((html.match(/data-testid="todo-item"/g) ?? []).length).toBe(4);
+    expect((html.match(/todo-item is-done/g) ?? []).length).toBe(2);
+    expect((html.match(/data-status="done"/g) ?? []).length).toBe(2);
+    expect(html).toContain('data-status="in_progress"');
+    expect(html).toContain('data-status="pending"');
+    expect(html).toContain('aria-label="状态：补充测试"');
+    expect(html).toContain('aria-label="上移：实现页面"');
+    expect(html).toContain('aria-label="下移：梳理接口"');
+    expect(html).toContain('aria-label="删除待办：验收"');
+    expect(html).toContain('aria-label="新待办内容"');
+    expect(tag(html, "todo-empty")).toBe("");
+
+    const empty = render();
+    expect(tag(empty, "todo-progress")).toBe("");
+    expect(tag(empty, "todo-empty")).not.toBe("");
+    expect(empty).toContain("还没有待办");
+    expect(empty).not.toContain("0/0");
+  });
+
+  test("update entries show author, kind, markdown and snapshot newest-first", () => {
+    const html = render({ updates, updatesCursor: "20" });
+    const newest = html.indexOf('data-update-id="1-U2"');
+    const older = html.indexOf('data-update-id="1-U1"');
+
+    expect(tag(html, "update-timeline")).not.toBe("");
+    expect((html.match(/data-testid="update-item"/g) ?? []).length).toBe(2);
+    expect(newest).toBeGreaterThan(-1);
+    expect(older).toBeGreaterThan(newest);
+    expect(html).toContain('data-kind="blocker"');
+    expect(html).toContain("阻塞");
+    expect(html).toContain("决定");
+    expect(html).toContain("状态 编写代码 · 待办 2/4 · 1 进行中");
+    expect((html.match(/data-slot="peri-markdown"/g) ?? []).length).toBe(5);
+    expect(html).toContain('data-streamdown="strong"');
+    expect(html).toContain("加载更早的进展");
+
+    const newestItem = html.slice(newest, html.indexOf("</li>", newest));
+    const olderItem = html.slice(older, html.indexOf("</li>", older));
+    expect(newestItem).toContain("开发一号");
+    expect(newestItem).toContain("阻塞");
+    expect(olderItem).toContain("你");
+    expect(olderItem).toContain("决定");
+    // 进展记录不是逐条折叠，也不提供编辑/删除。
+    expect((html.match(/class="collapsible-text"/g) ?? []).length).toBe(2);
+    expect(newestItem).not.toContain("<button");
+    expect(olderItem).not.toContain("<button");
+  });
+
+  test("update empty state and composer are explicit", () => {
+    const html = render();
+
+    expect(tag(html, "update-empty")).not.toBe("");
+    expect(html).toContain("还没有进展记录");
+    expect(html).toContain('aria-label="进展记录"');
+    expect(html).toContain('aria-label="进展类型"');
+    expect(tag(html, "update-submit")).toContain("disabled");
+    expect(html).not.toContain("加载更早的进展");
   });
 
   test("each comment gets its own collapsed body and keeps its content", () => {

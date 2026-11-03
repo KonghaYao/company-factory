@@ -2469,3 +2469,296 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* ---------- 任务待办与进展 ---------- */
+.task-card-progress {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.task-card-progress-track {
+  flex: 1 1 auto;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-strong);
+}
+
+.task-card-progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.task-card-progress-label {
+  flex: 0 0 auto;
+  color: var(--faint);
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.task-card > p.task-card-update {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.task-card-update .badge {
+  flex: 0 0 auto;
+}
+
+.task-card-update-text {
+  display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.issue-detail .section-empty {
+  margin: 0;
+  color: var(--faint);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+/* 待办：用户可逐项改状态、排序、删除，进度条只读。 */
+.issue-detail .todo-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.issue-detail .todo-progress-track {
+  flex: 1 1 auto;
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-strong);
+}
+
+.issue-detail .todo-progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.issue-detail .todo-progress-label {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.issue-detail .todo-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.issue-detail .todo-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px dashed var(--line);
+}
+
+.issue-detail .todo-item:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.issue-detail .todo-main {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.issue-detail .todo-status {
+  flex: 0 0 auto;
+  width: 78px;
+  padding: 4px 6px;
+  font-size: 10.5px;
+}
+
+.issue-detail .todo-text {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-soft);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.issue-detail .todo-item.is-done .todo-text {
+  color: var(--faint);
+  text-decoration: line-through;
+}
+
+.issue-detail .todo-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 1px;
+}
+
+.issue-detail .todo-actions .btn {
+  padding: 0 6px;
+}
+
+.issue-detail .todo-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.issue-detail .todo-add input {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+.issue-detail .todo-hint {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--faint);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+/* 进展：只追加日志，用左侧色条和评论时间线区分。 */
+.issue-detail .update-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.issue-detail .update-item {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.issue-detail .update-avatar {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+}
+
+.issue-detail .update-card {
+  min-width: 0;
+  padding: 8px 10px;
+  border-left: 2px solid var(--line-strong);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--surface-muted);
+}
+
+.issue-detail .update-item[data-kind="progress"] .update-card {
+  border-left-color: var(--accent);
+}
+
+.issue-detail .update-item[data-kind="blocker"] .update-card {
+  border-left-color: var(--warning);
+  background: var(--warning-soft);
+}
+
+.issue-detail .update-item[data-kind="decision"] .update-card {
+  border-left-color: var(--success);
+  background: var(--success-soft);
+}
+
+.issue-detail .update-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  color: var(--faint);
+  font-size: 10.5px;
+}
+
+.issue-detail .update-author {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-soft);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.issue-detail .update-meta time {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.issue-detail .update-card .aui-md {
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.issue-detail .update-card .aui-md p:last-child {
+  margin-bottom: 0;
+}
+
+.issue-detail .update-snapshot {
+  margin-top: 5px;
+  color: var(--faint);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.issue-detail .update-more {
+  margin-top: 8px;
+}
+
+.issue-detail .update-form {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.issue-detail .update-form textarea {
+  font-size: 12px;
+}
+
+.issue-detail .update-form-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.issue-detail .update-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--faint);
+  font-size: 10.5px;
+}
+
+.issue-detail .update-kind select {
+  width: auto;
+  padding: 4px 7px;
+  font-size: 10.5px;
+}
+
+.issue-detail .update-hint {
+  color: var(--faint);
+  font-size: 10px;
+  line-height: 1.5;
+}

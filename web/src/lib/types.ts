@@ -76,6 +76,45 @@ export type Decision = {
   answer?: string | null;
   responses?: { answer: string; created_at: string }[];
 };
+export type TodoStatus = "pending" | "in_progress" | "done";
+/** Issue 内有序待办；id 由服务端生成，删除后不复用。 */
+export type TodoItem = {
+  id: string;
+  text: string;
+  status: TodoStatus;
+  created_at: string;
+  created_by_type: "user" | "agent";
+  created_by_id: string;
+  updated_at: string;
+  updated_by_type: "user" | "agent";
+  updated_by_id: string;
+  done_at?: string;
+};
+export type TaskUpdateKind = "progress" | "blocker" | "decision";
+/** 列表/摘要投影；权威记录是追加式进展文件。 */
+export type LatestUpdate = {
+  id: string;
+  created_at: string;
+  author_type: "user" | "agent";
+  author_id: string;
+  kind: TaskUpdateKind;
+  excerpt: string;
+};
+/** 只追加、不可编辑的进展记录。 */
+export type TaskUpdate = {
+  schema: "company-update/v1";
+  id: string;
+  issue_id: string;
+  author_type: "user" | "agent";
+  author_id: string;
+  kind: TaskUpdateKind;
+  created_at: string;
+  version: 1;
+  /** 追加时的 Issue 状态快照。 */
+  status: string;
+  todo_counts: { total: number; done: number; in_progress: number };
+  body: string;
+};
 export type Issue = {
   id: string | number;
   title: string;
@@ -93,6 +132,10 @@ export type Issue = {
   pipeline?: string;
   code_ref?: string;
   collaborators?: string[];
+  /** 服务端维护的有序待办；旧 Issue 可能缺省。 */
+  todos?: TodoItem[];
+  /** 最新一条进展的列表投影；旧 Issue 为 null。 */
+  latest_update?: LatestUpdate | null;
 };
 export type Comment = {
   id: string;
