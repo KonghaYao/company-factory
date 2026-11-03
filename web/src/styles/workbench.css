@@ -138,7 +138,7 @@
   flex: 0 0 auto;
 }
 
-.org-archived-trigger {
+.org-members-trigger {
   display: inline-flex;
   align-items: center;
   align-self: flex-start;
@@ -155,14 +155,37 @@
     color 0.15s ease;
 }
 
-.org-archived-trigger:hover,
-.org-archived-trigger[aria-expanded="true"] {
+.org-members-trigger:hover,
+.org-members-trigger[aria-expanded="true"] {
   border-color: var(--line-strong);
   background: var(--surface);
   color: var(--ink);
 }
 
-.org-archived-trigger em {
+.org-members-trigger em {
+  font-style: normal;
+  color: var(--faint);
+  font-size: 10px;
+}
+
+.org-members {
+  position: relative;
+  align-self: flex-start;
+}
+
+.org-members-chevron {
+  color: var(--faint);
+}
+
+/* 用 .org-members 提高特异性，避免被后面的 .row-actions-menu { right: 0 } 覆盖 */
+.org-members .org-members-menu {
+  left: 0;
+  right: auto;
+  min-width: 184px;
+}
+
+.org-members-menu button em {
+  margin-left: auto;
   font-style: normal;
   color: var(--faint);
   font-size: 10px;
@@ -514,16 +537,6 @@
   border-left: 1px solid var(--line);
 }
 
-.org-unassigned {
-  margin-top: 18px;
-  padding-top: 8px;
-  border-top: 1px solid var(--line);
-}
-
-.org-unassigned > .org-node-head .org-group-head {
-  cursor: default;
-}
-
 .org-node-archived > .org-node-head {
   opacity: 0.58;
 }
@@ -537,10 +550,17 @@
   opacity: 0.78;
 }
 
-.org-archived-list {
+.org-member-directory {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.org-member-list {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  padding-bottom: 96px;
 }
 
 .org-empty {
@@ -572,13 +592,6 @@
 .org-action:hover {
   background: var(--surface-muted);
   color: var(--ink);
-}
-
-.org-note {
-  padding: 8px 8px 2px;
-  color: var(--faint);
-  font-size: 10px;
-  letter-spacing: 0.01em;
 }
 
 /* 平板：收紧栏宽，隐藏次要信息 */

@@ -6,7 +6,7 @@ import type {
   Organization,
   PendingDecision,
 } from "../../lib/types";
-import { OrganizationPanel } from "./OrganizationPanel";
+import { MembersMenu, OrganizationPanel } from "./OrganizationPanel";
 
 const company: Company = { id: "c-1", name: "测试公司" };
 const organization: Organization = {
@@ -123,55 +123,68 @@ describe("OrganizationPanel", () => {
     expect(html).not.toContain('data-testid="org-node-edit-headquarters"');
   });
 
-  test("active members without a placement stay visible in the unassigned section", () => {
+  test("unassigned active members are hidden from the sidebar", () => {
     const html = render();
 
-    expect(html).toContain('data-testid="org-unassigned"');
-    expect(html).toContain("未分配成员");
-    expect(html).toContain("未分配开发");
-    expect(html).toContain('data-testid="agent-more-dev-1"');
-    expect(html).not.toContain('data-testid="agent-move-dev-1"');
-    expect(html).not.toContain('data-testid="agent-archive-dev-1"');
-    expect(html).not.toContain('data-testid="agent-edit-dev-1"');
+    expect(html).not.toContain('data-testid="org-unassigned"');
+    expect(html).not.toContain("未分配成员");
+    expect(html).not.toContain('data-testid="agent-dev-1"');
+    expect(html).not.toContain('data-testid="agent-more-dev-1"');
   });
 
-  test("a placed member is not duplicated in the unassigned section", () => {
+  test("a placed member is not duplicated in the sidebar", () => {
     const html = render();
     const rows = html.match(/data-testid="agent-c-1-hr"/g) ?? [];
 
     expect(rows).toHaveLength(1);
   });
 
-  test("archived members stay behind a header trigger and out of unassigned", () => {
+  test("the member menu is the only sidebar entry for archived members", () => {
     const html = render();
-    const trigger =
-      html.match(
-        /<button[^>]*data-testid="org-archived-trigger"[\s\S]*?<\/button>/,
-      )?.[0] ?? "";
-    const unassigned = html.slice(html.indexOf('data-testid="org-unassigned"'));
 
-    expect(trigger).toContain("已归档成员");
-    expect(trigger).toContain("<em>1</em>");
-    expect(html).toContain('aria-haspopup="dialog"');
-    expect(unassigned).not.toContain("已归档开发");
-    expect(unassigned).not.toContain('data-testid="agent-dev-2"');
+    expect(html).toContain('data-testid="org-members-trigger"');
+    expect(html).toContain('aria-haspopup="menu"');
+    expect(html).toContain("成员");
+    expect(html).not.toContain('data-testid="org-archived-trigger"');
     expect(html).not.toContain("已归档开发");
     expect(html).not.toContain('data-testid="agent-more-dev-2"');
-    expect(html).not.toContain('data-testid="agent-restore-dev-2"');
-    expect(html).not.toContain('data-testid="org-archived-list"');
   });
 
-  test("the archived trigger is hidden when nobody is archived", () => {
+  test("the member menu stays available when nobody is archived", () => {
     const html = render(agents.filter((agent) => agent.status !== "archived"));
 
-    expect(html).not.toContain('data-testid="org-archived-trigger"');
+    expect(html).toContain('data-testid="org-members-trigger"');
+  });
+
+  test("member menu exposes all, unassigned and departed entries", () => {
+    const html = renderToStaticMarkup(
+      <MembersMenu
+        counts={{ all: 3, unassigned: 1, archived: 1 }}
+        onOpen={() => {}}
+        defaultOpen
+      />,
+    );
+
+    expect(html).toContain('role="menu"');
+    expect(html).toContain('aria-expanded="true"');
+    expect(html).toContain("全部成员");
+    expect(html).toContain("未分配成员");
+    expect(html).toContain("离职人员");
+  });
+
+  test("the move-only note is removed without removing organization settings", () => {
+    const html = render();
+
+    expect(html).not.toContain("◆");
+    expect(html).not.toContain("移动只改组织归属");
+    expect(html).toContain("组织设置");
   });
 
   test("member avatars use the color from the organization projection", () => {
     const html = render();
 
     expect(agentRow(html, "c-1-hr")).toContain('data-avatar-color="navy"');
-    expect(agentRow(html, "dev-1")).toContain('data-avatar-color="rose"');
+    expect(agentRow(html, "dev-1")).toBe("");
     expect(agentRow(html, "c-1-hr")).toContain("avatar-agent avatar-sm");
   });
 
@@ -182,7 +195,7 @@ describe("OrganizationPanel", () => {
 
     expect(agentRow(html, "c-1-hr")).toContain("avatar-agent avatar-sm");
     expect(agentRow(html, "c-1-hr")).not.toContain("data-avatar-color");
-    expect(agentRow(html, "dev-1")).not.toContain("data-avatar-color");
+    expect(agentRow(html, "dev-1")).toBe("");
   });
 
   test("pending questions sit above the org tree, outside its scroll area", () => {

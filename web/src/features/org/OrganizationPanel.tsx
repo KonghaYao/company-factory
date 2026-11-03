@@ -11,6 +11,7 @@ import {
   Settings2,
   Trash2,
   Undo2,
+  Users,
 } from "lucide-react";
 import type {
   Agent,
@@ -25,9 +26,13 @@ import {
   ErrorBox,
   IconButton,
   Loading,
-  Sheet,
   Spinner,
 } from "../../ui/primitives";
+import {
+  MemberDirectorySheet,
+  groupMembers,
+  type MemberFilter,
+} from "./MemberDirectorySheet";
 import { PendingQuestions } from "./PendingQuestions";
 
 type RunAction = (action: () => void) => () => void;
@@ -92,6 +97,92 @@ function RowActionsMenu({
         </div>
       )}
     </span>
+  );
+}
+
+/** One sidebar entry opens the unified member directory at a given filter. */
+export function MembersMenu({
+  counts,
+  onOpen,
+  defaultOpen = false,
+}: {
+  counts: { all: number; unassigned: number; archived: number };
+  onOpen: (filter: MemberFilter) => void;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const root = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: PointerEvent) => {
+      if (!root.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", close);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", close);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [open]);
+
+  const choose = (filter: MemberFilter) => {
+    setOpen(false);
+    onOpen(filter);
+  };
+
+  return (
+    <div className={`org-members ${open ? "is-open" : ""}`.trim()} ref={root}>
+      <button
+        type="button"
+        className="org-members-trigger"
+        data-testid="org-members-trigger"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <Users size={13} />
+        <span>成员</span>
+        <em>{counts.all}</em>
+        <ChevronDown size={12} className="org-members-chevron" />
+      </button>
+      {open && (
+        <div
+          className="row-actions-menu org-members-menu"
+          role="menu"
+          aria-label="成员"
+          data-testid="org-members-menu"
+        >
+          <button
+            type="button"
+            role="menuitem"
+            data-testid="org-members-all"
+            onClick={() => choose("all")}
+          >
+            <Users size={12} /> 全部成员 <em>{counts.all}</em>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            data-testid="org-members-unassigned"
+            onClick={() => choose("unassigned")}
+          >
+            <MoveRight size={12} /> 未分配成员 <em>{counts.unassigned}</em>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            data-testid="org-members-archived"
+            onClick={() => choose("archived")}
+          >
+            <Archive size={12} /> 离职人员 <em>{counts.archived}</em>
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -305,16 +396,8 @@ export function OrganizationPanel({
   onOpenQuestion: (agentId: string, issueId: string) => void;
 }) {
   const company = companies.find((c) => c.id === companyId);
-  const [archiveOpen, setArchiveOpen] = useState(false);
-
-  useEffect(() => {
-    if (!archiveOpen) return;
-    const escape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setArchiveOpen(false);
-    };
-    document.addEventListener("keydown", escape);
-    return () => document.removeEventListener("keydown", escape);
-  }, [archiveOpen]);
+  const [membersOpen, setMembersOpen] = useState(false);
+  const [memberFilter, setMemberFilter] = useState<MemberFilter>("all");
 
   const nodes = organization?.nodes ?? [];
   const nodeIds = new Set(nodes.map((node) => node.id));
@@ -325,22 +408,20 @@ export function OrganizationPanel({
     nodes
       .filter((node) => node.parentId === parentId)
       .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
-  const archivedAgents = agents.filter((agent) => agent.status === "archived");
-  const unassignedAgents = agents.filter(
-    (agent) =>
-      agent.status !== "archived" &&
-      !agent.placement?.nodeId &&
-      !agent.groupId,
-  );
-  const renderActiveAgent = (agent: Agent) => {
+  const memberGroups = groupMembers(agents);
+  const renderActiveAgent = (agent: Agent, closeDirectory = false) => {
     const id = agentId(agent);
     const selected = id === selectedAgent;
+    const act = (action: () => void) => () => {
+      if (closeDirectory) setMembersOpen(false);
+      action();
+    };
     return (
       <div className={`agent-row ${selected ? "is-selected" : ""}`} key={id}>
         <button
           data-testid={`agent-${id}`}
           className="agent-main"
-          onClick={() => onSelectAgent(id)}
+          onClick={act(() => onSelectAgent(id))}
           title={`${agent.name} · ${agent.role}`}
         >
           <span className="agent-avatar-wrap">
@@ -363,14 +444,43 @@ export function OrganizationPanel({
         </button>
         <AgentActionsMenu
           agent={agent}
-          onMove={() => onMoveAgent(id)}
-          onArchive={() => onArchiveAgent(id)}
-          onEdit={() => onEditAgent(id)}
-          onRestore={() => onRestoreAgent(id)}
+          onMove={act(() => onMoveAgent(id))}
+          onArchive={act(() => onArchiveAgent(id))}
+          onEdit={act(() => onEditAgent(id))}
+          onRestore={act(() => onRestoreAgent(id))}
         />
       </div>
     );
   };
+  const renderArchivedAgent = (agent: Agent, closeDirectory = false) => {
+    const id = agentId(agent);
+    const act = (action: () => void) => () => {
+      if (closeDirectory) setMembersOpen(false);
+      action();
+    };
+    return (
+      <div className="agent-row" key={id}>
+        <span className="agent-main agent-archived-copy">
+          <Avatar name={agent.name} color={agent.avatarColor} size="sm" />
+          <span className="agent-copy">
+            <span className="agent-name">{agent.name}</span>
+            <span className="agent-role">离职 · 权限已拒绝</span>
+          </span>
+        </span>
+        <AgentActionsMenu
+          agent={agent}
+          onMove={act(() => onMoveAgent(id))}
+          onArchive={act(() => onArchiveAgent(id))}
+          onEdit={act(() => onEditAgent(id))}
+          onRestore={act(() => onRestoreAgent(id))}
+        />
+      </div>
+    );
+  };
+  const renderDirectoryMember = (agent: Agent) =>
+    agent.status === "archived"
+      ? renderArchivedAgent(agent, true)
+      : renderActiveAgent(agent, true);
   const renderNode = (node: OrgNode, depth: number) => {
     const key = `${companyId}:${node.id}`;
     const isCollapsed = collapsed[key];
@@ -412,7 +522,7 @@ export function OrganizationPanel({
         </div>
         {!isCollapsed && (
           <>
-            {members.map(renderActiveAgent)}
+            {members.map((agent) => renderActiveAgent(agent))}
             {members.length === 0 && children.length === 0 && (
               <p className="org-empty">这个节点还没有成员或子节点。</p>
             )}
@@ -458,20 +568,17 @@ export function OrganizationPanel({
           </span>
           <ChevronDown size={13} className="company-chevron" />
         </label>
-        {archivedAgents.length > 0 && (
-          <button
-            type="button"
-            className="org-archived-trigger"
-            data-testid="org-archived-trigger"
-            aria-haspopup="dialog"
-            aria-expanded={archiveOpen}
-            onClick={() => setArchiveOpen(true)}
-          >
-            <Archive size={13} />
-            <span>已归档成员</span>
-            <em>{archivedAgents.length}</em>
-          </button>
-        )}
+        <MembersMenu
+          counts={{
+            all: memberGroups.all.length,
+            unassigned: memberGroups.unassigned.length,
+            archived: memberGroups.archived.length,
+          }}
+          onOpen={(filter) => {
+            setMemberFilter(filter);
+            setMembersOpen(true);
+          }}
+        />
       </div>
 
       <PendingQuestions
@@ -491,21 +598,6 @@ export function OrganizationPanel({
         {!loading && !error && nodes.length === 0 && (
           <p className="org-empty">还没有组织节点。</p>
         )}
-        {unassignedAgents.length > 0 && (
-          <section className="org-group org-unassigned" data-testid="org-unassigned">
-            <div className="org-node-head">
-              <span className="org-group-head">
-                <MoveRight size={12} />
-                <span>未分配成员</span>
-                <em>{unassignedAgents.length}</em>
-              </span>
-            </div>
-            <p className="org-empty">
-              尚未归属任何节点；可以移动、归档或编辑。
-            </p>
-            {unassignedAgents.map(renderActiveAgent)}
-          </section>
-        )}
       </div>
 
       <div className="org-bottom">
@@ -513,57 +605,18 @@ export function OrganizationPanel({
           <Settings2 size={14} />
           组织设置
         </button>
-        <p className="org-note">
-          <span className="tiny-mark">◆</span> 移动只改组织归属，不改身份、会话与权限。
-        </p>
       </div>
 
-      <Sheet
-        open={archiveOpen}
-        title="已归档成员"
-        subtitle="归档成员保留目录、Session、IM 与 Issue；恢复后可重新分配节点。"
-        onClose={() => setArchiveOpen(false)}
-      >
-        <div className="org-archived-list" data-testid="org-archived-list">
-          {archivedAgents.map((agent) => {
-            const id = agentId(agent);
-            return (
-              <div className="agent-row" key={id}>
-                <span className="agent-main agent-archived-copy">
-                  <Avatar
-                    name={agent.name}
-                    color={agent.avatarColor}
-                    size="sm"
-                  />
-                  <span className="agent-copy">
-                    <span className="agent-name">{agent.name}</span>
-                    <span className="agent-role">已归档 · 权限已拒绝</span>
-                  </span>
-                </span>
-                <AgentActionsMenu
-                  agent={agent}
-                  onMove={() => {
-                    setArchiveOpen(false);
-                    onMoveAgent(id);
-                  }}
-                  onArchive={() => {
-                    setArchiveOpen(false);
-                    onArchiveAgent(id);
-                  }}
-                  onEdit={() => {
-                    setArchiveOpen(false);
-                    onEditAgent(id);
-                  }}
-                  onRestore={() => {
-                    setArchiveOpen(false);
-                    onRestoreAgent(id);
-                  }}
-                />
-              </div>
-            );
-          })}
-        </div>
-      </Sheet>
+      <MemberDirectorySheet
+        open={membersOpen}
+        agents={agents}
+        filter={memberFilter}
+        loading={loading}
+        error={error}
+        onFilter={setMemberFilter}
+        onClose={() => setMembersOpen(false)}
+        renderMember={renderDirectoryMember}
+      />
     </div>
   );
 }
