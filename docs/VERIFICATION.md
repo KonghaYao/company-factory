@@ -16,7 +16,7 @@
 - 真实存储读：临时脚本用 SDK 0.4.0 的 `TursoStorage` 连接升级后的 loom 端点，读取 agent `c-77ac6210f78c0efb4e91afb06ce14d57-developer-2` 的绑定 Session：`sessions=1`、绑定 Session 存在、`getSession` 命中，连续两次 `close()` 均成功；未输出端点或凭据。
 - 容器：`ghcr.io/konghayao/peri-loom:v1.2.0`（digest `sha256:de8b50e274e8aa837367234c72d24cb212800ed38760964f09b0544d3beaa332`）以原配置运行（host network、`127.0.0.1:9443`、`/data/peri` volume、`PERI_HRANA_EXPERIMENTAL=1`、`--no-build`）；容器内 `PERI_IMAGE_VERSION=v1.2.0`。另设 `--stop-timeout 90`（Docker 29 存于 `Config.StopTimeout`），覆盖 launcher 的 40s 关停预算 + 5s finalize；停止时用 `docker stop --timeout 90`。
 - 服务：重启后 `/health` 返回 `@peri-code/sdk@0.4.0 WASM…`，`bun run check:restart` 返回 SAFE。
-- 回滚材料：旧镜像 `v1.1.26`（digest `sha256:c7614c0b22346cf6d2899bfe236c0ccbd1ad4a3038123599b2e4e9e70ef5d94a`）仍在本地；升级前 volume 快照 `$TMPDIR/company-factory/backups/peri-loom-data-v1.1.26-20261103T145739.tgz`（125 MB）。
+- 回滚材料：旧镜像 `v1.1.26`（digest `sha256:c7614c0b22346cf6d2899bfe236c0ccbd1ad4a3038123599b2e4e9e70ef5d94a`）仍在本地；按要求未保留 volume 快照。
 
 ## System For Agent 修复验证（2026-11-02）
 
