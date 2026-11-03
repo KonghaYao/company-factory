@@ -22,6 +22,12 @@ export const COMPANY_PROFILE_END = "<!-- company:profile:end -->";
 /** Injected into every member's managed profile; keep it role-neutral. */
 export const MULTITASK_GUIDANCE =
   "使用 Peri 自带 `multitasks` skill 组织并行工作；单个任务用 `work`。并行 worker 只是执行手段，不是 Company 成员；写入结果前重新读取当前 Issue 的归属与版本，把结果作为证据而不是阶段变更。";
+/** Injected into every member's managed profile; keep it role-neutral. */
+export const TASK_PROGRESS_GUIDANCE =
+  "用 company_tasks 维护 Issue 进度：`updateTodos` 维护有序 todo（最多 50 项，状态只用 pending / in_progress / done），`addUpdate` 追加不可变的进展、阻塞或决定，`updates` 分页读取完整历史。开始处理时先 `getIssue` 读取当前 version、todos 和 latest_update，把工作拆成 3–8 个可核对的 todo；开始一项标 in_progress，切换前更新当前项（完成标 done；未完成保持 in_progress 并写清下一步；阻塞写一条 kind=blocker 的进展），完成并验证后标 done。只在开始、切换、完成或发生阻塞时写，不要每一步都刷。todo 有实际变化时调用 `updateTodos`，并附 1–2 句 note：做了什么、可核对的证据、下一步；没有 todo 变化但需要记录进展、阻塞或决定时调用 `addUpdate`。每次写入前重读 version，写入后采用返回值。Company todo 是业务事实，Peri 内部 task / multitasks 执行清单不能代替它。不要为同一事实重复刷屏，不要把计划、聊天或工具启动当作完成；UI 会展示 done/total、最新一条进展和完整追加历史。";
+/** Injected into every member's managed profile; keep it role-neutral. */
+export const COMPANY_ASSETS_GUIDANCE =
+  "公司资产是 Company Git 仓库的 `knowledgebase/`，在 Workspace 中显示为「公司资产（公共知识）」根（旧名「公司知识」）。它只放可复用的公共知识：领域结论、接口与数据约定、操作手册、复盘和决策依据。做领域工作前先搜索同主题，优先合并或更新已有 Markdown；文件名和正文写清适用范围。任务过程与个人经验留在 Issue 和 `CLAUDE.md`，任务产物留在项目目录。禁止写入密钥、token、密码、个人连接串、个人隐私、客户敏感数据或大型二进制；不确定是否敏感时不要写。引用资产时给出路径，不复制大段正文。";
 
 export function assertNoManagedMarkers(
   values: Record<string, unknown>,
@@ -58,7 +64,7 @@ export function memoryManagedBlock(input: {
 This block is replaced by Company Factory when the member definition changes.
 Content outside this block is the Agent's own long-term memory.
 
-${managedSection("Role", input.role)}${managedSection("Responsibilities", input.responsibilities)}${managedSection("Agent system prompt", input.systemPrompt)}${managedSection("Role instructions", input.instructions)}${managedSection("Role guidance", guidance)}${managedSection("Multitasking", MULTITASK_GUIDANCE)}${COMPANY_PROFILE_END}`;
+${managedSection("Role", input.role)}${managedSection("Responsibilities", input.responsibilities)}${managedSection("Agent system prompt", input.systemPrompt)}${managedSection("Role instructions", input.instructions)}${managedSection("Role guidance", guidance)}${managedSection("Multitasking", MULTITASK_GUIDANCE)}${managedSection("Task progress", TASK_PROGRESS_GUIDANCE)}${managedSection("Company assets", COMPANY_ASSETS_GUIDANCE)}${COMPANY_PROFILE_END}`;
 }
 
 /**
@@ -110,9 +116,9 @@ export function memoryTemplate(input: {
 ## 多任务和协作
 使用 Peri 自带 \`multitasks\` skill（单个任务用 \`work\`）推进多个 Issue；Subagent 是外包，不是正式成员，不创建 Company 子 Issue 树。任务调整、交接、用户干预和外包协调复用 company_im 与默认 Workspace 的 work。迟到成果作为证据或评论，不自动复活 cancel 的任务。
 
-## 公司知识
-知识目录：${input.knowledgeDirectory}
-遇到领域问题，先自行搜索上述 Markdown 文件夹，再按需阅读。个人经验保存在本 CLAUDE.md；可复用公司知识整理到上述目录。无需强制索引、知识状态或专门 Skill。
+## 公司资产（公共知识）
+公司资产目录：${input.knowledgeDirectory}
+这里只存放可复用的公共知识。做领域工作前先搜索该目录的 Markdown；个人经验保存在本 CLAUDE.md；任务记录与产物不要写进公司资产。禁止写入密钥、token、个人隐私或客户敏感数据。
 
 ## 业务边界
 组织、任务状态、分派、问题、验收、验证、评论和 IM 通过三个 Company MCP 修改，不直接改业务源文件。普通聊天、同事回复、运行时 answer、send 接收回执、工具运行结束都不代表用户裁定、验收或 Issue 完成。

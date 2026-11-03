@@ -133,7 +133,7 @@ export class WorkspaceViewAdapter {
       ...(input.knowledgeDirectory
         ? [
             {
-              name: "公司知识",
+              name: "公司资产（公共知识）",
               path: input.knowledgeDirectory,
               kind: "knowledge",
             },

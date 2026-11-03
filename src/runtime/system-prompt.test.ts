@@ -38,6 +38,16 @@ describe("composeSystemInstructions", () => {
     expect(text).toContain("You decide how to decompose work");
     expect(text).toContain("getIssue(issueId)");
     expect(text).toContain("getPreview(batchId)");
+    expect(text).toContain("updateTodos");
+    expect(text).toContain("addUpdate");
+    expect(text).toContain("updates");
+    expect(text).toContain("knowledgebase");
+    expect(text).toContain("公司资产（公共知识）");
+    expect(text).toContain("Company assets");
+    expect(text).toContain("credentials");
+    expect(Buffer.byteLength(text, "utf8")).toBeLessThan(
+      SYSTEM_PROMPT_BYTE_BUDGET,
+    );
     expect(text).not.toContain("PROFILE_MEMORY_BODY_SENTINEL");
     expect(
       composeSystemInstructions({

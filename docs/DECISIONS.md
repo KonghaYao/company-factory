@@ -70,3 +70,12 @@
 - **理由/约束**：用户要求“每次重启服务时，检查人员是否在工作”“下个版本检查之后才能更新版本”。当前架构是单 Bun 进程，没有 supervisor；自动杀进程/拉起会引入新的进程管理责任，因此脚本只检查，停止与启动保持人工显式操作。
 - **影响**：检查是 advisory，不是分布式锁；检查通过到停止之间仍可能出现新工作。外部宿主进程、外部 Preview 与手工终端任务不在覆盖范围。Agent bearer 与 Company MCP 不能访问该接口。
 - **状态**：生效中
+
+## 8. 任务 todo、追加进展与公司资产命名（2026-11-02）
+
+- **决策**：任务 todo 是 Issue 的内嵌业务事实，统一由 `company_tasks.updateTodos` 维护；进展记录使用只追加的 `updates/<issueId>/` 文件，由 `addUpdate` 写入、`updates` 分页读取；不新建数据库、并行任务系统或第四个 MCP 模块。公司公共知识继续使用现有 `companys/<companyId>/knowledgebase/`，统一命名为「公司资产（公共知识）」，不新建资产目录或资产子系统。
+- **提示词分层**：系统提示词只保留工具名、事实边界和资产边界；操作细节放在 `CLAUDE.md` 托管块的 `## Task progress` 与 `## Company assets`。旧 Session 的系统提示词保持冻结，已有成员通过托管块迁移获得新指引，不重建 Session。
+- **公司资产边界**：只放可复用的公共知识；个人经验放 `CLAUDE.md`，任务过程放 Issue/进展/评论，代码与产物放项目目录。禁止写入密钥、token、密码、连接串、个人隐私、客户敏感数据和大型二进制。
+- **迁移策略**：`scripts/refresh-agent-profiles.ts` 默认 dry-run，只输出成员、变更块标题和 commit，不打印正文；`--apply` 时逐成员只替换托管块并各提交一个 Agent Git commit，块外自由记忆保留。脚本不修改 `agent.yaml`、`agent.version`/`configVersion`、Session 或 Company 业务数据；重复或不平衡的托管块标记直接报错、不覆盖。
+- **理由/约束**：沿用 Issue 的公司锁、CAS、Git 与 Workspace 文件能力，避免新增存储和 schema；提示词与命名变更不需要版本 bump。
+- **状态**：生效中

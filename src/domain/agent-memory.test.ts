@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { link, mkdir, mkdtemp, readFile, rm, symlink, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { AGENT_MEMORY_MAX_BYTES, applyAgentMemory, readAgentMemory } from "./agent-memory";
+import { AGENT_MEMORY_MAX_BYTES, applyAgentMemory, prepareAgentMemory, readAgentMemory } from "./agent-memory";
+import { COMPANY_ASSETS_GUIDANCE, TASK_PROGRESS_GUIDANCE } from "./templates";
 
 describe("Agent memory host reads", () => {
   for (const name of ["CLAUDE.md", "claude.md"]) {
@@ -48,6 +49,48 @@ describe("Agent memory host reads", () => {
       await expect(readAgentMemory(root)).rejects.toMatchObject({ code: "invalid_document" });
       await writeFile(memory, "中文自由记忆\n");
       expect((await readAgentMemory(root))?.content).toBe("中文自由记忆\n");
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  test("replaces only the managed block with the current guidance and stays idempotent", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-memory-test-"));
+    try {
+      const memory = join(root, "CLAUDE.md");
+      await writeFile(memory, [
+        "FREE_BEFORE",
+        "<!-- company:profile:start -->",
+        "# Company profile (host-managed)",
+        "",
+        "## Role",
+        "developer",
+        "<!-- company:profile:end -->",
+        "FREE_AFTER",
+      ].join("\n"));
+      const profile = {
+        directory: root,
+        knowledgeDirectory: join(root, "companys", "acme", "knowledgebase"),
+        name: "Developer",
+        role: "developer",
+        responsibilities: "Work",
+      };
+      const prepared = await prepareAgentMemory(profile);
+      expect(prepared.content).toContain("FREE_BEFORE");
+      expect(prepared.content).toContain("FREE_AFTER");
+      expect(prepared.content).toContain("## Task progress");
+      expect(prepared.content).toContain(TASK_PROGRESS_GUIDANCE);
+      expect(prepared.content).toContain("## Company assets");
+      expect(prepared.content).toContain(COMPANY_ASSETS_GUIDANCE);
+
+      await applyAgentMemory(
+        { atomic: async (path, content) => writeFile(path, content, "utf8") },
+        profile,
+      );
+      const first = await readFile(memory, "utf8");
+      expect(first).toBe(prepared.content);
+      expect(await prepareAgentMemory(profile)).toEqual({
+        content: first,
+        legacy: false,
+      });
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 });
