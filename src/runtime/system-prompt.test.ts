@@ -39,6 +39,11 @@ describe("composeSystemInstructions", () => {
     expect(text).toContain("do not re-run their checks");
     expect(text).toContain("contradictory facts");
     expect(text).toContain("specific point in doubt");
+    expect(text).toContain("Company Issue is the center");
+    expect(text).toContain("create the Issue first");
+    expect(text).toContain("hand it off one person at a time");
+    expect(text).toContain("record their process in that Issue");
+    expect(text).toContain("sub-Issues");
     expect(text).toContain("You decide how to decompose work");
     expect(text).toContain("getIssue(issueId)");
     expect(text).toContain("getPreview(batchId)");

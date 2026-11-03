@@ -4,6 +4,7 @@ import {
   COMPANY_ASSETS_GUIDANCE,
   DECISION_GUIDANCE,
   MULTITASK_GUIDANCE,
+  MULTI_PERSON_GUIDANCE,
   TASK_PROGRESS_GUIDANCE,
   memoryManagedBlock,
   memoryTemplate,
@@ -29,6 +30,11 @@ describe("member managed profile", () => {
       expect(block).toContain("无条件信任");
       expect(block).toContain("不要重复核对");
       expect(block).toContain("只检查存疑");
+      expect(block).toContain("## Multi-person tasks");
+      expect(block).toContain(MULTI_PERSON_GUIDANCE);
+      expect(block).toContain("以 Company Issue 为中心");
+      expect(block).toContain("写明 Issue ID");
+      expect(block).toContain("登记过程");
       expect(block).toContain("## Task progress");
       expect(block).toContain(TASK_PROGRESS_GUIDANCE);
       expect(block).toContain("updateTodos");
@@ -57,6 +63,9 @@ describe("member managed profile", () => {
         block.indexOf("## Colleague trust"),
       );
       expect(block.indexOf("## Colleague trust")).toBeLessThan(
+        block.indexOf("## Multi-person tasks"),
+      );
+      expect(block.indexOf("## Multi-person tasks")).toBeLessThan(
         block.indexOf("## Task progress"),
       );
       expect(block.indexOf("## Task progress")).toBeLessThan(

@@ -10,7 +10,7 @@
 
 - `bun run typecheck`：通过。
 - `bun run build`：通过，保留既有 Monaco chunk 体积提示。
-- `bun test`：**512 pass / 24 skip / 0 fail**，536 项、3,171 断言、66 个文件（2026-11-02，macOS 本地复跑，含组织解耦、IM 投递、重启门禁、任务详情折叠与评论时间线、待办只读与评论快照、待回答提问侧栏、chat Markdown 复用、运行时诊断、direct prompt 视图投影与 UI 回归）。
+- `bun test`：**512 pass / 24 skip / 0 fail**，536 项、3,218 断言、66 个文件（2026-11-02，macOS 本地复跑，含组织解耦、IM 投递、重启门禁、任务详情折叠与评论时间线、待办只读与评论快照、待回答提问侧栏、多人任务交接规则、chat Markdown 复用、运行时诊断、direct prompt 视图投影与 UI 回归）。
 - 补丁交付方在原 npm/沙箱基线上报告 186 pass / 29 skip / 1 fail；唯一失败来自 `src/storage/git-sandbox.test.ts` 的 bubblewrap 隔离测试（`Failed to create NETLINK_ROUTE socket: Operation not permitted`）。该测试已随 2026-11-02 本地运行裁定删除，本仓库不再要求 Linux 或 bubblewrap。
 - 24 个跳过项需要真实 Peri/sqld 等外部条件；本轮没有重跑真实模型/WASM live E2E，也没有进行浏览器视觉验收。下文 2026-10-31 的 live 结论不能直接用于本补丁。
 
@@ -56,6 +56,16 @@
 - 全量 `bun test`：**512 pass / 24 skip / 0 fail**，536 项、3,171 断言、66 文件。
 - 定向：领域与 API 覆盖 options 持久化/边界、待回答投影过滤、用户专属读取、答复后隐藏、归档成员可答；web 覆盖选项表单、侧栏待回答区、DecisionCard 复用与 Issue 详情回归。
 - 兼容：旧 decision 无 `options` 正常渲染；`answerDecision` 仍为自由文本；不新增 MCP 工具、数据库或迁移。
+- 成员迁移：`bun scripts/refresh-agent-profiles.ts --apply` 更新 9/9 个成员（每人一个 Agent 仓库提交），再次 dry-run 为 9 个 `unchanged`。
+- 未执行：浏览器/视觉验收、真实模型 live E2E。因此本记录不构成整体验收结论。
+
+## 多人任务以 Issue 为中心（2026-11-02）
+
+范围：全局 system prompt、全部成员托管块、任务主管/开发角色指引与 `company_im` 工具描述新增规则——多人任务先由发起方创建 Issue，再按顺序逐个交接；转交消息写明 Issue ID 并要求接手人在 Issue 中登记过程；真正并行的工作拆成子 Issue。
+
+- `bun run typecheck` / `bun run build`：通过；仅有既有大 chunk 提示。
+- 全量 `bun test`：**512 pass / 24 skip / 0 fail**，536 项、3,218 断言、66 文件。
+- 定向：提示词/托管块测试覆盖 `## Multi-person tasks` 的存在、关键措辞与分区顺序；角色指引与 IM 工具描述同步更新。
 - 成员迁移：`bun scripts/refresh-agent-profiles.ts --apply` 更新 9/9 个成员（每人一个 Agent 仓库提交），再次 dry-run 为 9 个 `unchanged`。
 - 未执行：浏览器/视觉验收、真实模型 live E2E。因此本记录不构成整体验收结论。
 

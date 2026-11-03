@@ -96,3 +96,10 @@
 - **边界**：仅在事实矛盾、错误或失败、关键结果缺失、不可逆或安全敏感步骤、决策必须依赖该结论时才质疑；核查只针对存疑点，不重查整份报告；发现错误时给出可核对的具体证据。
 - **落地**：全局 system prompt「Company operating rules」与每个成员托管块 `## Colleague trust`；旧 Session 的系统提示词保持冻结，成员通过托管块迁移获得规则。
 - **状态**：生效中
+
+## 11. 多人任务以 Issue 为中心（2026-11-02）
+
+- **决策**：涉及多个人的任务必须先有 Company Issue。发起方还没有 Issue ID 时，先用 `company_tasks.createIssue` 创建完整任务，再按顺序逐个交给其他人；转交消息必须写明 Issue ID，并要求对方在 Issue 中登记过程（评论与 `updateTodos`），不能只在聊天里回复。
+- **边界**：接手人先 `getIssue` 读取现状、version 与归属，完成后留下可核对结果再转交；真正并行的工作拆成子 Issue；IM 只用于指向 Issue 和同步，不替代任务事实；单负责人/协作评论模型不变。
+- **落地**：全局 system prompt「Company operating rules」、每个成员托管块 `## Multi-person tasks`、任务主管与开发角色指引，以及 `company_im` 工具描述；旧 Session 系统提示词保持冻结，成员通过托管块迁移获得规则。
+- **状态**：生效中

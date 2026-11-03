@@ -8,7 +8,7 @@
 
 **2026-11-02 架构变更：Workspace 本地运行。** 按所有者裁定，Agent 的官方 Workspace MCP 与宿主 Git 直接以宿主用户身份运行，不再依赖 Linux / bubblewrap，也不再提供 OS 级隔离；Agent 工具可访问该用户可访问的本机文件。`COMPANY_SANDBOX` 已移除；`COMPANY_WORKSPACE=disabled` 仅作为显式关闭 Agent Workspace 的调试开关。
 
-**测试基线（2026-11-02，macOS）：** 全量 `512 pass / 24 skip / 0 fail`（536 项、3,171 断言、66 个文件）；`bun run typecheck` 与 `bun run build` 通过。历史 Linux live 验收（2026-10-31，沙箱版，`closure=true`）是过去实现的证据，**不代表当前本地架构**，需要重新做 live 验收；详见 [验证记录](docs/VERIFICATION.md)。
+**测试基线（2026-11-02，macOS）：** 全量 `512 pass / 24 skip / 0 fail`（536 项、3,218 断言、66 个文件）；`bun run typecheck` 与 `bun run build` 通过。历史 Linux live 验收（2026-10-31，沙箱版，`closure=true`）是过去实现的证据，**不代表当前本地架构**，需要重新做 live 验收；详见 [验证记录](docs/VERIFICATION.md)。
 
 **未验证项，不能声称：** 独立 fable 模型仍未验证（供应商无独立 fable 模型）；四档 alias 路由可用，但不能声称四档四模型全部真实通过。历史 live 证据中的 `agentCiExecuted` 与 digest 口径仅对那轮沙箱版运行有效。
 

@@ -3,7 +3,7 @@ import { link, mkdir, mkdtemp, readFile, rm, symlink, truncate, writeFile } from
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { AGENT_MEMORY_MAX_BYTES, applyAgentMemory, prepareAgentMemory, readAgentMemory } from "./agent-memory";
-import { COLLEAGUE_TRUST_GUIDANCE, COMPANY_ASSETS_GUIDANCE, DECISION_GUIDANCE, TASK_PROGRESS_GUIDANCE } from "./templates";
+import { COLLEAGUE_TRUST_GUIDANCE, COMPANY_ASSETS_GUIDANCE, DECISION_GUIDANCE, MULTI_PERSON_GUIDANCE, TASK_PROGRESS_GUIDANCE } from "./templates";
 
 describe("Agent memory host reads", () => {
   for (const name of ["CLAUDE.md", "claude.md"]) {
@@ -81,6 +81,11 @@ describe("Agent memory host reads", () => {
       expect(prepared.content).toContain("无条件信任");
       expect(prepared.content).toContain("不要重复核对");
       expect(prepared.content).toContain("只检查存疑");
+      expect(prepared.content).toContain("## Multi-person tasks");
+      expect(prepared.content).toContain(MULTI_PERSON_GUIDANCE);
+      expect(prepared.content).toContain("以 Company Issue 为中心");
+      expect(prepared.content).toContain("写明 Issue ID");
+      expect(prepared.content).toContain("登记过程");
       expect(prepared.content).toContain("## Task progress");
       expect(prepared.content).toContain(TASK_PROGRESS_GUIDANCE);
       expect(prepared.content).toContain("## Decisions");
@@ -93,6 +98,9 @@ describe("Agent memory host reads", () => {
         prepared.content.indexOf("## Colleague trust"),
       );
       expect(prepared.content.indexOf("## Colleague trust")).toBeLessThan(
+        prepared.content.indexOf("## Multi-person tasks"),
+      );
+      expect(prepared.content.indexOf("## Multi-person tasks")).toBeLessThan(
         prepared.content.indexOf("## Task progress"),
       );
       expect(prepared.content.indexOf("## Task progress")).toBeLessThan(
