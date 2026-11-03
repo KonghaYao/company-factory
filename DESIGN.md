@@ -697,7 +697,145 @@ Agent 交付 UI 改动时附一张简短结果表，包含以下内容；检查�
 - 不新增第四个 MCP、知识写入 API、资产子系统、知识索引或专用知识检索服务。`knowledgebase/` 保持普通 Markdown，现有三 MCP 边界不变。
 - `IMPLEMENTATION-HANDOFF.md` 中“一期不做……知识 Skill”的旧说法，针对的是独立知识检索服务、强制索引或新知识系统；本节将其衔接为：`company-assets` 只是只读操作指引，不承担知识服务，也不引入知识写入 API。若旧表述与本文件冲突，以本文件的当前设计口径为准；不因此修改 `IMPLEMENTATION-HANDOFF.md`。
 
-## 13. 将规范接入 Agent
+## 13. 秘书 Agent（secretary）
+
+> 本节定义秘书的产品角色、派单流程和权限边界。秘书是 Owner 与组织之间的入口和路由角色，不是调度器，也不是交付执行者；状态机、通知和验收仍沿用现有 Company 流程。第 13.10 节的 3 个问题待 Owner 确认；确认前不改变现有角色语义。
+
+### 13.1 为什么需要秘书 Agent
+
+Owner 或公司层面的想法、会议记录、文档片段和临时需求，通常还不是可直接执行的 Issue：需要澄清目标、拆成可独立验收的交付，再找到合适的组织节点和负责人。现有入口只有“用户直接建 Issue（默认交给任务主管分类）”或“与某个成员聊天”，缺少一个稳定的入口承担“把话说清楚”和“把人找对”。
+
+秘书就是这个入口：把原始输入转化为 1..n 条 Issue，按组织负责人派单并启动领导的固定 Session，后续只读跟进。它不替领导交付，不替 Owner 验收，也不引入新的调度器、工作流引擎或 Issue 层级。一句话：秘书负责“把话说清楚”和“把人找对”，不负责“把活干完”，也不负责“验收”。
+
+### 13.2 角色定义
+
+| 项 | 定义 |
+| --- | --- |
+| 角色 | 内置 `secretary`。新公司默认成员 ID 为 `<companyId>-secretary`，姓名「秘书」，placement 在总部 `headquarters`；是否默认创建见 13.10 Q1 |
+| 权限 | `issue.create`、`issue.assign`。`issue.assign` 只表示“对自己创建的 Issue 的派单 / 改派权”，不是任意 Issue 的改派权 |
+| 输入 | Owner 在 Web Chat 的原始需求（目标、会议记录、文档片段、知识库路径、Issue ID）；`company_org.organization`（`company.goal`、节点树、`leadPersonId`、成员角色与状态、placement）；`company_tasks.listPipelines`；`knowledgebase/`；自己创建的 Issue |
+| 输出 | Chat 中可读的拆分方案（标题、目标、验收要求、建议负责人、拆分依据）；Owner 确认后创建并派单；派单回执（Issue ID、负责人、下一步）；只读跟进摘要（状态、阻塞、待 Owner 答复的问题） |
+| 禁止 | 不承接交付；不 `updateIssue`、不 `updateTodos`、不写进度、不占 Issue owner；不验收、不验证、不代替 Owner 回答决策；不创建成员、不改角色权限、不归档 / 移动成员；不直接改 `company.yaml`、`organization.yaml`、Issue 文件或 Git；不新建调度器、定时器、父子 Issue 树、群聊或第四套 MCP；不用 IM 承载任务正文 |
+
+秘书仍受第 12 节公司资产边界约束：读组织与 Issue 走公司 MCP，知识引用走 `knowledgebase/` 的普通 Markdown，不把私有内容或宿主秘密复制到任务正文。
+
+### 13.3 端到端流程
+
+| 阶段 | 秘书动作 | 结果 |
+| --- | --- | --- |
+| 1. Owner 输入 | 接收目标、会议记录、文档片段或 Issue 引用 | 原始需求进入 Chat，不直接落成 Issue |
+| 2. 读取事实 | 读 `company_org.organization`、`listPipelines`；需要时搜索 `knowledgebase/`；读自己创建的 Issue | 得到组织、负责人、流程和既有工作 |
+| 3. 澄清 | 只问无法从事实确认的事：交付物、验收标准、范围、目标节点 | 需求可执行；能从组织或知识库得出的事实不重复问 |
+| 4. 拆分与找领导 | 按“目标节点 `leadPersonId` → 最近的 active 祖先节点负责人 → `task-supervisor` → 问 Owner”确定负责人；跳过归档成员和自己 | 形成 Issue 草案与负责人建议 |
+| 5. Owner 确认 | 在 Chat 展示条数、标题、负责人、验收要求；Owner 确认或修改 | 确认后才创建；Owner 明确说“创建 / 派给某人”可视为确认 |
+| 6. 一次派单 | 逐条 `createIssue`，带 `assigneeAgentId`、可选 `type` / `pipeline` / `reason` | Issue 直接归属领导；写一条 history；只向最终 owner 发一次事实通知 |
+| 7. 领导启动 | 既有事实通知唤醒领导的固定 Session；领导自行决定 plan / code / preview 等步骤 | 不新增“领取 / 开始”操作，不新增状态 |
+| 8. 跟进 | 秘书只读 `getIssue`、`comments`，必要时 `addComment`；需要领导注意时用 `company_im` 指向 Issue | 秘书不推进状态；评论、状态、todo 不触发通知，秘书是 pull 式跟进 |
+| 9. 完成与验收 | 领导沿用现有流水线推进；reviewer 记录验证；Owner 验收 | `acceptPreview` 仍只能由 user 执行，秘书永不验收 |
+
+**找领导的回退规则**：目标节点没有负责人就向上找最近的 active 祖先节点负责人；仍没有则回退任务主管；任务明显属于某部门但只能回退主管、跨节点归属不清、或多个候选同样合理时，先问 Owner，不猜。**找领导是 Agent 读组织后的语义判断，不新增 `findNodeLeader` 领域方法或 MCP 操作。**
+
+**失败与回退**：
+
+| 情况 | 行为 |
+| --- | --- |
+| Owner 未确认或改需求 | 不创建；在 Chat 修订方案 |
+| 目标节点及祖先都没有负责人 | 回退 `task-supervisor`；任务明显属于某部门时先问 Owner |
+| 领导或节点已归档 | 跳过该候选继续向上；绝不向归档成员派单 |
+| 多个领导都合理 | 拆成多条 Issue 分别派；无法拆则问 Owner |
+| 领导就是秘书自己 | 跳过，向上回退或问 Owner；服务端也禁止自派 |
+| 公司没有 `task-supervisor` | `createIssue` 返回 `invalid_state`；如实报告 Owner，不绕过 |
+| `pipeline` 不存在 | 返回 `not_found`；改用 `listPipelines` 中存在的流程或留空 |
+| 领导 Session 忙或未配置模型 | 既有通知记为 failed，Owner 在 WorkNotices 看到并可重试；秘书不假装已启动 |
+| 领导归档后 Issue 仍在 | 秘书作为 creator 可按 Owner 指示改派自己创建的 Issue |
+| 领导需要再分派 | 领导没有 `issue.assign`；通过 IM 指向 Issue，请秘书或主管改派，或使用 Subagent 执行 |
+| 需要修正 Issue body | 秘书不能 `updateIssue`；用评论记录修正并 IM 提醒 owner，或请 Owner 直接改 |
+
+“启动”沿用 `createIssue` / `assignIssue` 的既有事实通知机制，向最终 owner 发一次通知并唤醒领导的固定 Session；不新增领取 / 开始操作、通知类型或状态机。“完成”沿用现有流水线。MVP 不做定时跟进、超时升级或自动重试。
+
+### 13.4 任务如何表达
+
+- 一个 Issue 承载一个可独立验收的交付。可并行且互不依赖的交付拆成多个独立 Issue，分别派给对应领导；每个 Issue 的 `body` 自包含，并交叉引用同批 Issue ID。
+- `body` 建议固定为 `## 来源`（Owner 原话摘要 / 日期）、`## 目标`、`## 验收要求`、`## 边界`、`## 关联`（同批 Issue ID）。交叉引用只用于追溯，不假设负责人能读取其他 Issue。
+- 串行或有依赖的交付合并为一个 Issue，在 `body` 写明顺序；同一 Issue 内的多个检查点用现有 `updateTodos` 表达，由当前 owner 维护，秘书不写 todo。
+- MVP 不引入父子 Issue、依赖关系或优先级字段：当前模型没有这些字段，新增会带来 UI、排序、通知策略和第二套工作流；用“独立 Issue + body 交叉引用 + 串行合并 + todos”覆盖当前需求。
+- 不新建 intake 实体或队列。澄清与确认发生在 Owner 与秘书的 Chat 中，Issue 的 `body` 是最终可核对的交接记录。
+
+### 13.5 权限与可见性
+
+- **创建与派单**：`createIssue` 接受可选 `assigneeAgentId`、`type`、`pipeline`、`reason`。user、`task-supervisor` 和持有 `issue.assign` 的角色可指定负责人；创建即归属领导，只生成一条 history（主管 → 领导，`by` 为秘书），只向最终 owner 发一次事实通知，不先给主管再改派。
+- **改派**：持有 `issue.assign` 的 Agent 只能改派自己创建的 Issue，且不能派给自己；`task-supervisor` 和 user 的既有权力不变。授权看权限，不硬编码角色名。
+- **创建者可见性**：Issue 记录 `created_by_type` / `created_by_id`，并纳入 `related()`、`listIssues` 和 `AgentContextView.selectedIssues`。秘书因此能读自己创建的 Issue、读评论、追加评论；但不自动成为 collaborator，因为 collaborator 表示参与执行。
+- **只读跟进**：秘书不能 `updateIssue`、`updateTodos`、`askDecision`、`cancelIssue`，不能验收或验证；这些仍是当前 owner 或 user 的权限。验收只能由 Owner 完成。
+- **读取范围**：MVP 秘书只读自己创建的 Issue + Owner 在对话中提供的内容；不获得公司全部 Issue 的读取权，也不新增 `issue.read_all`。若未来需要引用任意历史 Issue 或去重，单独设计只读权限，并与评论写权限分开。
+- **不绕过角色校验**：秘书不创建成员、不改角色权限、不归档 / 移动成员，也不直接改业务文件；所有写入仍走三个公司 MCP。
+
+### 13.6 与现有角色的关系
+
+| 角色 | 与秘书的边界 |
+| --- | --- |
+| Owner | 需求来源、拆分确认和验收的唯一主体；可取消任何 Issue；秘书不代替 Owner 做验收或回答决策 |
+| task-supervisor | 默认协调人和找不到领导时的回退；保留全量改派权；秘书不取代任务主管，也不改变主管的默认 owner 语义 |
+| HR | 负责组织建设、成员创建和角色权限；不是交付回退人选；秘书不创建成员或改权限 |
+| 节点负责人 | 被派单后的 Issue owner，可继续用 IM 请秘书 / 主管改派；自己不会因职位自动获得 `issue.assign` |
+| developer / preview / reviewer | 权限和流水线不变；reviewer 仍按真实证据记录验证，验收仍只属于 Owner |
+
+### 13.7 新公司与现有公司
+
+**新公司（推荐，待 Q1 确认）**：`company.yaml` 预置 `secretary` 角色，权限为 `["issue.create","issue.assign"]`，并在 `headquarters` 默认创建 `<companyId>-secretary` 作为第三个固定成员。秘书不设置 `leadPersonId`，避免被当作交付负责人或自派对象。初始化、重试和幂等沿用现有成员创建逻辑；代价是多一个固定 Session 和相应测试计数。
+
+**现有公司**：不做静默迁移，也不写迁移脚本。Owner 通过 HR 对话完成一次性设置：先用 `company_org.setRolePermissions` 新建角色 `secretary` 并授予 `issue.create`、`issue.assign`，再用 `company_org.createMember` 在总部创建「秘书」成员。新成员创建时自动获得固定 Session 和 `roleGuidance.secretary`，不需要重启或 profile 刷新；已有成员不需要重建 Session。直接改 `company.yaml` 会绕过领域校验、CAS 和 Git 提交，不采用。
+
+### 13.8 UI 影响
+
+- 组织设置的角色下拉增加 `secretary`（显示为「Secretary · 秘书」），让新公司和现有公司都能通过“交给 HR 创建”获得秘书。
+- IM 消息行的角色标签增加 `secretary: "秘书"`。
+- 组织侧栏在没有 placement title 时可能显示原始 `secretary`；可接受，后续可由 Owner 用 `moveMember` 设置展示岗位「秘书」，或统一角色标签映射。
+- **不改**创建 Issue 弹窗的负责人选择：Owner 走秘书；直接建 Issue 仍默认交给主管分类。
+- **不改**角色权限编辑 UI；现有公司通过 HR 对话设置权限。
+- **不默认**把 Owner 的聊天对象切到秘书；首屏仍按现有 roster 顺序（HR）。
+- **不新增**秘书专属页面、skill 安装状态或副本管理；秘书以普通成员行和普通 Chat 出现。
+- 前端类型可补可选的 `created_by_type` / `created_by_id`，MVP 不展示。
+
+### 13.9 MVP 与后续
+
+**MVP 必须**：
+
+- `secretary` 角色、`issue.create` + `issue.assign` 权限、`roleGuidance.secretary`。
+- 新公司默认秘书成员（若 Q1 选择“仅预置角色”则只预置角色）。
+- `createIssue` 的可选 `assigneeAgentId` / `type` / `pipeline` / `reason`。
+- `assignIssue` 的 creator-only 分支和禁止自派。
+- `created_by_*` 及三处可见性；UI 岗位下拉和 IM 角色标签。
+- 领域、通知、可见性与初始化测试，以及 `CONTRACTS.md` / `DECISIONS.md` 更新。
+
+**后续按价值评估**：
+
+1. 只读 `issue.read_all`（用于引用任意 Issue、重复 / 冲突检测），需独立决策。
+2. 结构化 intake（会新增实体、UI 与迁移，当前不采用）。
+3. 父子 / 依赖 Issue；只有真实并行依赖需求出现时再评估。
+4. 优先级字段；需要 UI、排序和通知策略。
+5. 主动跟进 / 超时升级；需要定时器或新的通知触发，和“不引入调度器”冲突。
+6. 领导侧“退回秘书”操作；当前用 IM 指向 Issue 替代。
+7. 默认聊天对象切到秘书；改变所有公司首屏，需单独确认。
+8. 群聊 / @ 提及；不在本次范围。
+
+### 13.10 待确认
+
+1. **新公司是否默认创建秘书成员？** 推荐是：秘书是 Owner 的主要入口，否则功能不可见。代价是多一个固定 Session、创建时间与模型成本，以及初始化测试计数调整。备选是只预置 `secretary` 角色，由 HR 按需创建。
+2. **秘书创建 Issue 是否必须 Owner 明确确认？** 推荐：模糊需求、多条拆分、跨节点归属不清时必须确认；Owner 明确说“创建 / 派给某人”时可直接建。确认是行为约定，代码不强制，因为系统无法验证“Owner 已确认”这一事实。
+3. **秘书是否需要读取公司全部 Issue？** 推荐 MVP 不需要：只读自己创建的 Issue + Owner 在对话中提供的内容，保留现有 owner / collaborator / history 安全模型。若未来需要引用任意历史 Issue，再单独增加只读 `issue.read_all`，并明确它与评论写权限的分离。
+
+### 13.11 实现落点
+
+- `src/domain/types.ts`：Issue 增加 `created_by_type` / `created_by_id`。
+- `src/domain/index.ts`：默认 `secretary` 角色；新公司第三个固定成员；`setRolePermissions` 白名单加入 `issue.assign`；`createIssue` 支持可选派单字段；`assignIssue` 增加 creator-only / 禁止自派分支；`related()` 与 `listIssues` 纳入创建者可见性。
+- `src/domain/agent-context.ts`：`selectedIssues` 纳入创建者可见性。
+- `src/domain/templates.ts`：`roleGuidance.secretary`，写入托管块，不改冻结系统提示词。
+- `src/server/operations.ts`：`createIssue` schema 的可选字段与工具描述。
+- UI：`OrganizationSheet` 岗位下拉、`CompanyImMessageRow` 角色标签；前端类型可选补 `created_by_*`。
+- 测试与契约：初始化数量断言、可见性、通知、改派、`CONTRACTS.md`、`DECISIONS.md`。
+
+## 14. 将规范接入 Agent
 
 建议把本文件放在仓库根目录，并在 Agent 实际读取的入口（如根目录 `AGENTS.md` 或项目提示词）加入以下约束。**单独存放 `DESIGN.md` 不保证所有 Agent 自动读取，也不是自动检查器。**
 
