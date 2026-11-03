@@ -784,9 +784,9 @@ Owner 或公司层面的想法、会议记录、文档片段和临时需求，�
 
 ### 13.7 新公司与现有公司
 
-**新公司（推荐，待 Q1 确认）**：`company.yaml` 预置 `secretary` 角色，权限为 `["issue.create","issue.assign"]`，并在 `headquarters` 默认创建 `<companyId>-secretary` 作为第三个固定成员。秘书不设置 `leadPersonId`，避免被当作交付负责人或自派对象。初始化、重试和幂等沿用现有成员创建逻辑；代价是多一个固定 Session 和相应测试计数。
+**新公司（已确认）**：`company.yaml` 预置 `secretary` 角色，权限为 `["issue.create","issue.assign","issue.search"]`，并在 `headquarters` 默认创建 `<companyId>-secretary` 作为第三个固定成员。秘书不设置 `leadPersonId`，避免被当作交付负责人或自派对象。初始化、重试和幂等沿用现有成员创建逻辑；代价是多一个固定 Session 和相应测试计数。
 
-**现有公司**：不做静默迁移，也不写迁移脚本。Owner 通过 HR 对话完成一次性设置：先用 `company_org.setRolePermissions` 新建角色 `secretary` 并授予 `issue.create`、`issue.assign`，再用 `company_org.createMember` 在总部创建「秘书」成员。新成员创建时自动获得固定 Session 和 `roleGuidance.secretary`，不需要重启或 profile 刷新；已有成员不需要重建 Session。直接改 `company.yaml` 会绕过领域校验、CAS 和 Git 提交，不采用。
+**现有公司**：不做静默迁移，也不写迁移脚本。Owner 通过 HR 对话完成一次性设置：先用 `company_org.setRolePermissions` 新建角色 `secretary` 并授予 `issue.create`、`issue.assign`、`issue.search`，再用 `company_org.createMember` 在总部创建「秘书」成员。新成员创建时自动获得固定 Session 和 `roleGuidance.secretary`，不需要重启或 profile 刷新；已有成员不需要重建 Session。直接改 `company.yaml` 会绕过领域校验、CAS 和 Git 提交，不采用。
 
 ### 13.8 UI 影响
 
@@ -803,23 +803,24 @@ Owner 或公司层面的想法、会议记录、文档片段和临时需求，�
 
 **MVP 必须**：
 
-- `secretary` 角色、`issue.create` + `issue.assign` 权限、`roleGuidance.secretary`。
-- 新公司默认秘书成员（若 Q1 选择“仅预置角色”则只预置角色）。
+- `secretary` 角色、`issue.create` + `issue.assign` + `issue.search` 权限、`roleGuidance.secretary`。
+- `interview` skill（`templates/skills/interview/SKILL.md`，经 `company_org` MCP 投递）。
+- 新公司默认秘书成员（已确认，不设开关）。
 - `createIssue` 的可选 `assigneeAgentId` / `type` / `pipeline` / `reason`。
 - `assignIssue` 的 creator-only 分支和禁止自派。
+- 只读 `searchIssues`（元数据、`issue.search`、query 必填、上限 50）。
 - `created_by_*` 及三处可见性；UI 岗位下拉和 IM 角色标签。
-- 领域、通知、可见性与初始化测试，以及 `CONTRACTS.md` / `DECISIONS.md` 更新。
+- 领域、通知、可见性、搜索、skill 与初始化测试，以及 `CONTRACTS.md` / `DECISIONS.md` 更新。
 
-**后续按价值评估**：
+**后续按价值评估**（不新增 `issue.read_all`；搜索不足时优先扩展 `searchIssues` 的元数据字段，不开放正文）：
 
-1. 只读 `issue.read_all`（用于引用任意 Issue、重复 / 冲突检测），需独立决策。
-2. 结构化 intake（会新增实体、UI 与迁移，当前不采用）。
-3. 父子 / 依赖 Issue；只有真实并行依赖需求出现时再评估。
-4. 优先级字段；需要 UI、排序和通知策略。
-5. 主动跟进 / 超时升级；需要定时器或新的通知触发，和“不引入调度器”冲突。
-6. 领导侧“退回秘书”操作；当前用 IM 指向 Issue 替代。
-7. 默认聊天对象切到秘书；改变所有公司首屏，需单独确认。
-8. 群聊 / @ 提及；不在本次范围。
+1. 结构化 intake（会新增实体、UI 与迁移，当前不采用）。
+2. 父子 / 依赖 Issue；只有真实并行依赖需求出现时再评估。
+3. 优先级字段；需要 UI、排序和通知策略。
+4. 主动跟进 / 超时升级；需要定时器或新的通知触发，和“不引入调度器”冲突。
+5. 领导侧“退回秘书”操作；当前用 IM 指向 Issue 替代。
+6. 默认聊天对象切到秘书；改变所有公司首屏，需单独确认。
+7. 群聊 / @ 提及；不在本次范围。
 
 ### 13.10 已确认决策
 
