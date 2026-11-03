@@ -49,6 +49,12 @@ describe("composeSystemInstructions", () => {
     expect(text).toContain("knowledgebase");
     expect(text).toContain("公司资产（公共知识）");
     expect(text).toContain("Company assets");
+    expect(text).toContain("Your Workspace is your own working area");
+    expect(text).toContain("Keep intermediate data in your Workspace");
+    expect(text).toContain("not in Company business records");
+    expect(text).toContain("only for shared, reusable knowledge");
+    expect(text).toContain("publish there only when the material is communal");
+    expect(text).not.toContain("sandbox");
     expect(text).toContain("credentials");
     expect(Buffer.byteLength(text, "utf8")).toBeLessThan(
       SYSTEM_PROMPT_BYTE_BUDGET,

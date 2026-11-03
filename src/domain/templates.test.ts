@@ -35,6 +35,11 @@ describe("member managed profile", () => {
       expect(block).toContain("## Company assets");
       expect(block).toContain(COMPANY_ASSETS_GUIDANCE);
       expect(block).toContain("公司资产（公共知识）");
+      expect(block).toContain("每个 Agent 拥有自己的 Workspace");
+      expect(block).toContain("中间数据留在自己的 Workspace");
+      expect(block).toContain("不要写入 Company 业务记录");
+      expect(block).toContain("只有确认是公用知识时才写入公司资产");
+      expect(block).not.toContain("沙箱");
       expect(block.indexOf("## Multitasking")).toBeLessThan(
         block.indexOf("## Task progress"),
       );

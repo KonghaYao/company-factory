@@ -10,7 +10,7 @@
 
 - `bun run typecheck`：通过。
 - `bun run build`：通过，保留既有 Monaco chunk 体积提示。
-- `bun test`：**449 pass / 24 skip / 0 fail**，473 项、2,410 断言、55 个文件（2026-11-02，macOS 本地复跑，含组织解耦、IM 投递、重启门禁、任务详情折叠与评论时间线、chat Markdown 复用、运行时诊断、direct prompt 视图投影与 UI 回归）。
+- `bun test`：**495 pass / 24 skip / 0 fail**，519 项、2,922 断言、62 个文件（2026-11-02，macOS 本地复跑，含组织解耦、IM 投递、重启门禁、任务详情折叠与评论时间线、待办只读与评论快照、chat Markdown 复用、运行时诊断、direct prompt 视图投影与 UI 回归）。
 - 补丁交付方在原 npm/沙箱基线上报告 186 pass / 29 skip / 1 fail；唯一失败来自 `src/storage/git-sandbox.test.ts` 的 bubblewrap 隔离测试（`Failed to create NETLINK_ROUTE socket: Operation not permitted`）。该测试已随 2026-11-02 本地运行裁定删除，本仓库不再要求 Linux 或 bubblewrap。
 - 24 个跳过项需要真实 Peri/sqld 等外部条件；本轮没有重跑真实模型/WASM live E2E，也没有进行浏览器视觉验收。下文 2026-10-31 的 live 结论不能直接用于本补丁。
 
@@ -35,6 +35,18 @@
 - 覆盖：idle/offline/archived、九类 busy reason 合并、archived 有 live work 仍阻止、初始化未完成公司不永久阻塞但仍阻止 Provision 锁、roster 外 bound scope、IM/notice 在途投递生命周期、状态源抛错与超时 fail closed、`companyId` 过滤与 404、无 cookie/Agent bearer 401、HTTP 200/409/503、脚本 0/2/3 映射与 token 不出现在 URL/headers、`/health.version === package.json.version`。
 - 未执行：浏览器与视觉验收、真实模型/WASM live 检查。因此本记录不构成整体验收结论。
 - 后续补充（同日）：重启门禁相关全量为 **437 pass / 24 skip / 0 fail**（461 项、2,355 断言、53 文件）；任务详情改版后全量为 **449 pass / 24 skip / 0 fail**（473 项、2,410 断言、55 文件）。两次 `bun run typecheck`、`bun run build` 均通过。:3400 实际重启后调用 `bun run check:restart`：第一次返回 `BUSY`（supervisor `prompt_in_flight`），据此定位并修复「执行失败通知后 `promptInFlight` 租约残留」缺陷（`src/runtime/index.ts` 在 `recordNoticePromptFailure` 清空租约，回归测试 `src/runtime/binding-recovery.test.ts`）；部署修复后的第二次重启返回 `SAFE`（exit 0），`/health` 200。
+
+## 待办评论快照与 Workspace 所有权提示词（2026-11-02）
+
+范围：删除追加式进展记录（`addUpdate`/`updates`、`TaskUpdate`、`latest_update` 与 `updates/` 读取和 UI）；`updateTodos` 改为仅负责 Agent 可调用、`note` 必填并追加为普通 Issue 评论，评论携带只读 `todo_snapshot`；待办 UI 只读并以图标 + 文案展示状态；全局 system prompt 与全部成员托管块补充「Agent 拥有自己的 Workspace、中间数据留在 Workspace、只有公用知识进入公司资产」。
+
+- `bun run typecheck`：通过。
+- `bun run build`：通过；仅有既有大 chunk 提示。
+- 全量 `bun test`：**495 pass / 24 skip / 0 fail**，519 项、2,922 断言、62 文件。
+- 定向：领域/API 55 pass；web 145 pass（含新增 TodoSection 只读与评论快照断言）；提示词与迁移脚本 12 pass。
+- 兼容：旧 `updates/` 文件与 Issue 上的 `latest_update` 键不读取、不迁移、不删除；旧评论无 `todo_snapshot` 时正常渲染。
+- 成员迁移：`bun scripts/refresh-agent-profiles.ts --apply` 更新 8/8 个成员（每人一个 Agent 仓库提交），再次 dry-run 为 8 个 `unchanged`。
+- 未执行：浏览器/视觉验收、真实模型 live E2E。因此本记录不构成整体验收结论。
 
 ## 最终 live E2E 事实（2026-10-31）
 

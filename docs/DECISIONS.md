@@ -78,6 +78,7 @@
 - **兼容**：旧 `updates/` 文件与 Issue 的 `latest_update` 键直接忽略；新公司不再创建 `updates/` 目录；不迁移、不删除旧文件，旧评论没有 `todo_snapshot` 时正常渲染。
 - **提示词分层**：系统提示词只保留工具名、事实边界和资产边界；操作细节放在 `CLAUDE.md` 托管块的 `## Task progress` 与 `## Company assets`。旧 Session 的系统提示词保持冻结，已有成员通过托管块迁移获得新指引，不重建 Session。
 - **公司资产边界**：只放可复用的公共知识；个人经验放 `CLAUDE.md`，任务过程放 Issue/评论，代码与产物放项目目录。禁止写入密钥、token、密码、连接串、个人隐私、客户敏感数据和大型二进制。
+- **Workspace 所有权**：每个 Agent 对自己的 Workspace 有操作所有权，可自由加载可访问的数据、执行操作，并把中间数据、实验、日志和临时产物留在自己的 Workspace；中间数据不写入 Company 业务记录。只有其他成员可复用的公用知识才写入公司资产 `knowledgebase/`，个人经验、任务过程与任务产物不进入公司资产。该边界是产品约定，不构成 OS 隔离。
 - **迁移策略**：`scripts/refresh-agent-profiles.ts` 默认 dry-run，只输出成员、变更块标题和 commit，不打印正文；`--apply` 时逐成员只替换托管块并各提交一个 Agent Git commit，块外自由记忆保留。脚本不修改 `agent.yaml`、`agent.version`/`configVersion`、Session 或 Company 业务数据；重复或不平衡的托管块标记直接报错、不覆盖。
 - **理由/约束**：沿用 Issue 的公司锁、CAS、Git 与 Workspace 文件能力，避免新增存储和 schema；提示词与命名变更不需要版本 bump。
 - **状态**：生效中
