@@ -9,26 +9,25 @@ import {
   rm,
   stat,
 } from "node:fs/promises";
-import { existsSync, readdirSync } from "node:fs";
-import { tmpdir, homedir } from "node:os";
+import { existsSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-import { createServer } from "node:net";
-import { PeriRuntime, WorkspaceViewAdapter, composeUserSendText, reconcileEffectiveConfiguration, writeEffectiveConfiguration, sharedSqldProviderFromEnv, type RuntimeAgent, type StoreProvider } from "./index";
+import { PeriRuntime, WorkspaceViewAdapter, composeUserSendText, reconcileEffectiveConfiguration, writeEffectiveConfiguration, type RuntimeAgent, type StoreProvider } from "./index";
 import { storeScopeId } from "./wasm-store";
 import { createWorkspaceMcpServerFactory } from "./workspace";
 
 const binary = process.env.PERI_BINARY ?? resolve(".tools/peri/peri");
-// 用户预先提供专用空 sqld；测试不会安装、启动或复用默认共享数据库。
-const sqldUrl = process.env.COMPANY_TEST_SQLD_URL;
-const sqldToken = process.env.COMPANY_TEST_SQLD_TOKEN;
+// 用户预先提供专用空存储端点；测试不会安装、启动或复用默认共享数据库。
+const storeUrl = process.env.COMPANY_TEST_STORE_URL;
+const storeToken = process.env.COMPANY_TEST_STORE_TOKEN;
 const storeProvider: StoreProvider = {
   async resolve() {
-    if (!sqldUrl || !sqldToken) throw new Error("需要专用 COMPANY_TEST_SQLD_URL / COMPANY_TEST_SQLD_TOKEN");
-    return { url: sqldUrl, authToken: sqldToken };
+    if (!storeUrl || !storeToken) throw new Error("需要专用 COMPANY_TEST_STORE_URL / COMPANY_TEST_STORE_TOKEN");
+    return { url: storeUrl, authToken: storeToken };
   },
 };
-const realRuntime = existsSync(binary) && sqldUrl && sqldToken ? describe : describe.skip;
+const realRuntime = existsSync(binary) && storeUrl && storeToken ? describe : describe.skip;
 const testModelLibrary = `version: 2
 activeProfile: default
 providers:
@@ -64,7 +63,7 @@ describe("user send text stays free of host profile injection", () => {
   });
 });
 realRuntime(
-  "REAL SDK 0.4.0 WASM + local sqld + isolated official Peri 4.4.1 Workspace（非 live-model 验收）",
+  "REAL SDK 0.4.0 WASM + explicit url/token store + isolated official Peri 4.4.1 Workspace（非 live-model 验收）",
   () => {
     let root: string;
     let input: RuntimeAgent;
@@ -135,7 +134,7 @@ realRuntime(
       await runtime?.shutdown();
       await rm(root, { recursive: true, force: true });
     });
-    test("creates REAL WASM Session once, reuses it across Issues/restart and restores from the same local sqld", async () => {
+    test("creates REAL WASM Session once, reuses it across Issues/restart and restores from the same explicit store endpoint", async () => {
       const [one, two] = await Promise.all([
         runtime.provision(input),
         runtime.provision(input),
@@ -148,12 +147,12 @@ realRuntime(
       expect(binding.backend).toBe("wasm-sqld-v1");
       expect(binding.sessionId).toBe(one.sessionId);
       expect(binding.state).toBe("bound");
-      expect(JSON.stringify(binding)).not.toContain(sqldToken!);
+      expect(JSON.stringify(binding)).not.toContain(storeToken!);
       expect(existsSync(join(root, "runtime", "agents", input.agentId, "sessions.db"))).toBe(false);
       const effective = JSON.parse(await readFile(join(root, "runtime", "effective-config", "dev.json"), "utf8"));
       expect(effective.settings.config.meta_harness.WorkspaceMiddleware).toBe(false);
       expect(effective.mcpServers.workspace).toBeUndefined();
-      expect(JSON.stringify(effective)).not.toContain(sqldToken!);
+      expect(JSON.stringify(effective)).not.toContain(storeToken!);
       expect((await runtime.database.getSession(one.sessionId))?.cwd).toBe(
         input.directory,
       );
@@ -731,367 +730,6 @@ describe("冻结快照重建辅助函数（不启动 SDK）", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
-});
-
-/** Locate an executable sqld for the isolated bind test; skip when unavailable. */
-function findSqldBinary(): string | undefined {
-  const explicit = process.env.COMPANY_SQLD_BINARY?.trim();
-  if (explicit) return explicit;
-  // The shared-sqld provider spawns with a minimal PATH, which a version-manager
-  // shim cannot resolve; prefer a real installed binary when present.
-  const installs = join(homedir(), ".local/share/mise/installs/http-sqld");
-  try {
-    for (const version of readdirSync(installs).sort().reverse()) {
-      const candidate = join(installs, version, "sqld");
-      if (existsSync(candidate)) return candidate;
-    }
-  } catch {}
-  const which = Bun.which("sqld");
-  if (!which) return undefined;
-  const probe = spawnSync(which, ["--version"], {
-    env: { PATH: "/usr/bin:/bin", HOME: tmpdir(), TMPDIR: tmpdir() },
-    timeout: 5000,
-  });
-  return probe.status === 0 ? which : undefined;
-}
-const sqldBinary = findSqldBinary();
-const bindRebuildSqld =
-  process.platform !== "win32" && sqldBinary ? describe : describe.skip;
-
-/**
- * These tests run the real `provision`/`wake` bind path against an isolated
- * disposable sqld under a temp COMPANY_HOME, with Workspace disabled. They are
- * not live-model tests and never touch `~/.company` or the shared sqld.
- */
-bindRebuildSqld("bind 真正重建 legacy 快照（隔离 sqld，非 live）", () => {
-  const envKeys = [
-    "COMPANY_SQLD_BINARY",
-    "COMPANY_SQLD_ROOT",
-    "COMPANY_SQLD_PORT",
-    "COMPANY_SQLD_START_TIMEOUT_MS",
-    "COMPANY_WORKSPACE",
-    "BIND_TEST_BASE",
-    "BIND_TEST_KEY",
-    "BIND_TEST_MODEL",
-  ] as const;
-  let base: string;
-  let provider: NonNullable<ReturnType<typeof sharedSqldProviderFromEnv>>;
-  const saved = new Map<string, string | undefined>();
-
-  const prepare = async (root: string): Promise<RuntimeAgent> => {
-    await mkdir(root, { recursive: true, mode: 0o700 });
-    await writeFile(
-      join(root, "model-library.yaml"),
-      `version: 2
-activeProfile: default
-providers:
-  host-openai:
-    type: openai
-    baseUrlEnv: BIND_TEST_BASE
-    apiKeyEnv: BIND_TEST_KEY
-profiles:
-  default:
-    activeAlias: sonnet
-    tiers:
-      sonnet:
-        provider: host-openai
-        modelEnv: BIND_TEST_MODEL
-`,
-      { mode: 0o600 },
-    );
-    const directory = join(root, "agents", "dev");
-    await mkdir(directory, { recursive: true, mode: 0o700 });
-    await writeFile(join(directory, "CLAUDE.md"), "# dev\n");
-    return {
-      agentId: "dev",
-      companyId: "acme",
-      directory,
-      knowledgeDirectory: join(root, "companys", "acme", "knowledgebase"),
-      name: "Developer",
-      role: "developer",
-      responsibilities: "BASE_RESPONSIBILITIES_SENTINEL",
-      systemPrompt: "PER_AGENT_SYSTEM_PROMPT_SENTINEL",
-      config: { modelProfile: "default" },
-    };
-  };
-  const newRuntime = (root: string) =>
-    new PeriRuntime({
-      root,
-      periBinary: "/nonexistent/peri",
-      storeProvider: provider,
-    });
-  const snapshotPath = (root: string) =>
-    join(root, "runtime", "effective-config", "dev.json");
-
-  beforeAll(async () => {
-    for (const key of envKeys) saved.set(key, process.env[key]);
-    base = await mkdtemp(join(tmpdir(), "company-bind-rebuild-"));
-    const port = await new Promise<number>((resolvePort, reject) => {
-      const server = createServer();
-      server.once("error", reject);
-      server.listen(0, "127.0.0.1", () => {
-        const address = server.address();
-        const value =
-          typeof address === "object" && address ? address.port : 0;
-        server.close(() => resolvePort(value));
-      });
-    });
-    await mkdir(join(base, "host", "sqld", "shared"), {
-      recursive: true,
-      mode: 0o700,
-    });
-    process.env.COMPANY_SQLD_BINARY = sqldBinary!;
-    process.env.COMPANY_SQLD_ROOT = join(base, "host");
-    process.env.COMPANY_SQLD_PORT = String(port);
-    process.env.COMPANY_SQLD_START_TIMEOUT_MS = "15000";
-    process.env.COMPANY_WORKSPACE = "disabled";
-    process.env.BIND_TEST_BASE = "https://unit.invalid/v1";
-    process.env.BIND_TEST_KEY = "unit-bind-secret";
-    process.env.BIND_TEST_MODEL = "unit-model";
-    provider = sharedSqldProviderFromEnv()!;
-    expect(provider).toBeDefined();
-  });
-
-  afterAll(async () => {
-    try {
-      await provider.close();
-    } finally {
-      for (const key of envKeys) {
-        const value = saved.get(key);
-        if (value === undefined) delete process.env[key];
-        else process.env[key] = value;
-      }
-      if (base) await rm(base, { recursive: true, force: true });
-    }
-  });
-
-  test("legacy 快照在 wake/bind 后写回且 0600，元数据正确", async () => {
-    const root = join(base, "legacy");
-    const input = await prepare(root);
-    let runtime: PeriRuntime | undefined;
-    try {
-      runtime = newRuntime(root);
-      const { sessionId } = await runtime.provision(input);
-      const path = snapshotPath(root);
-      const provisioned = JSON.parse(await readFile(path, "utf8"));
-      expect(provisioned.configured).toBe(true);
-      expect(provisioned.model).toMatchObject({
-        source: "profile",
-        profile: "default",
-        activeAlias: "sonnet",
-        provider: "host-openai",
-        model: "unit-model",
-        configured: true,
-        error: null,
-      });
-      await runtime.shutdown();
-      runtime = undefined;
-
-      // A snapshot from before the model library: no model metadata at all.
-      await writeFile(
-        path,
-        JSON.stringify({
-          settings: provisioned.settings,
-          configured: false,
-          mcpServers: {},
-          configuration: { modelProfile: "default" },
-        }),
-        { mode: 0o600 },
-      );
-      runtime = newRuntime(root);
-      await runtime.wake({ ...input, sessionId });
-
-      const persisted = JSON.parse(await readFile(path, "utf8"));
-      expect(persisted.configured).toBe(true);
-      expect(persisted.model).toMatchObject({
-        source: "profile",
-        profile: "default",
-        activeAlias: "sonnet",
-        provider: "host-openai",
-        model: "unit-model",
-        configured: true,
-        error: null,
-      });
-      expect(persisted.configuration).toEqual({ modelProfile: "default" });
-      expect((await stat(path)).mode & 0o777).toBe(0o600);
-      // The snapshot carries host-only settings, but the non-secret model
-      // metadata must never include the credential value.
-      expect(JSON.stringify(persisted.model)).not.toContain("unit-bind-secret");
-    } finally {
-      await runtime?.shutdown().catch(() => {});
-    }
-  });
-
-  test("已完整快照在模型环境变化后不漂移", async () => {
-    const root = join(base, "stable");
-    const input = await prepare(root);
-    let runtime: PeriRuntime | undefined;
-    try {
-      runtime = newRuntime(root);
-      const { sessionId } = await runtime.provision(input);
-      const path = snapshotPath(root);
-      const before = await readFile(path, "utf8");
-      await runtime.shutdown();
-      runtime = undefined;
-
-      process.env.BIND_TEST_MODEL = "drifted-model";
-      runtime = newRuntime(root);
-      const bound = await runtime.wake({ ...input, sessionId });
-      expect(bound.model).toBe("unit-model");
-      expect(await readFile(path, "utf8")).toBe(before);
-      expect((await stat(path)).mode & 0o777).toBe(0o600);
-    } finally {
-      process.env.BIND_TEST_MODEL = "unit-model";
-      await runtime?.shutdown().catch(() => {});
-    }
-  });
-
-  test("系统提示词只在 Session 创建时冻结；后续发送保持干净", async () => {
-    const root = join(base, "prompt-budget");
-    const input = await prepare(root);
-    const requests: any[] = [];
-    const provider = Bun.serve({
-      hostname: "127.0.0.1",
-      port: 0,
-      async fetch(request) {
-        const body = await request.json();
-        requests.push(body);
-        const chunks = [
-          {
-            id: "isolated-fixture",
-            object: "chat.completion.chunk",
-            created: 1,
-            model: "fixture",
-            choices: [
-              {
-                index: 0,
-                delta: { role: "assistant", content: "ISOLATED_REPLY" },
-                finish_reason: null,
-              },
-            ],
-          },
-          {
-            id: "isolated-fixture",
-            object: "chat.completion.chunk",
-            created: 1,
-            model: "fixture",
-            choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
-            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-          },
-        ];
-        return new Response(
-          chunks.map((chunk) => "data: " + JSON.stringify(chunk) + "\n\n").join("") +
-            "data: [DONE]\n\n",
-          { headers: { "Content-Type": "text/event-stream" } },
-        );
-      },
-    });
-    const savedBase = process.env.BIND_TEST_BASE;
-    const savedKey = process.env.BIND_TEST_KEY;
-    const savedModel = process.env.BIND_TEST_MODEL;
-    process.env.BIND_TEST_BASE = `http://127.0.0.1:${provider.port}/v1`;
-    process.env.BIND_TEST_KEY = "unit-bind-secret";
-    process.env.BIND_TEST_MODEL = "fixture";
-    let runtime: PeriRuntime | undefined;
-    const waitForRequest = async (count: number) => {
-      const limit = Date.now() + 15000;
-      while (requests.length < count && Date.now() < limit)
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      expect(requests.length).toBeGreaterThanOrEqual(count);
-    };
-    const userContent = (body: any) =>
-      [...(body?.messages ?? [])]
-        .reverse()
-        .find((message: any) => message.role === "user")?.content;
-    const systemContent = (body: any) =>
-      (body?.messages ?? []).find((message: any) => message.role === "system")
-        ?.content ?? "";
-    // 每轮成功后 Peri 会额外发起 prediction 请求；它同样带 messages，
-    // 不能按数组下标把它当成用户 prompt。
-    const isPredictionRequest = (body: any) => {
-      const wire = JSON.stringify(body ?? {});
-      return wire.includes("请根据以上对话预测用户下一步输入")
-        || wire.includes("<prediction_directive>")
-        || wire.includes("预测输入助手");
-    };
-    const waitForUserRequest = async (text: string) => {
-      const limit = Date.now() + 15000;
-      while (Date.now() < limit) {
-        const match = requests.find(
-          (body) => !isPredictionRequest(body) && userContent(body) === text,
-        );
-        if (match) return match;
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-      throw new Error(`request with user content ${text} was not observed`);
-    };
-    try {
-      runtime = newRuntime(root);
-      const { sessionId } = await runtime.provision(input);
-      const configured = { ...input, sessionId };
-      await runtime.send(configured, {
-        text: "ISOLATED_FIRST_USER_SENTINEL",
-        requestId: "isolated-first",
-      });
-      await waitForRequest(1);
-      expect(systemContent(requests[0])).not.toContain(
-        "BASE_RESPONSIBILITIES_SENTINEL",
-      );
-      expect(systemContent(requests[0])).not.toContain(
-        "PER_AGENT_SYSTEM_PROMPT_SENTINEL",
-      );
-      expect(systemContent(requests[0])).toContain("CLAUDE.md");
-      expect(systemContent(requests[0])).toContain("You decide how to decompose work");
-      expect(JSON.stringify(requests[0])).not.toContain(
-        "[Company effective configuration",
-      );
-      expect(JSON.stringify(requests[0])).not.toContain(
-        "[Agent system prompt]",
-      );
-      expect(userContent(requests[0])).toBe("ISOLATED_FIRST_USER_SENTINEL");
-      await runtime.stop(configured);
-
-      await runtime.restart({
-        ...configured,
-        responsibilities: "NEW_APPLIED_RESPONSIBILITIES_SENTINEL",
-        systemPrompt: "NEW_APPLIED_SYSTEM_PROMPT_SENTINEL",
-      });
-      expect(runtime.snapshot(configured).sessionId).toBe(sessionId);
-      await runtime.send(configured, {
-        text: "ISOLATED_SECOND_USER_SENTINEL",
-        requestId: "isolated-second",
-      });
-      const secondRequest = await waitForUserRequest(
-        "ISOLATED_SECOND_USER_SENTINEL",
-      );
-      expect(systemContent(secondRequest)).not.toContain(
-        "BASE_RESPONSIBILITIES_SENTINEL",
-      );
-      expect(systemContent(secondRequest)).not.toContain(
-        "PER_AGENT_SYSTEM_PROMPT_SENTINEL",
-      );
-      expect(JSON.stringify(secondRequest)).not.toContain(
-        "NEW_APPLIED_RESPONSIBILITIES_SENTINEL",
-      );
-      expect(JSON.stringify(secondRequest)).not.toContain(
-        "NEW_APPLIED_SYSTEM_PROMPT_SENTINEL",
-      );
-      expect(JSON.stringify(secondRequest)).not.toContain(
-        "[Company effective configuration",
-      );
-      expect(userContent(secondRequest)).toBe("ISOLATED_SECOND_USER_SENTINEL");
-      expect(runtime.snapshot(configured).sessionId).toBe(sessionId);
-    } finally {
-      provider.stop(true);
-      if (savedBase === undefined) delete process.env.BIND_TEST_BASE;
-      else process.env.BIND_TEST_BASE = savedBase;
-      if (savedKey === undefined) delete process.env.BIND_TEST_KEY;
-      else process.env.BIND_TEST_KEY = savedKey;
-      if (savedModel === undefined) delete process.env.BIND_TEST_MODEL;
-      else process.env.BIND_TEST_MODEL = savedModel;
-      await runtime?.shutdown().catch(() => {});
-    }
-  }, 40000);
 });
 
 describe("已冻结的 effective-config 快照按模型库重算显示状态", () => {

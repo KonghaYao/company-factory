@@ -1,14 +1,14 @@
 # Company Factory
 
-一个 **Bun HTTP 服务 + 本地磁盘** 的 Agent 软件工厂。React 三栏工作台以 Agent 为第一维度，业务事实保存在 YAML / Markdown / Git；主 Agent 推理、Session 与控制面采用 **Peri SDK 0.4.0 WASM**，接入用户显式配置的本地 sqld 或宿主自动供给的单一共享本地 sqld；**官方 Peri 4.4.1 进程提供本地 Workspace MCP（无 OS 沙箱）**，不启动 native `peri acp`，不自动回退。
+一个 **Bun HTTP 服务 + 本地磁盘** 的 Agent 软件工厂。React 三栏工作台以 Agent 为第一维度，业务事实保存在 YAML / Markdown / Git；主 Agent 推理、Session 与控制面采用 **Peri SDK 0.4.0 WASM**，会话存储只使用显式 `COMPANY_WASM_STORES_FILE` 提供的 url + token；**官方 Peri 4.4.1 进程提供本地 Workspace MCP（无 OS 沙箱）**，不启动 native `peri acp`，不自动回退。
 
 **System For Agent：Agent 自主性优先。** 代码提供可靠事实、能力入口、会话与身份边界；拆解、流程选择、协作和下一步行动由 Agent 决定。当前顶层设计见 [SYSTEM-FOR-AGENT](docs/SYSTEM-FOR-AGENT.md)。2026-10-31 的 live 证据属于历史版本；本轮改动的验证范围单独记录于 [VERIFICATION](docs/VERIFICATION.md)。
 
-**当前交付不是模拟 Agent 演示。** 创建公司通过 WASM 创建真实 Peri Session；必须先配置显式本地存储或启用单一共享 sqld 自动供给，没有模型配置时明确拒绝发送，不伪造回答或投递成功。
+**当前交付不是模拟 Agent 演示。** 创建公司通过 WASM 创建真实 Peri Session；必须先配置显式 `COMPANY_WASM_STORES_FILE`（url + token），没有模型配置时明确拒绝发送，不伪造回答或投递成功。
 
 **2026-11-02 架构变更：Workspace 本地运行。** 按所有者裁定，Agent 的官方 Workspace MCP 与宿主 Git 直接以宿主用户身份运行，不再依赖 Linux / bubblewrap，也不再提供 OS 级隔离；Agent 工具可访问该用户可访问的本机文件。`COMPANY_SANDBOX` 已移除；`COMPANY_WORKSPACE=disabled` 仅作为显式关闭 Agent Workspace 的调试开关。
 
-**测试基线（2026-11-03，macOS）：** 全量 `561 pass / 24 skip / 0 fail`（585 项、3,635 断言、74 个文件）；`bun run typecheck` 与 `bun run build` 通过。历史 Linux live 验收（2026-10-31，沙箱版，`closure=true`）是过去实现的证据，**不代表当前本地架构**，需要重新做 live 验收；详见 [验证记录](docs/VERIFICATION.md)。
+**测试基线（2026-11-03，macOS）：** 全量 `589 pass / 24 skip / 0 fail`（613 项、4,003 断言、79 个文件）；`bun run typecheck` 与 `bun run build` 通过。历史 Linux live 验收（2026-10-31，沙箱版，`closure=true`）是过去实现的证据，**不代表当前本地架构**，需要重新做 live 验收；详见 [验证记录](docs/VERIFICATION.md)。
 
 **未验证项，不能声称：** 独立 fable 模型仍未验证（供应商无独立 fable 模型）；四档 alias 路由可用，但不能声称四档四模型全部真实通过。历史 live 证据中的 `agentCiExecuted` 与 digest 口径仅对那轮沙箱版运行有效。
 
@@ -40,11 +40,7 @@ bun start
 | 变量 | 默认值 / 用途 |
 | --- | --- |
 | `COMPANY_HOME` | `~/.company`；Company / Agent 文件与宿主 Session 绑定元数据 |
-| `COMPANY_WASM_STORES_FILE` | 可选显式覆盖：宿主私有 0600 JSON，`stores` 为每个 `(companyId, agentId)` 配置一条 `url/authToken`，或用全局 `default` 覆盖所有未列出的 scope；不同 scope 可共用同一回环 URL。显式条目优先于自动供给 |
-| `COMPANY_SQLD_BINARY` | 可选：绝对路径的官方 sqld 可执行文件；设置后启用单一共享 sqld 自动供给 |
-| `COMPANY_SQLD_ROOT` | `~/.company-host`；共享 sqld 的宿主私有根，必须由所有者持有且为 `0700`，位于项目与 `~/.company/agents/runtime` 之外 |
-| `COMPANY_SQLD_PORT` | `18081`；共享 sqld 的固定回环端口 |
-| `COMPANY_SQLD_START_TIMEOUT_MS` | `10000`；启动等待 `GET /health` 的上限 |
+| `COMPANY_WASM_STORES_FILE` | 会话存储的唯一来源：宿主私有 0600 JSON，`stores` 为每个 `(companyId, agentId)` 配置一条 `url/authToken`，或用全局 `default` 覆盖所有未列出的 scope；不同 scope 可共用同一回环 URL。缺失时服务可启动，但 Session 解析报 `wasm_store_not_configured` |
 | `PORT` | `3000` |
 | `COMPANY_HOST` | `127.0.0.1`；建议保留本机监听 |
 | `COMPANY_BASE_URL` | 对应本机地址；写入 Agent 的三个 Company MCP 配置 |
@@ -88,18 +84,13 @@ profiles:
 
 **只读展示与 revision。** 运行时快照暴露 `modelProfile/modelProvider/modelAlias/model/modelMissing/modelError/modelSource/modelLibraryRevision`，以及 v2 的 `modelTiers/modelTierProviders/modelTierSources/modelResolvedAt`；旧快照没有四档明细时给出 `modelTierNotice`，重启后补齐。`GET /api/model-library` 只返回 `status/error/issues/path/version/activeProfile/revision/profiles[]/providers[]`；profile 的四个档位带 `bound/provider/providerType/model/modelEnv/missing/ready`，provider 只返回 `baseUrlEnv/apiKeyEnv` 名称与 `endpointConfigured/credentialConfigured` 布尔，不返回任何值，也没有顶层 `models` 或 `bindings`。工作台顶栏「模型库」打开全局只读 Sheet（路径、短 revision、默认 profile、profile 四档与 provider 环境变量名）；右侧面板「模型」tab 显示当前 Agent 的已应用链路、已保存配置、四档表与库摘要；Agent 配置中的 profile/alias 选择器只修改 JSON 草稿，保存仍走现有 CAS，重启才应用。UI 不做写回，也不新增 PUT。
 
-未配置模型时，只要显式本地存储或单一共享 sqld 自动供给已配置、Workspace 可用，仍可创建组织/真实固定 Session、手动操作 Issue 和文件；Chat 提示模型配置缺失。存储缺配会明确失败，不以空 Session 替代。
+未配置模型时，只要显式 `COMPANY_WASM_STORES_FILE` 已配置、Workspace 可用，仍可创建组织/真实固定 Session、手动操作 Issue 和文件；Chat 提示模型配置缺失。存储缺配会明确失败，不以空 Session 替代。
 
-### 本地 sqld（显式配置或单一共享自动供给）
+### 会话存储：显式 url + token
 
-每个 `(companyId, agentId)` 必须有可解析的存储 scope；所有 scope 可以共用同一个宿主本地 sqld。解析按以下优先级：
+每个 `(companyId, agentId)` 必须有可解析的存储 scope。唯一来源是 `COMPANY_WASM_STORES_FILE` 指向的宿主私有 JSON：精确匹配的 `stores` 条目优先，未列出的 scope 回退到全局 `default`；两者都没有时以 `wasm_store_not_configured` 明确失败，不以空 Session 替代。同一 scope 重复配置会被拒绝；不同 scope 可共用同一回环 URL。服务不启动 sqld、不签发 JWT、不读取 `COMPANY_SQLD_ROOT`，也不接受任何 `COMPANY_SQLD_*`；检测到旧变量非空时会在启动阶段直接报错，避免静默回退。
 
-1. **显式覆盖**：设置 `COMPANY_WASM_STORES_FILE` 指向宿主私有 `0600` JSON，为具体 scope 配置 `{companyId, agentId, url, authToken}`，或用全局 `default` 为所有未列出的 scope 提供同一端点。显式条目优先于自动供给，精确 scope 优先于 `default`；不同 scope 可使用同一回环 URL，同一 scope 重复配置会被拒绝。未启用自动供给时，缺失 scope 保持原来的 `wasm_store_not_configured` 错误。
-2. **单一共享自动供给**：设置 `COMPANY_SQLD_BINARY` 后启用。服务只启动一个本地 sqld，所有未显式配置的 scope 共用 `$COMPANY_SQLD_ROOT/sqld/shared` 的数据、Ed25519 密钥与受限 JWT。
-
-显式条目优先且不会被自动改写；如果既有条目仍指向旧的每 Agent 端点，它们继续使用旧库。共享实例的端口若与显式端点相同且该端点正在监听，自动启动会明确失败，不会接管或终止它。
-
-显式配置文件必须位于 Agent、知识库、项目挂载范围之外，由宿主所有且 `0600`。未设置该变量、或文件中没有当前 scope 时才会回退到共享供给；设置了路径但文件不可读、权限不安全或 JSON 无效属于配置错误，不会静默回退。格式如下，所有尖括号内容均为占位符：
+配置文件必须位于 Agent、知识库、项目挂载范围之外，由宿主所有且 `0600`，不得是符号链接或硬链接。未设置该变量时服务仍可启动，health 显示 `storage.storesFile: "missing"`，Session 解析明确失败；设置了路径但文件不可读、权限不安全或 JSON 无效属于配置错误，不会回退到其他端点。格式如下，所有尖括号内容均为占位符：
 
 ```json
 {
@@ -107,30 +98,22 @@ profiles:
     {
       "companyId": "<BACKEND_GENERATED_COMPANY_ID>",
       "agentId": "<AGENT_ID>",
-      "url": "http://127.0.0.1:<SQLD_PORT>",
-      "authToken": "<HOST_ONLY_SQLD_TOKEN>"
+      "url": "http://127.0.0.1:<STORE_PORT>",
+      "authToken": "<HOST_ONLY_STORE_TOKEN>"
     }
   ],
   "default": {
-    "url": "http://127.0.0.1:<SQLD_PORT>/db/<TENANT>/<DATABASE>/<BRANCH>",
-    "authToken": "<HOST_ONLY_SQLD_TOKEN>"
+    "url": "http://127.0.0.1:<STORE_PORT>/db/<TENANT>/<DATABASE>/<BRANCH>",
+    "authToken": "<HOST_ONLY_STORE_TOKEN>"
   }
 }
 ```
 
-`default` 可省略；省略时只有 `stores` 中精确匹配的 scope 能解析。`url` 仅接受明确 `127.0.0.1` / `[::1]` 的 HTTP 端点，可带数据库路径以适配按路径路由的 Hrana 网关（如 peri-loom），不接受远端、URL 内凭据、query、fragment。不要把配置放入任何 Agent 可见目录或提交到 Git。
+`default` 可省略；省略时只有 `stores` 中精确匹配的 scope 能解析。`url` 仅接受明确 `127.0.0.1` / `[::1]` 的 HTTP 端点，可带数据库路径以适配按路径路由的 Hrana 网关（如 peri-loom），不接受远端、URL 内凭据、query、fragment。不要把配置放入任何 Agent 可见目录或提交到 Git；token 只存在宿主和 SDK 内存，不进入 Agent 环境、配置快照、日志或 HTTP 响应。
 
-自动供给的宿主私有目录为 `$COMPANY_SQLD_ROOT/sqld/shared`，默认 `$COMPANY_SQLD_ROOT=$HOME/.company-host`。根目录及其 `sqld/shared` 子目录必须是所有者所有的 `0700` 真实目录，且不得位于项目目录或 `~/.company/agents/runtime` 内；服务不会自动 chmod 既有目录。目录内含 `auth.key`（`0600`）、`auth.pub`（`0600`）、无秘密的 `manifest.json`（`0600`，只记录 backend、版本与端口）以及 sqld 的 `db`。JWT 仅在内存中按需签发，使用 Ed25519（`EdDSA`）与 `{"p":{"rw":{"ns":["default"]}},"exp":<now+365d>}` 权限声明；私钥和 token 不进入 argv、子进程环境、Agent 目录、effective-config、`stores.json`、日志或 HTTP 响应。
+**后端生成 ID 不需要预先猜测：** 首次创建若缺配，会在宿主 `runtime/store-requests/<scope-hash>.json` 写入无秘密的 `companyId/agentId`，公司初始化保留 failed 状态。补齐显式映射后，以**相同 `requestId` 与相同输入**重试；HR 成功后若主管缺配，再按新请求补配并重试，已完成绑定复用。也可由宿主在 `createApplication({ storeProvider })` 注入 `resolve(scope)` 钩子；注入的 provider 优先于环境配置。
 
-自动供给在首次解析时启动 sqld：`--db-path <shared>/db --http-listen-addr 127.0.0.1:$COMPANY_SQLD_PORT --auth-jwt-key-file <shared>/auth.pub --no-welcome`，等待 `GET /health` 后复用同一进程。本进程已有该实例且 `/health` 正常时复用；服务重启后按 `manifest.json` 校验端口与数据目录，在端口空闲时用同一密钥与数据目录重新启动。端口被未知进程占用时明确失败，不连接、不复用、不终止占用者；崩溃后遗留的孤儿 sqld 需所有者手工停止。`close()` 对服务自己启动的进程发送 `SIGTERM`，超时后 `SIGKILL`；未确认退出则报错并保留句柄供重试，不删除密钥、manifest 或数据库。并发首次解析共享同一初始化 Promise。
-
-自动供给不在日志、health 或任何 HTTP 响应中打印 token，也不会写入 `stores.json`。若要把既有显式条目改为共享端点，应移除该显式条目让自动供给按需签发，或由所有者用 `auth.key` 自行签发受限 JWT（同样不要落盘或提交）；保留旧 token 的显式条目仍会覆盖自动供给并可能认证失败。
-
-共享实例意味着所有 Agent 的 Session 落在同一个数据库；宿主通过各 Agent 的 cwd 与 scope 绑定隔离 Session，数据库 token 仍是全库 `rw` 凭据，只留在宿主进程内。需要数据库级隔离时应使用显式独立端点。
-
-**后端生成 ID 不需要预先猜测：** 首次创建若缺配，会在宿主 `runtime/store-requests/<scope-hash>.json` 写入无秘密的 `companyId/agentId`，公司初始化保留 failed 状态。补齐显式映射或启用共享自动供给后，以**相同 `requestId` 与相同输入**重试；HR 成功后若主管缺配，再按新请求补配并重试，已完成绑定复用。也可由宿主在 `createApplication({ storeProvider })` 注入 `resolve(scope)` 钩子；注入的 provider 优先于环境自动供给。
-
-配置文件按 activation 读取，token 轮转不改变 backend 身份。首次成功创建后，在 `runtime/wasm-stores` 持久化 scope、endpoint hash 与 Session 绑定。endpoint 改变、cwd 不符或无可信绑定都会明确拒绝。普通 wake 仅在可信绑定指向的 Session 确认缺失时创建替代 Session；manifest 与冷热快照统一使用新 ID，并显式记录 `replacesSessionId`，界面提示原历史未恢复。初始化补花名册的 provision 则必须确认原 Session，缺失时不替代。既有绑定不会因为改用共享实例而自动迁移：原 binding 指向另一个 URL 时，解析会以 `wasm_store_backend_changed` 拒绝，需要所有者先决定保留旧端点还是人工处理迁移。旧 native `sessions.db/sessionId` 原样保留、不迁移、不写 schema，也不会自动新建替代。创建过程只留下 `creating` 标记而未完成可信绑定时，重试明确报错，需所有者人工处理未确认创建；本期不提供自动恢复/迁移工具。
+配置文件按 activation 读取，token 轮转不改变 backend 身份。首次成功创建后，在 `runtime/wasm-stores` 持久化 scope、endpoint hash 与 Session 绑定。endpoint 改变、cwd 不符或无可信绑定都会明确拒绝。普通 wake 仅在可信绑定指向的 Session 确认缺失时创建替代 Session；manifest 与冷热快照统一使用新 ID，并显式记录 `replacesSessionId`，界面提示原历史未恢复。初始化补花名册的 provision 则必须确认原 Session，缺失时不替代。既有绑定不会因为 stores 文件改动而自动迁移：原 binding 指向另一个 URL 时，解析会以 `wasm_store_backend_changed` 拒绝，需要所有者先决定保留旧端点还是人工处理迁移。旧 native `sessions.db/sessionId` 原样保留、不迁移、不写 schema，也不会自动新建替代。创建过程只留下 `creating` 标记而未完成可信绑定时，重试明确报错，需所有者人工处理未确认创建；本期不提供自动恢复/迁移工具。
 
 ## 2. 使用流程
 
@@ -194,14 +177,10 @@ bun run check:restart --json           # 机器可读输出
     home/                       # 旧 native HOME 原样保留
   runtime/wasm-stores/<scope-hash>.json  # 无秘密 backend/endpoint hash/Session binding
   runtime/store-requests/<scope-hash>.json  # 缺配时的 companyId/agentId，便于补配
-  runtime/workspace/<scope-hash>/home/  # 官方 Workspace 本地活动目录，无 sqld token
-
-# 仅启用 COMPANY_SQLD_BINARY 时；默认根在 COMPANY_HOME 之外
-$COMPANY_SQLD_ROOT/sqld/shared/
-  auth.key  auth.pub  manifest.json  db/  # 0700 目录；密钥/manifest 为 0600，无 token
+  runtime/workspace/<scope-hash>/home/  # 官方 Workspace 本地活动目录，无存储 token
 ```
 
-WASM Session/消息由本地 sqld 落盘：显式模式由所有者准备端点，自动模式使用单一共享实例（宿主按 Agent cwd/scope 隔离 Session）；既有库不会由 Company 服务自动迁移。
+WASM Session/消息由 `COMPANY_WASM_STORES_FILE` 指向的显式 url + token 端点落盘（宿主按 Agent cwd/scope 隔离 Session）；服务不启动或管理数据库进程，既有库不会由 Company 服务自动迁移。
 
 `organization.yaml` 保存独立的组织节点树与人员 placement；`roster.yaml` v2 只保留 `{agentId,status,joinedAt}` 的平铺索引。人员 `agent.yaml` 不再把部门当作身份事实，`organization()`/`members()` 的 `groupId`/`orgPath` 由 placement 派生。没有 `organization.yaml` 的旧公司会在读取时从 `groups.yaml` + roster v1 在内存合成，只读请求不落盘；首次组织写才升级为 `organization.yaml` + roster v2，保留既有两个根节点且不改写 `agent.yaml`/`groups.yaml`。成员移动只写 `organization.yaml`；归档保留目录、Session、token 文件、IM 与 Issue，但拒绝后续鉴权。
 
@@ -226,7 +205,7 @@ bun run test:integration
 bun run example                  # 在隔离临时目录运行真实双 Issue 交付示例
 ```
 
-当前代码已实际执行 `bun run typecheck`、`bun run build` 与全量测试（macOS `561 pass / 24 skip / 0 fail`，585 项、3,635 断言、74 个文件）；`bun run example` 与浏览器套件未执行。真实 runtime 套件还需设置专用空库的 `COMPANY_TEST_SQLD_URL/COMPANY_TEST_SQLD_TOKEN`；HTTP/MCP 集成套件使用 `COMPANY_TEST_INTEGRATION_STORES_FILE`（相同 stores 格式），为生成公司固定成员及 `integrated-dev/integrated-preview` 准备显式测试端点（可共用同一回环端点）。缺少 Peri 二进制或显式测试存储时套件 SKIP，不计为通过；不能使用生产数据库。集成套件使用固定 `requestId: initialize` 与所有者身份，缺配时可从其临时根的请求文件取得真实生成 ID。Domain 测试替身只证明业务规则，不冒充 WASM/存储证据；测试代码不自动安装或启动 sqld。
+当前代码已实际执行 `bun run typecheck`、`bun run build` 与全量测试（macOS `589 pass / 24 skip / 0 fail`，613 项、4,003 断言、79 个文件）；`bun run example` 与浏览器套件未执行。真实 runtime 套件还需设置外部显式存储端点的 `COMPANY_TEST_STORE_URL/COMPANY_TEST_STORE_TOKEN`；HTTP/MCP 集成套件使用 `COMPANY_TEST_INTEGRATION_STORES_FILE`（相同 stores 格式），为生成公司固定成员及 `integrated-dev/integrated-preview` 准备显式测试端点（可共用同一回环端点）。缺少 Peri 二进制或显式测试存储时套件 SKIP，不计为通过；不能使用生产数据库。集成套件使用固定 `requestId: initialize` 与所有者身份，缺配时可从其临时根的请求文件取得真实生成 ID。Domain 测试替身只证明业务规则，不冒充 WASM/存储证据；测试不使用本地 sqld。
 
 `SOURCE-MANIFEST.sha256` 是历史源码快照，已过期：2026-10-31 复核有 24/62 项不匹配，且不包含 `scripts/e2e-live.ts`、`scripts/e2e-ci-runner.ts` 等文件。它不得作为当前源码完整性或 E2E 证据；需要时重新生成。
 

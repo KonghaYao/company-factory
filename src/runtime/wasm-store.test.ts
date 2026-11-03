@@ -23,7 +23,7 @@ async function fixture() {
 afterEach(async () => {
   await Promise.all(temporary.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
-describe("WASM 本地 sqld 配置与可信 backend（无数据库请求）", () => {
+describe("WASM 显式 url/token 存储配置与可信 backend（无数据库请求）", () => {
   test("缺配给出必要字段和 scope 请求文件，不回显端点或 token", async () => {
     const { root, scope } = await fixture();
     const directory = new WasmStoreDirectory({ root, provider: new FileStoreProvider({ root }) });
@@ -133,7 +133,7 @@ describe("WASM 本地 sqld 配置与可信 backend（无数据库请求）", () 
     await writeFile(path, JSON.stringify({ ...binding, state: "creating", sessionId: undefined }));
     await expect(stores.acquire(f.scope)).rejects.toMatchObject({ code: "wasm_session_creation_unconfirmed" });
   });
-  test("本地 sqld 丢失旧 Session 后，可原子替换为新的固定 Session", async () => {
+  test("存储端点丢失旧 Session 后，可原子替换为新的固定 Session", async () => {
     const f = await fixture();
     const directory = join(f.root, "runtime", "wasm-stores");
     await mkdir(directory, { recursive: true });

@@ -93,11 +93,6 @@ export {
 } from "./model-library";
 export type { StoreProvider, StoreScope, WasmStoreConfiguration } from "./wasm-store";
 export { FileStoreProvider } from "./wasm-store";
-export {
-  ExplicitFirstStoreProvider,
-  SharedSqldProvider,
-  sharedSqldProviderFromEnv,
-} from "./local-sqld";
 import { channelPair } from "./view-channel";
 export { WorkspaceViewAdapter } from "./workspace";
 export interface RuntimeAgent {
@@ -752,14 +747,14 @@ export class PeriRuntime {
     const workspaceEnabled = process.env.COMPANY_WORKSPACE !== "disabled";
     if (workspaceEnabled && !existsSync(this.binary) && this.binary.includes("/"))
       throw new RuntimeError("peri_not_installed", "官方 Peri 4.4.1 Workspace 二进制未配置；WASM 不回退 native ACP。");
-    // 绑定仍可信但当前本地 sqld 已丢失该 Session（例如库重建）时，为同一 Agent
+    // 绑定仍可信但当前存储端点已丢失该 Session（例如库重建）时，为同一 Agent
     // 创建新的固定 Session 并更新绑定；端点身份与 cwd/目录校验不放宽。
     let resumeSessionId = targetSessionId;
     if (targetSessionId && !(await store.getSession(targetSessionId))) {
       if (!allowMissingReplacement)
         throw new RuntimeError("wasm_session_missing", "provision 恢复确认的原 Session 不存在；拒绝自动重建。");
       console.warn(
-        `[wasm_session_recovered] ${input.companyId}/${input.agentId}: bound session is absent in the current local sqld; creating a replacement session.`,
+        `[wasm_session_recovered] ${input.companyId}/${input.agentId}: bound session is absent in the current store endpoint; creating a replacement session.`,
       );
       resumeSessionId = undefined;
     }
@@ -922,12 +917,12 @@ export class PeriRuntime {
       // bind 阶段的 SDK chat 动作错误（如 binding_conflict）同样不得被折叠。
       const action = toChatActionRuntimeError(e);
       if (action) throw action;
-      throw new RuntimeError("wasm_activation_failed", "WASM Session 激活失败；请检查本地 sqld、模型与 MCP 配置。未回退 native ACP，未自动替换 Session。");
+      throw new RuntimeError("wasm_activation_failed", "WASM Session 激活失败；请检查存储端点、模型与 MCP 配置。未回退 native ACP，未自动替换 Session。");
     }
   }
   private async closeBound(bound: BoundAgent) {
     // SDK 契约：ChatCloseIncompleteError 表示资源与所有权已保留，可重试。
-    // 典型场景：空闲 Chat 的宿主存储流被 sqld 以 400 过期；重试会重建流。
+    // 典型场景：空闲 Chat 的宿主存储流被存储端点以 400 过期；重试会重建流。
     let closeFailure: unknown;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {

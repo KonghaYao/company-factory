@@ -12,7 +12,7 @@ import { createRemoteActions } from "../../web/src/peri/remote/actions";
 import { ChatController } from "../../web/src/peri/remote/controller";
 
 // Real host activation, manifest, service, HTTP and browser open control flow.
-// Only the external sqld lookup / SDK Chat / live sync boundaries are replaced.
+// Only the external store endpoint lookup / SDK Chat / live sync boundaries are replaced.
 const previousWorkspace = process.env.COMPANY_WORKSPACE;
 process.env.COMPANY_WORKSPACE = "disabled";
 afterAll(() => {

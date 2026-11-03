@@ -9,8 +9,6 @@ import {
   PeriRuntime,
   WorkspaceViewAdapter,
   FileStoreProvider,
-  ExplicitFirstStoreProvider,
-  sharedSqldProviderFromEnv,
   toChatActionRuntimeError,
   type StoreProvider,
 } from "../runtime";
@@ -50,25 +48,29 @@ export type ApplicationOptions = {
   /** Narrow injection point for restart-gate tests; production constructs the default. */
   readiness?: RestartReadinessService;
 };
+/** 本地 sqld 供给已移除；这些变量只用于给出明确启动错误，不再被读取。 */
+const LEGACY_SQLD_ENV = [
+  "COMPANY_SQLD_BINARY",
+  "COMPANY_SQLD_ROOT",
+  "COMPANY_SQLD_PORT",
+  "COMPANY_SQLD_START_TIMEOUT_MS",
+] as const;
 export async function createApplication(options: ApplicationOptions = {}) {
+  const legacySqld = LEGACY_SQLD_ENV.filter(
+    (key) => (process.env[key] ?? "").trim() !== "",
+  );
+  if (legacySqld.length)
+    throw new Error(
+      `本地 sqld 供给已移除；会话存储只接受 COMPANY_WASM_STORES_FILE 提供的 url + token。请移除 ${legacySqld.join("、")}。`,
+    );
   const root = resolve(
     options.root ?? process.env.COMPANY_HOME ?? join(homedir(), ".company"),
   );
   const baseUrl =
     options.baseUrl ?? process.env.COMPANY_BASE_URL ?? "http://127.0.0.1:3000";
   const storesFile = options.storesFile ?? process.env.COMPANY_WASM_STORES_FILE;
-  // 显式 stores 优先；显式 scope 缺配时才回退到宿主自动供给的单一共享 sqld。
-  const sharedStores = options.storeProvider
-    ? undefined
-    : sharedSqldProviderFromEnv();
   const storeProvider =
-    options.storeProvider ??
-    (sharedStores
-      ? new ExplicitFirstStoreProvider(
-          new FileStoreProvider({ root, file: storesFile }),
-          sharedStores,
-        )
-      : undefined);
+    options.storeProvider ?? new FileStoreProvider({ root, file: storesFile });
   await mkdir(root, { recursive: true });
   const ownerTokenFile = join(root, "owner-token");
   let ownerToken = options.webToken ?? process.env.COMPANY_WEB_TOKEN;
@@ -301,9 +303,9 @@ export async function createApplication(options: ApplicationOptions = {}) {
       version: packageJson.version,
       mcpModules: Object.keys(MODULE_OPERATIONS),
       runtime:
-        "@peri-code/sdk@0.4.0 WASM + local sqld (explicit or host-provisioned shared)",
+        "@peri-code/sdk@0.4.0 WASM + explicit url/token store",
       storage: {
-        sharedSqld: sharedStores ? "enabled" : "disabled",
+        storesFile: storesFile ? "configured" : "missing",
       },
       workspace:
         process.env.COMPANY_WORKSPACE === "disabled"
@@ -606,13 +608,11 @@ export async function createApplication(options: ApplicationOptions = {}) {
         files.shutdown(),
         runtime.shutdown(),
       ]);
-      if (sharedStores)
-        results.push(...(await Promise.allSettled([sharedStores.close()])));
       // Diagnostics shutdown must never change the application close result.
       await diagnostics.close().catch(() => {});
       if (results.some((result) => result.status === "rejected"))
         throw new Error(
-          "应用关闭未确认；Workspace/WASM/共享 sqld handle 已保留，请重试关闭。",
+          "应用关闭未确认；Workspace/WASM/存储 handle 已保留，请重试关闭。",
         );
     },
   };

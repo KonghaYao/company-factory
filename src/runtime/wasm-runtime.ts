@@ -86,7 +86,7 @@ export function createAgentWasmModules(
             let native: NativeWasmAcp;
             try { native = await module.PeriWasmAcp.start(configJson); } catch {
               await closeNetwork();
-              throw new Error("WASM Session 启动失败；请检查本地 sqld、模型与 MCP 配置。");
+              throw new Error("WASM Session 启动失败；请检查存储端点、模型与 MCP 配置。");
             }
             return {
               async send(frame: string) {

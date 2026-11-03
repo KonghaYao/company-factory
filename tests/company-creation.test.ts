@@ -364,3 +364,54 @@ describe("Company creation HTTP/MCP contract with unit provisioning", () => {
     expect(provisions).toHaveLength(7);
   });
 });
+
+describe("会话存储配置只接受显式 url + token", () => {
+  const LEGACY_SQLD_ENV = [
+    "COMPANY_SQLD_BINARY",
+    "COMPANY_SQLD_ROOT",
+    "COMPANY_SQLD_PORT",
+    "COMPANY_SQLD_START_TIMEOUT_MS",
+  ] as const;
+
+  test("旧 COMPANY_SQLD_* 非空时启动直接失败，不静默回退", async () => {
+    const root = await mkdtemp(join(tmpdir(), "company-store-config-"));
+    const saved = LEGACY_SQLD_ENV.map((key) => [key, process.env[key]] as const);
+    process.env.COMPANY_SQLD_BINARY = "/nonexistent/local-sqld";
+    try {
+      await expect(createApplication({ root })).rejects.toThrow(
+        "本地 sqld 供给已移除；会话存储只接受 COMPANY_WASM_STORES_FILE 提供的 url + token。",
+      );
+    } finally {
+      for (const [key, value] of saved) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("health 只暴露 stores 文件是否已配置", async () => {
+    const root = await mkdtemp(join(tmpdir(), "company-store-config-"));
+    const missing = await createApplication({ root, storesFile: "" });
+    try {
+      const response = await missing.app.request("http://127.0.0.1/health");
+      expect(response.status).toBe(200);
+      expect((await response.json()).storage).toEqual({ storesFile: "missing" });
+    } finally {
+      await missing.close();
+    }
+    const configured = await createApplication({
+      root,
+      storesFile: join(root, "wasm-stores.json"),
+    });
+    try {
+      const response = await configured.app.request("http://127.0.0.1/health");
+      expect((await response.json()).storage).toEqual({
+        storesFile: "configured",
+      });
+    } finally {
+      await configured.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});

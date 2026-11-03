@@ -671,7 +671,7 @@ Agent 交付 UI 改动时附一张简短结果表，包含以下内容；检查�
 | **公司公共知识** | `knowledgebase/**` 的 Markdown；可复用的领域结论、接口与数据约定、操作手册、复盘、决策依据、小型 SQL / 脚本说明 | 通过 Workspace 文件工具；先搜索、读后写、合并保留他人内容；优先更新既有 canonical 文档 | 无 CAS、无自动 Company Git commit；不放密钥、隐私、客户敏感数据、任务日志、Issue / IM 全文、大型二进制或近似重复文档；需要提交时由 Owner 通过文件视图完成 |
 | **公司公共定义 / 模板** | `company.yaml`、`organization.yaml`、`roster.yaml`、`pipelines/*.md`、角色与权限、成员颜色 | Agent 只读；Owner / HR 通过 `company_org` / `company_tasks` MCP 管理 | Agent 不直接编辑 YAML、模板或流水线，不自建流水线文件，不绕过角色与权限校验 |
 | **Agent 私有资源** | 固定 Session、Workspace、`CLAUDE.md` 自由记忆、个人 `tasks/`、`.claude/agents`、Agent Git、草稿 / 日志 / 实验、项目代码根 | 仅本人读写；宿主 / Owner 运维可读 | 其他 Agent 不读取；私有内容不复制到 `knowledgebase/`、Issue 正文或 IM；`CLAUDE.md` 不写密钥 |
-| **宿主秘密** | `owner-token`、`model-library.yaml`、sqld `auth.key` / JWT、模型凭据、`runtime/effective-config`、`runtime/wasm-stores`、`runtime/store-requests`、诊断日志、OAuth token；Agent 目录内 `.mcp.json`、`.env`、`agent.yaml` 的 authToken | 仅宿主 | 不读、不打印、不复制、不粘贴、不提交；界面、报告和 Issue 只出现类型 / 路径，不出现值 |
+| **宿主秘密** | `owner-token`、`model-library.yaml`、存储端点凭据、模型凭据、`runtime/effective-config`、`runtime/wasm-stores`、`runtime/store-requests`、诊断日志、OAuth token；Agent 目录内 `.mcp.json`、`.env`、`agent.yaml` 的 authToken | 仅宿主 | 不读、不打印、不复制、不粘贴、不提交；界面、报告和 Issue 只出现类型 / 路径，不出现值 |
 
 界面表述沿用这一分类：模型页只展示 profile 与脱敏状态，不展示密钥值；文件页以「公司资产（公共知识）」根展示 `knowledgebase/`，内容仍是普通 Markdown；运行页不把 Agent ID、Session ID、原始配置当作日常业务内容。项目代码、外部 URL 和外部 Preview 环境不属于公司资产，按项目规则处理；Preview 的验收 / 验证记录仍属公共事实。
 

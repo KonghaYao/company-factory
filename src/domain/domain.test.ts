@@ -1124,7 +1124,7 @@ describe("Initialization and global identity concurrency", () => {
         calls.push(i.agentId);
         if (i.agentId.endsWith("-secretary") && fail) {
           fail = false;
-          throw Object.assign(new Error("缺少独立 sqld 配置：companyId、agentId、url、authToken"), {
+          throw Object.assign(new Error("缺少显式存储端点配置：companyId、agentId、url、authToken"), {
             code: "wasm_store_not_configured", status: 503,
           });
         }

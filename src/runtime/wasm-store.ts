@@ -44,12 +44,12 @@ function connection(value: unknown): WasmStoreConfiguration & { identity: string
   // 不接受 URL 凭据、别名、非规范 IP 或任何外域；允许回环端点带数据库路径，
   // 以兼容 peri-loom 等按 /db/<tenant>/<database>/<branch> 路由的 Hrana 网关。
   if (!/^http:\/\/(127\.0\.0\.1|\[::1\])(?::[0-9]+)?(?:\/[A-Za-z0-9._~/-]*)?$/.test(config.url))
-    throw failure("wasm_store_invalid_url", "sqld url 必须是明确回环 127.0.0.1 或 [::1] 的 HTTP 端点；可带数据库路径，但不得含用户信息、query 或 fragment。");
+    throw failure("wasm_store_invalid_url", "存储端点 url 必须是明确回环 127.0.0.1 或 [::1] 的 HTTP 端点；可带数据库路径，但不得含用户信息、query 或 fragment。");
   let url: URL;
   try { url = new URL(config.url); } catch {
-    throw failure("wasm_store_invalid_url", "sqld url 格式无效；请配置本地 HTTP 端点。");
+    throw failure("wasm_store_invalid_url", "存储端点 url 格式无效；请配置本地 HTTP 端点。");
   }
-  if (url.port === "0") throw failure("wasm_store_invalid_url", "sqld url 必须使用有效监听端口。");
+  if (url.port === "0") throw failure("wasm_store_invalid_url", "存储端点 url 必须使用有效监听端口。");
   // 允许不同 Agent 共用同一回环端点；identity 仍绑定解析后的 URL，防止既有 Session 静默换库。
   const identity = hash(url.href);
   return { url: url.href, authToken: config.authToken, identity };
@@ -151,7 +151,7 @@ export class ScopedWasmStore implements ChatDatabase {
       return session;
     } catch (error) {
       if (error instanceof WasmStoreError) throw error;
-      throw failure("wasm_store_unavailable", "无法读取此 Agent 的本地 sqld Session；请检查宿主端点、凭据和服务状态。");
+      throw failure("wasm_store_unavailable", "无法读取此 Agent 的存储端点 Session；请检查宿主端点、凭据和服务状态。");
     }
   }
   async beginCreation() {
@@ -163,7 +163,7 @@ export class ScopedWasmStore implements ChatDatabase {
         throw failure("wasm_store_unbound_sessions", "新 scope 的端点已有未绑定 Session；拒绝自动接管或创建替代。请人工处理该 scope 的既有 Session，或为该 scope 配置独立端点。");
     } catch (error) {
       if (error instanceof WasmStoreError) throw error;
-      throw failure("wasm_store_unavailable", "无法读取此 Agent 的本地 sqld；请检查宿主端点、凭据和服务状态。");
+      throw failure("wasm_store_unavailable", "无法读取此 Agent 的存储端点；请检查宿主端点、凭据和服务状态。");
     }
     const binding: StoreBinding = {
       backend: BACKEND, companyId: this.scope.companyId, agentId: this.scope.agentId,
@@ -267,7 +267,7 @@ export class WasmStoreDirectory implements ChatDatabase {
     if (binding && (binding.backend !== BACKEND || binding.companyId !== scope.companyId || binding.agentId !== scope.agentId || binding.cwd !== scope.directory || !/^[a-f0-9]{64}$/.test(binding.storeIdentity) || !["creating", "bound"].includes(binding.state) || (binding.state === "bound" && (typeof binding.sessionId !== "string" || !binding.sessionId))))
       throw failure("wasm_store_binding_invalid", "WASM backend/scope/cwd/Session 绑定不匹配；拒绝连接或自动创建。");
     if (binding?.state === "creating")
-      throw failure("wasm_session_creation_unconfirmed", "此前 Session 创建未确认完成，禁止自动新建；请保留本地 sqld 与 runtime/wasm-stores 创建标记，人工恢复可信绑定。");
+      throw failure("wasm_session_creation_unconfirmed", "此前 Session 创建未确认完成，禁止自动新建；请保留存储端点与 runtime/wasm-stores 创建标记，人工恢复可信绑定。");
     if (requestedSessionId && binding?.sessionId !== requestedSessionId)
       throw failure("wasm_session_binding_mismatch", "请求的 Session 与此 Agent 的可信 WASM backend 绑定不同；未连接替代端点。");
     const requests = join(this.options.root, "runtime", "store-requests");
@@ -283,7 +283,7 @@ export class WasmStoreDirectory implements ChatDatabase {
     this.confidential.add(config.url.replace(/\/$/, ""));
     if (binding && binding.storeIdentity !== config.identity)
       throw failure("wasm_store_backend_changed", "配置端点与持久 backend 身份不同；拒绝将旧 Session 连接到新库或自动创建替代。凭据轮转不改变 backend 身份。");
-    // 显式配置与宿主自动供给都允许不同 scope 共用同一回环端点；
+    // 显式配置的端点允许不同 scope 共用同一回环地址；
     // Session 隔离由各 ScopedWasmStore 的 scope/cwd 绑定负责。
     const key = storageKey(config);
     let storage = this.storages.get(key);

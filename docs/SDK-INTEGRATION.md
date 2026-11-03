@@ -11,25 +11,23 @@
 
 The current default Workspace is a Rust builtin in the official Peri executable. There is **no** published `@peri-code/workspace` dependency. We do not invent one.
 
-## 当前架构：WASM 与独立本地 sqld
+## 当前架构：WASM 与显式 url/token 存储
 
 一个 Bun HTTP 产品服务承载 UI、Web adapters 和三个自定义 Company HTTP MCP。主 Agent 使用 `@peri-code/sdk@0.4.0` 的 `ChatManager`、`ChatUserAction`、`ChatViewRegistry` 与 `ChatReplica`，`runtime.kind = "wasm"`。不启动 `peri acp`，不回退 native。SDK 随包 artifact 通过 `@peri-code/sdk/wasm-node` 的 `instantiatePeriWasm` 装载；每次 activation 独立提供 Node network/DNS hooks，SDK 负责 native/scheduler/ACP 生命周期，宿主封装等待网络 close/drain，Manager 关停还回收未进入 native.start 的端口。
 
 每个 `(companyId, agentId)` 独立创建 scoped adapter 与 `ChatManager`；同一端点与凭据共享一个 `TursoStorage`（loom 的 `max_concurrent` 配额有限，不能让每个 Agent 各持一条持久连接）。`store.storage = storage.storageConfig` 是 `{url,authToken}`，没有 `kind`；SDK 在 bootstrap 内注入该 store 与既有持久 UUID `machineId`。Manager 的只读 `database` 使用 scoped adapter，将 `getSession/listSessions` 限定为此 Agent 的可信 Session 与 cwd；数据库写入/schema 完全由 WASM Peri 负责，宿主不手写 Peri schema。SDK 0.4.0 起 `TursoStorage` 持有一条持久连接并在 `close()` 时释放，`ChatManager.shutdown()` 不再关闭注入的 `database`；运行时在全部 Manager 关闭后统一 `closeAll()`，任一关闭失败按 `wasm_cleanup_unconfirmed` 保留 handle，可重试。
 
-本地 SQLite 文件不等于 WASM storage API，但用户预先配置的本地 sqld/libSQL **HTTP** 端点可以作为连接。宿主配置 `COMPANY_WASM_STORES_FILE`（宿主所有、0600、非符号/硬链接、不得位于 Agent/知识库/项目/工具挂载范围），格式：
+本地 SQLite 文件不等于 WASM storage API，但用户显式提供的 Hrana **HTTP** 端点（url + token）可以作为连接。唯一来源是宿主配置 `COMPANY_WASM_STORES_FILE`（宿主所有、0600、非符号/硬链接、不得位于 Agent/知识库/项目/工具挂载范围），格式：
 
 ```json
-{"stores":[{"companyId":"<BACKEND_GENERATED_COMPANY_ID>","agentId":"<AGENT_ID>","url":"http://127.0.0.1:<INDEPENDENT_SQLD_PORT>","authToken":"<HOST_ONLY_TOKEN>"}],"default":{"url":"http://127.0.0.1:<INDEPENDENT_SQLD_PORT>/db/<TENANT>/<DATABASE>/<BRANCH>","authToken":"<HOST_ONLY_TOKEN>"}}
+{"stores":[{"companyId":"<BACKEND_GENERATED_COMPANY_ID>","agentId":"<AGENT_ID>","url":"http://127.0.0.1:<STORE_PORT>","authToken":"<HOST_ONLY_TOKEN>"}],"default":{"url":"http://127.0.0.1:<STORE_PORT>/db/<TENANT>/<DATABASE>/<BRANCH>","authToken":"<HOST_ONLY_TOKEN>"}}
 ```
 
-`default` 可省略；存在时作为未列出 scope 的回退，精确 scope 条目优先。也可通过 `createApplication({ storeProvider })` 注入 `resolve(scope)`，为当前后端生成的精确 scope 返回 `{url,authToken}`。仅允许明确回环 `127.0.0.1` / `[::1]` 的 HTTP 端点；可带数据库路径以适配按路径路由的 Hrana 网关（如 peri-loom），拒绝外域、userinfo、query、fragment。同一 scope 重复配置被拒绝；不同 Agent 可共用同一回环端点，Session 隔离由 scope 与 cwd 绑定负责。token 只存在宿主和 SDK 内存，不进 Agent env/YAML、配置快照、manifest、日志或响应。sqld 磁盘路径和认证由用户准备；不自动安装/启动服务、不签 JWT、不建容器/云资源、不管理 namespace。
+`default` 可省略；存在时作为未列出 scope 的回退，精确 scope 条目优先。也可通过 `createApplication({ storeProvider })` 注入 `resolve(scope)`，为当前后端生成的精确 scope 返回 `{url,authToken}`。仅允许明确回环 `127.0.0.1` / `[::1]` 的 HTTP 端点；可带数据库路径以适配按路径路由的 Hrana 网关（如 peri-loom），拒绝外域、userinfo、query、fragment。同一 scope 重复配置被拒绝；不同 Agent 可共用同一回环端点，Session 隔离由 scope 与 cwd 绑定负责。token 只存在宿主和 SDK 内存，不进 Agent env/YAML、配置快照、manifest、日志或响应。端点、数据库与认证由用户准备；服务不启动数据库进程、不签 JWT、不建容器/云资源、不管理 namespace，启动时检测到任何 `COMPANY_SQLD_*` 非空会直接报错。
 
 后端 ID 缺配流程：`runtime/store-requests/<scope-hash>.json` 记录无秘密的 scope。用户补齐此映射后以同一个 `requestId`、同样创建输入重试，不必猜 ID 或改成由用户选择公司 ID；已有领域初始化幂等逻辑复用完成的 Agent。绑定文件 `runtime/wasm-stores/<scope-hash>.json` 记录 backend `wasm-sqld-v1`、scope/cwd、规范化 endpoint hash（不含 token）和可信 Session ID。先独占写入 `creating` 标记，`createNewSession` 成功后原子写入 `bound`；若结果未确认，明确报错并保留标记，禁止自动新建。可信 binding 存在而业务 Agent 文件尚未完成时，provision 重试 load 同一 Session。
 
 旧 native `sessions.db` 与 `sessionId` 原样保留；没有可信 WASM binding 的已有 Session 报 `legacy_session_backend`，不迁移、不写 native schema、不连接任意新端点隐式创建会话。端点 hash 改变、cwd/Session/backend 不匹配都 fail closed；token 轮转不影响 endpoint 身份。普通 wake 仅在可信绑定的 Session 确认缺失时创建替代会话，manifest 记录 `replacesSessionId`；AgentService 冷热快照使用该权威绑定，浏览器只凭明确替代回执跟随新 ID，并说明旧历史未恢复。为修复未完成组织初始化而带原 `sessionId` 的 provision 必须确认同一 Session，缺失时拒绝替代。`NativeSessionStore/Directory` 留作只读 legacy 代码，不再接入主路径。`TursoStorage` 0.4.0 的 `close()` 幂等；`WasmStoreDirectory.closeAll()` 只移除成功关闭的连接，失败保留供重试。
-
-**热重载复用**：`bun --watch` 在同一进程内重跑模块，上一实例 spawn 的 sqld 仍是本进程的直接子进程。`SharedSqldProvider` 在端口被占用时，只复用 `binary`、`--db-path`、`--http-listen-addr` 与 manifest 全部匹配的**直接子进程**；不向候选进程发送任何凭据，也不终止无法确认归属的进程。缺省关闭路径不会终止这种复用进程，因此重载/重启不需要停掉共享 sqld。
 
 ## Chat transport: Peri `/api/chats` + WebSocket sync
 
@@ -51,7 +49,7 @@ The current default Workspace is a Rust builtin in the official Peri executable.
 - 脱敏：`ChatViewRegistry` 只 attach `ChatFactSource` 脱敏代理（`database.redact` 逐条 fact），服务端 replica 与浏览器收到同一份文档；Yjs 原文不直出。
 - 旧 `/api/agents/:id/{chat,stop,answer,queue/*}` HTTP 路由已删除；`AgentService` 的同名方法保留给 IM/MCP 内部投递。`GET /api/chats/:chatId/projection` 是只读诊断/验收投影，替代旧 `/chat` 的消息读取；所有写操作仍必须走 `/actions`。
 - `load_earlier_history` 翻到最早一页时，SDK 以 `HistoryPageUnavailableError("exhausted")` 表示分页终止；API 将其映射为成功空页（202，`applied: 0, nextCursor: null, exhausted: true`），不当作 500 存储故障。
-- `DELETE /api/chats/:chatId` 与显式重启先按 SDK 契约重试一次 `ChatCloseIncompleteError`：WASM 运行时的 sqld Hrana HTTP stream 会在空闲后过期，重试会建立新 stream 完成关闭；只有重试仍失败才保留 handle 并返回 503 `wasm_cleanup_unconfirmed`。
+- `DELETE /api/chats/:chatId` 与显式重启先按 SDK 契约重试一次 `ChatCloseIncompleteError`：WASM 运行时的 Hrana HTTP stream 会在空闲后过期，重试会建立新 stream 完成关闭；只有重试仍失败才保留 handle 并返回 503 `wasm_cleanup_unconfirmed`。
 - 视图投影：SDK 0.4.0 的 `ChatView` 只从 `session/update` 的 `user_message_chunk` 推导用户气泡与回合边界，而 Peri 仅对 Defer 消息和 `session/load` replay 发送该通知，direct `session/prompt` 不发。因此服务端在发送前经 transport 的本地通知注入一条等价 `user_message_chunk`，并在 prompt settle / cancel 确认后注入 `peri/agent_event_done` 关闭回合；两种通知只进入 SDK 订阅者，不写 WASM、不改变 ACP 请求。该注入依赖 SDK 的非公开 `publish()`，升级 SDK 时需复核；不支持时记录 `[wasm_view_bridge]` 警告，消息仍会持久化。
 - vendor 来源、补丁与基线 commit 见 `web/src/peri/VENDOR.md`。
 
@@ -119,6 +117,6 @@ Text editing is bounded to 1 MiB. Binary files are explicitly rejected for text 
 
 本文件的运行时边界随 2026-11-02 裁定更新；历史 native/沙箱验收结果不适用于当前 Workspace 本地实现。
 
-已更新真实 runtime/integration 测试代码并新增配置/backend 单测。runtime 测试要求官方 Peri 与所有者预先配置的专用空 sqld：`COMPANY_TEST_SQLD_URL`、`COMPANY_TEST_SQLD_TOKEN`。HTTP/MCP integration 使用 `COMPANY_TEST_INTEGRATION_STORES_FILE`（同 stores 格式），每个生成公司固定 Agent、`integrated-dev`、`integrated-preview` 各用独立空端点；不能指向真实用户数据。测试不会自动安装/启动 sqld。缺少显式条件时 SKIP，不是通过。
+已更新真实 runtime/integration 测试代码并新增配置/backend 单测。runtime 测试要求官方 Peri 与所有者预先配置的专用空存储端点：`COMPANY_TEST_STORE_URL`、`COMPANY_TEST_STORE_TOKEN`。HTTP/MCP integration 使用 `COMPANY_TEST_INTEGRATION_STORES_FILE`（同 stores 格式），每个生成公司固定 Agent、`integrated-dev`、`integrated-preview` 各用独立空端点；不能指向真实用户数据。测试不使用本地 sqld。缺少显式条件时 SKIP，不是通过。
 
-测试代码覆盖同 Session create/resume/restart、backend hash/旧 Session 拒绝、配置冻结、快照不含 Workspace 工厂与 sqld token，以及既有 Workspace 文件/Git/控制面契约。标明的本地模型协议 fixture 不是 live-model 推理、真实外部供应商连通性或自主多 Issue 工作成果。用户仍需自行执行实际启动、持久恢复、工具行为、queue/cancel/history 与模型验收。
+测试代码覆盖同 Session create/resume/restart、backend hash/旧 Session 拒绝、配置冻结、快照不含 Workspace 工厂与存储 token，以及既有 Workspace 文件/Git/控制面契约。标明的本地模型协议 fixture 不是 live-model 推理、真实外部供应商连通性或自主多 Issue 工作成果。用户仍需自行执行实际启动、持久恢复、工具行为、queue/cancel/history 与模型验收。

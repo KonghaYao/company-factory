@@ -11,8 +11,9 @@
  * - a fresh random owner token is injected through COMPANY_WEB_TOKEN;
  * - the server's stdout is ignored (it prints the access URL), stderr goes to a 0600
  *   file under the test root;
- * - the child runs in an empty cwd with an explicit environment and never receives
- *   COMPANY_WASM_STORES_FILE, PERI_STORAGE_*, ~/.company or ~/.company-host;
+ * - the child runs in an empty cwd with an explicit environment; the caller-provided
+ *   COMPANY_WASM_STORES_FILE is forwarded to the child, but PERI_STORAGE_* and the
+ *   user's ~/.company / ~/.company-host directories are never forwarded;
  * - cleanup only targets a validated test root created by mktemp (or /tmp/e2e inside
  *   the documented container), never a user data directory.
  *
@@ -20,6 +21,7 @@
  * credentials. The repository only verifies --help/--dry-run during implementation.
  */
 import {
+  accessSync,
   chmodSync,
   closeSync,
   constants as fsConstants,
@@ -146,15 +148,13 @@ const ALLOWED_MODEL_ENV_NAMES = new Set<string>([
   ...OPTIONAL_MODEL_ENV_NAMES,
 ]);
 
-const RESERVED_PORTS = new Set([3000, 18081]);
+const RESERVED_PORTS = new Set([3000]);
 const DEFAULT_BASE = "http://127.0.0.1:33117";
-const DEFAULT_SQLD_PORT = 18182;
 const AGENT_TIMEOUT_MS = Number(process.env.E2E_AGENT_TIMEOUT_MS ?? 120_000);
 const STEP_TIMEOUT_MS = Number(process.env.E2E_STEP_TIMEOUT_MS ?? 120_000);
 const CI_TIMEOUT_MS = Number(process.env.E2E_CI_TIMEOUT_MS ?? 120_000);
 const CI_IMAGE = process.env.E2E_CI_IMAGE?.trim() || "oven/bun:1.4.4";
 const EXPECTED_PERI_VERSION = process.env.E2E_PERI_VERSION?.trim() || "4.4.1";
-const EXPECTED_SQLD_VERSION = process.env.E2E_SQLD_VERSION?.trim() || "0.24.32";
 const MAX_EVIDENCE_FILE_BYTES = 2 * 1024 * 1024;
 
 const HELP = `Company Factory live E2E orchestrator
@@ -185,7 +185,9 @@ Required process environment for live modes:
                            Optional: PERI_MODEL_PROVIDER
                            Unknown PERI_MODEL_* names are rejected by name, never
                            printed with their values.
-  COMPANY_SQLD_BINARY      Absolute path to the official sqld binary.
+  COMPANY_WASM_STORES_FILE Host-private absolute path to a readable JSON file that
+                           supplies url + token. The script forwards this path to the
+                           test server; the file must already exist.
   PERI_BINARY              Required for local-full; optional for macos-smoke.
   E2E_PROJECT_ROOT         Required for local-full; must be inside --root and a Git repo.
 
@@ -205,16 +207,14 @@ Optional:
                            It is never pulled during the run.
   E2E_CI_TIMEOUT_MS        Isolated CI/Review timeout (default 120000).
   E2E_PERI_VERSION         Expected Peri version (default 4.4.1).
-  E2E_SQLD_VERSION         Expected sqld version (default 0.24.32).
 
 Generated runtime values:
   COMPANY_HOME=<root>/company, HOME=<root>/home, TMPDIR=<root>/tmp,
-  cwd=<root>/run, COMPANY_SQLD_ROOT=<root>/host (unless derived),
-  app port from --base, COMPANY_SQLD_PORT from the process environment or 18182.
+  cwd=<root>/run, app port from --base.
   The owner token is generated with crypto.randomBytes and never printed.
 
 Safety:
-  - Refuses reserved user ports 3000/18081 and any --base other than
+  - Refuses reserved user port 3000 and any --base other than
     http://127.0.0.1:<port> (the child server binds 127.0.0.1).
   - Refuses roots outside mktemp-style "company-e2e.*" paths or /tmp/e2e.
   - --root must contain only empty documented test subdirectories (home/company/
@@ -224,7 +224,8 @@ Safety:
     write re-checks the directory inode/device and rejects symlink replacement.
   - Never reads ~/.company content, ~/.company-host content, owner-token or user
     stores. It only stats user-data metadata for before/after comparison.
-  - Never sets COMPANY_WASM_STORES_FILE; does not forward PERI_STORAGE_*.
+  - Forwards the caller-provided COMPANY_WASM_STORES_FILE path to the child server;
+    it never reads that file's contents and does not forward PERI_STORAGE_*.
   - CI/Review run only on a clean export of the accepted commit through a
     host-controlled fixture inside a separate no-secret, no-network sandbox.
     No package.json script or test runner from the Agent project is executed on the host.
@@ -350,6 +351,21 @@ function canonicalPath(value: string): string {
     current = parent;
   }
   return join(realpathSync(current), ...suffix);
+}
+
+/** The explicit store file is the only session-storage source; validate it without
+ * reading its contents (it contains host-only tokens). */
+function storesFileProblem(): string | undefined {
+  const file = process.env.COMPANY_WASM_STORES_FILE?.trim();
+  if (!file) return "COMPANY_WASM_STORES_FILE missing";
+  if (!isAbsolute(file)) return "COMPANY_WASM_STORES_FILE must be an absolute path";
+  if (!existsSync(file)) return "COMPANY_WASM_STORES_FILE does not exist";
+  try {
+    accessSync(file, fsConstants.R_OK);
+  } catch {
+    return "COMPANY_WASM_STORES_FILE is not readable";
+  }
+  return undefined;
 }
 
 function validateTestRoot(value: string): string {
@@ -802,13 +818,6 @@ function printDryRun(options: Options): number {
     const root = validateTestRoot(options.root);
     const runId = "dry-run";
     const evidence = evidenceDirectoryFor(root, runId);
-    const sqldPort = Number(process.env.COMPANY_SQLD_PORT ?? DEFAULT_SQLD_PORT);
-    if (!Number.isInteger(sqldPort) || sqldPort < 1 || sqldPort > 65535)
-      throw new UsageError("COMPANY_SQLD_PORT is invalid");
-    if (RESERVED_PORTS.has(sqldPort))
-      throw new UsageError(`Refusing reserved user sqld port ${sqldPort}`);
-    if (sqldPort === port)
-      throw new UsageError("App and sqld ports must differ");
     const model = readModelEnvironment(process.env.PERI_ENV_FILE);
     const missing = missingModelNames(model);
     const contract = assertModelFallbackContract();
@@ -818,7 +827,6 @@ function printDryRun(options: Options): number {
         "The generated model library is not valid v2",
       );
     const rootProblem = freshTestRootProblem(root);
-    const sqldBinary = process.env.COMPANY_SQLD_BINARY;
     const periBinary = process.env.PERI_BINARY;
     const projectRoot = process.env.E2E_PROJECT_ROOT;
     const ciRunner = process.env.E2E_CI_RUNNER?.trim() || "docker";
@@ -834,7 +842,8 @@ function printDryRun(options: Options): number {
     else if (!model.filePresent) checks.push("PERI_ENV_FILE unreadable");
     if (missing.length) checks.push(`model env missing: ${missing.join(", ")}`);
     if (rootProblem) checks.push(rootProblem);
-    if (!sqldBinary) checks.push("COMPANY_SQLD_BINARY missing");
+    const storesProblem = storesFileProblem();
+    if (storesProblem) checks.push(storesProblem);
     if (options.mode === "local-full" && !periBinary)
       checks.push("PERI_BINARY missing (required for local-full)");
     if (options.mode === "local-full") {
@@ -843,7 +852,7 @@ function printDryRun(options: Options): number {
         checks.push("E2E_PROJECT_ROOT must be inside --root");
     }
     console.log(`dry-run mode=${options.mode}`);
-    console.log(`base=${url.origin} appPort=${port} sqldPort=${sqldPort}`);
+    console.log(`base=${url.origin} appPort=${port}`);
     console.log(`root=${root}`);
     console.log(`evidence=${evidence}`);
     console.log(
@@ -854,11 +863,11 @@ function printDryRun(options: Options): number {
     console.log(
       `model fallback contract: fallbackTiers=${contract.fallbackTiers} lowercaseRejected=${contract.lowercaseTierRejected} unknownRejected=${contract.unknownTierRejected} missingActiveTierGated=${contract.missingActiveTierGated}`,
     );
-    if (sqldBinary) console.log("COMPANY_SQLD_BINARY=present");
+    if (!storesProblem) console.log("COMPANY_WASM_STORES_FILE=present");
     if (periBinary) console.log("PERI_BINARY=present");
     if (projectRoot) console.log(`E2E_PROJECT_ROOT=${canonicalPath(projectRoot)}`);
     console.log(
-      `ci runner=${ciRunner} image=${CI_IMAGE} expectedPeri=${EXPECTED_PERI_VERSION} expectedSqld=${EXPECTED_SQLD_VERSION}`,
+      `ci runner=${ciRunner} image=${CI_IMAGE} expectedPeri=${EXPECTED_PERI_VERSION}`,
     );
     console.log(
       `ci backend probe: ${
@@ -1256,7 +1265,7 @@ function redact(text: string, secrets: string[]): string {
       "$1=[REDACTED]",
     )
     .replace(
-      /(COMPANY_(?:WEB|SQLD)_TOKEN)\s*[:=]\s*[^\s"']+/g,
+      /(COMPANY_WEB_TOKEN)\s*[:=]\s*[^\s"']+/g,
       "$1=[REDACTED]",
     )
     .replace(/PERI_MODEL_[A-Z0-9_]+/g, "[MODEL_ENV]")
@@ -1719,7 +1728,7 @@ function processTree(pid: number): number[] {
 }
 
 /** All processes owned by this run that could touch user data: the server, its
- * Workspace/sqld descendants, and any listener on the test app/sqld/preview ports. */
+ * Workspace descendants, and any listener on the test app/preview ports. */
 function isolationProcessIds(run: RunState): {
   pids: number[];
   supported: boolean;
@@ -1731,7 +1740,6 @@ function isolationProcessIds(run: RunState): {
   let supported = true;
   const entries: Array<[string, number | undefined]> = [
     ["app", run.appPort],
-    ["sqld", run.sqldPort],
     ["preview", run.previewPort],
   ];
   for (const [label, port] of entries) {
@@ -1836,8 +1844,7 @@ type RunState = {
   appPort: number;
   root: string;
   companyHome: string;
-  sqldRoot: string;
-  sqldPort: number;
+  storesFile: string;
   runDir: string;
   home: string;
   tmp: string;
@@ -1989,22 +1996,9 @@ function prepareRun(options: Options): RunState {
   const tmp = join(root, "tmp");
   const runDir = join(root, "run");
   const logs = join(root, "logs");
-  const sqldRoot = canonicalPath(
-    process.env.COMPANY_SQLD_ROOT ?? join(root, "host"),
-  );
-  const sqldPort = Number(process.env.COMPANY_SQLD_PORT ?? DEFAULT_SQLD_PORT);
-  if (!isInside(root, sqldRoot))
-    throw new UsageError("COMPANY_SQLD_ROOT must be inside --root");
-  if (!Number.isInteger(sqldPort) || sqldPort < 1 || sqldPort > 65535)
-    throw new UsageError("COMPANY_SQLD_PORT is invalid");
-  if (RESERVED_PORTS.has(sqldPort))
-    throw new UsageError(`Refusing reserved user sqld port ${sqldPort}`);
-  if (sqldPort === port) throw new UsageError("App and sqld ports must differ");
-  const sqldBinary = process.env.COMPANY_SQLD_BINARY;
-  if (!sqldBinary)
-    throw new UsageError("COMPANY_SQLD_BINARY is required for live modes");
-  if (!isAbsolute(sqldBinary) || !existsSync(sqldBinary))
-    throw new UsageError("COMPANY_SQLD_BINARY must be an existing absolute path");
+  const storesProblem = storesFileProblem();
+  if (storesProblem) throw new UsageError(storesProblem);
+  const storesFile = canonicalPath(process.env.COMPANY_WASM_STORES_FILE!);
   const periBinary = process.env.PERI_BINARY;
   if (options.mode === "local-full") {
     if (!periBinary) throw new UsageError("PERI_BINARY is required for local-full");
@@ -2029,7 +2023,7 @@ function prepareRun(options: Options): RunState {
       throw new UsageError("E2E_PROJECT_ROOT must not be inside COMPANY_HOME");
   }
 
-  for (const directory of [companyHome, home, tmp, runDir, logs, join(sqldRoot, "sqld")])
+  for (const directory of [companyHome, home, tmp, runDir, logs])
     mkdirSync(directory, { recursive: true, mode: 0o700 });
   chmodSync(root, 0o700);
   if (existsSync(join(runDir, ".env")))
@@ -2080,8 +2074,7 @@ function prepareRun(options: Options): RunState {
     appPort: port,
     root,
     companyHome,
-    sqldRoot,
-    sqldPort,
+    storesFile,
     runDir,
     home,
     tmp,
@@ -2118,11 +2111,7 @@ function childEnvironment(run: RunState): Record<string, string> {
     COMPANY_HOST: "127.0.0.1",
     PORT: String(run.appPort),
     COMPANY_BASE_URL: run.origin,
-    COMPANY_SQLD_BINARY: process.env.COMPANY_SQLD_BINARY!,
-    COMPANY_SQLD_ROOT: run.sqldRoot,
-    COMPANY_SQLD_PORT: String(run.sqldPort),
-    COMPANY_SQLD_START_TIMEOUT_MS:
-      process.env.COMPANY_SQLD_START_TIMEOUT_MS ?? "30000",
+    COMPANY_WASM_STORES_FILE: run.storesFile,
     COMPANY_WEB_TOKEN: run.ownerToken,
     COMPANY_MODEL_LIBRARY: run.modelLibraryPath,
     ...run.model.values,
@@ -2190,11 +2179,6 @@ async function startServer(run: RunState) {
       "port_in_use",
       `Refusing to start: test app port ${run.appPort} is already responding`,
     );
-  if (await portResponds(run.sqldPort))
-    throw new StepError(
-      "port_in_use",
-      `Refusing to start: test sqld port ${run.sqldPort} is already responding`,
-    );
   mkdirSync(run.logs, { recursive: true, mode: 0o700 });
   const logPath = serverLogPath(run);
   const fd = openSync(logPath, "a", 0o600);
@@ -2249,15 +2233,6 @@ async function stopServer(run: RunState) {
       "port_still_listening",
       `Test app port ${run.appPort} still responds after server shutdown`,
     );
-  const sqldDeadline = Date.now() + 20_000;
-  while (Date.now() < sqldDeadline) {
-    if (!(await portResponds(run.sqldPort))) return;
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
-  }
-  throw new StepError(
-    "sqld_still_listening",
-    `Test sqld port ${run.sqldPort} still responds after server shutdown`,
-  );
 }
 
 async function prepareProjectRoot(run: RunState): Promise<string> {
@@ -2796,7 +2771,7 @@ async function issueState(run: RunState, issueId: string): Promise<any> {
 }
 
 function assertBinaryVersion(
-  label: "peri" | "sqld",
+  label: "peri",
   binary: string,
   expected: string,
 ): string {
@@ -2826,10 +2801,10 @@ async function stepE00(run: RunState, runner: Runner) {
     const health = await run.api.health();
     if (!health?.ok || health.service !== "company-factory")
       throw new StepError("health_invalid", "Health endpoint did not identify company-factory");
-    if (health.storage?.sharedSqld !== "enabled")
+    if (health.storage?.storesFile !== "configured")
       throw new StepError(
-        "storage_not_shared",
-        "E2E requires host-provisioned shared sqld (COMPANY_SQLD_BINARY)",
+        "storage_not_configured",
+        "需要 COMPANY_WASM_STORES_FILE 提供的 url + token",
       );
     const workspace = String(health.workspace ?? "");
     if (run.options.mode === "local-full" && !workspace.includes("official Peri"))
@@ -2837,8 +2812,8 @@ async function stepE00(run: RunState, runner: Runner) {
     if (run.options.mode === "macos-smoke" && !workspace.includes("disabled"))
       throw new StepError("workspace_not_disabled", "macos-smoke requires COMPANY_WORKSPACE=disabled");
 
-    // Fail fast before any real model turn: the official Peri build and the
-    // shared sqld are version-sensitive. Workspace runs locally without a sandbox.
+    // Fail fast before any real model turn: the official Peri build is
+    // version-sensitive. Workspace runs locally without a sandbox.
     const bwrapVersion = "not_required";
     const periVersion =
       run.options.mode === "local-full"
@@ -2846,11 +2821,6 @@ async function stepE00(run: RunState, runner: Runner) {
         : process.env.PERI_BINARY
           ? assertBinaryVersion("peri", process.env.PERI_BINARY, EXPECTED_PERI_VERSION)
           : "not_required";
-    const sqldVersion = assertBinaryVersion(
-      "sqld",
-      process.env.COMPANY_SQLD_BINARY!,
-      EXPECTED_SQLD_VERSION,
-    );
     let ciBackend: CiRunnerBackend | "not_applicable" = "not_applicable";
     if (run.options.mode === "local-full") {
       ciBackend = resolveCiBackend(run);
@@ -2895,12 +2865,12 @@ async function stepE00(run: RunState, runner: Runner) {
     if (!reserved.verified)
       throw new StepError(
         "reserved_port_check_unavailable",
-        "Cannot observe listeners on reserved user ports 3000/18081",
+        "Cannot observe listeners on reserved user port 3000",
       );
     if (Object.values(reserved.results).includes("changed"))
       throw new StepError(
         "reserved_port_changed",
-        "Reserved user ports 3000/18081 changed during test startup",
+        "Reserved user port 3000 changed during test startup",
       );
     return {
       step: "E00",
@@ -2909,11 +2879,10 @@ async function stepE00(run: RunState, runner: Runner) {
       status: "passed",
       httpStatus: run.api.lastStatus,
       checks: {
-        sharedSqld: true,
+        storesFile: true,
         workspace: run.options.mode === "local-full" ? "official" : "disabled",
         bwrapVersion,
         periVersion,
-        sqldVersion,
         ciRunnerBackend: ciBackend,
         ownerTokenAbsent: true,
         userDataOpenCheck: userData.opened === 0 ? "not_open" : "open",
@@ -2922,7 +2891,7 @@ async function stepE00(run: RunState, runner: Runner) {
         userDataMetadata: run.baseline.userData.complete
           ? "baseline_complete"
           : "baseline_incomplete",
-        reservedPorts3000_18081: Object.entries(reserved.results)
+        reservedUserPorts: Object.entries(reserved.results)
           .map(([port, state]) => `${port}:${state}`)
           .join(","),
         modelFallbackTiers: contract.fallbackTiers,
@@ -4342,7 +4311,7 @@ async function verifyPreviewEnvironment(input: {
 
 async function choosePreviewPort(run: RunState): Promise<number> {
   for (let port = 33217; port <= 33227; port++) {
-    if (RESERVED_PORTS.has(port) || port === run.appPort || port === run.sqldPort)
+    if (RESERVED_PORTS.has(port) || port === run.appPort)
       continue;
     if (!(await portResponds(port))) return port;
   }
@@ -5749,10 +5718,8 @@ async function cleanupRun(run: RunState): Promise<Evidence> {
   const terminated = await terminateOwnedProcesses(run, processes.pids);
   const portsManaged = run.serverCount > 0;
   const appFree = portsManaged ? !(await portResponds(run.appPort)) : true;
-  const sqldFree = portsManaged ? !(await portResponds(run.sqldPort)) : true;
   checks.portsManaged = portsManaged;
   checks.appPortFree = appFree;
-  checks.sqldPortFree = sqldFree;
   const previewFree = run.previewUrl
     ? !(await urlResponds(run.previewUrl))
     : run.previewPort
@@ -5767,7 +5734,7 @@ async function cleanupRun(run: RunState): Promise<Evidence> {
   // surviving child; only claim the server stopped when ports and processes agree.
   checks.serverStopped =
     checks.serverStopped === true ||
-    (processStopped && appFree && sqldFree && previewFree);
+    (processStopped && appFree && previewFree);
   checks.processCheckAvailable = processes.supported;
   checks.testProcessesChecked = processes.pids.length;
   checks.testProcessesPorts = Object.entries(processes.ports)
@@ -5880,7 +5847,7 @@ async function cleanupRun(run: RunState): Promise<Evidence> {
   checks.userDataCreatedPaths = expectedComparison.created.length;
   checks.userDataChangedPaths = expectedComparison.changed.length;
   checks.userDataExpectedPathsUnchanged = expectedPathsUnchanged;
-  checks.reservedPorts3000_18081 = Object.entries(reserved.results)
+  checks.reservedUserPorts = Object.entries(reserved.results)
     .map(([port, state]) => `${port}:${state}`)
     .join(",");
   checks.reservedPortsUnchanged = !reserved.verified
@@ -5954,9 +5921,8 @@ async function cleanupRun(run: RunState): Promise<Evidence> {
     `test root: ${run.root}`,
     `evidence dir (created by this run): ${run.evidenceDir}`,
     `app port: ${run.appPort} free=${appFree}`,
-    `sqld port: ${run.sqldPort} free=${sqldFree}`,
     `preview url ${run.previewUrl ?? "(unused)"} free=${previewFree}`,
-    `reserved ports 3000/18081: ${String(checks.reservedPorts3000_18081)}`,
+    `reserved user port 3000: ${String(checks.reservedUserPorts)}`,
     `owner-token files in test root: ${ownerTokenFiles.supported ? ownerTokenFiles.files.length : "unavailable"}`,
     `test processes checked/gone/alive: ${processes.pids.length}/${processes.pids.length - alivePids.length}/${alivePids.length}`,
     `test processes not owned (not killed): ${String(checks.testProcessesNotOwned)}`,
@@ -5974,7 +5940,6 @@ async function cleanupRun(run: RunState): Promise<Evidence> {
     "# Verification commands",
     `test ! -e '${run.root}' && echo TEST_ROOT_GONE`,
     `lsof -nP -iTCP:${run.appPort} -sTCP:LISTEN || echo PORT_${run.appPort}_FREE`,
-    `lsof -nP -iTCP:${run.sqldPort} -sTCP:LISTEN || echo PORT_${run.sqldPort}_FREE`,
     ...(run.previewPort
       ? [`lsof -nP -iTCP:${run.previewPort} -sTCP:LISTEN || echo PORT_${run.previewPort}_FREE`]
       : []),
@@ -5990,7 +5955,6 @@ async function cleanupRun(run: RunState): Promise<Evidence> {
   const ok =
     checks.serverStopped === true &&
     appFree &&
-    sqldFree &&
     previewFree &&
     processes.supported &&
     terminated.notInspectable.length === 0 &&
@@ -6026,7 +5990,6 @@ async function cleanupRun(run: RunState): Promise<Evidence> {
   else if (!reserved.verified) failureCode = "reserved_port_check_unavailable";
   else if (reservedChanged) failureCode = "reserved_port_changed";
   else if (!appFree) failureCode = "test_app_port_still_listening";
-  else if (!sqldFree) failureCode = "test_sqld_port_still_listening";
   else if (!previewFree) failureCode = "test_preview_port_still_listening";
   else if (!processStopped) failureCode = "process_still_running";
   else if (!previewProcessVerified) failureCode = "preview_process_check_unavailable";
@@ -6249,7 +6212,6 @@ async function writeEvidence(
     `node=${process.version}`,
     `git=${versionOf("git", ["--version"])}`,
     `peri=${process.env.PERI_BINARY ? versionOf(process.env.PERI_BINARY, ["--version"]) : "unavailable"}`,
-    `sqld=${process.env.COMPANY_SQLD_BINARY ? versionOf(process.env.COMPANY_SQLD_BINARY, ["--version"]) : "unavailable"}`,
     `bwrap=${versionOf("bwrap", ["--version"])}`,
     `docker=${versionOf("docker", ["--version"])}`,
     `ci_runner=${run.ciBackend ?? "not_selected"}`,
@@ -6348,7 +6310,7 @@ async function emergencyCleanupPending(
           `at: ${new Date().toISOString()}`,
           ...notes,
           "",
-          "Signal arrived before the live run was active. Cleanup only targeted this run's test root; user data and reserved ports 3000/18081 were not touched.",
+          "Signal arrived before the live run was active. Cleanup only targeted this run's test root; user data and reserved user port 3000 were not touched.",
           "",
         ].join("\n"),
         0o600,
@@ -6357,9 +6319,9 @@ async function emergencyCleanupPending(
   }
 }
 
-/** Emergency cleanup for Ctrl-C/SIGTERM. It only touches this run's server, sqld,
+/** Emergency cleanup for Ctrl-C/SIGTERM. It only touches this run's server,
  * Workspace/preview processes, CI containers, staging directories and test root.
- * It never touches user data or the reserved user ports 3000/18081. */
+ * It never touches user data or the reserved user port 3000. */
 async function emergencyCleanup(run: RunState, signal: string): Promise<void> {
   const notes: string[] = [];
   try {
@@ -6425,7 +6387,7 @@ async function emergencyCleanup(run: RunState, signal: string): Promise<void> {
           `at: ${new Date().toISOString()}`,
           ...notes,
           "",
-          "Emergency cleanup only targeted this run's server, sqld, Workspace/preview processes, CI containers, staging directories and test root; it did not target user data or the reserved user ports 3000/18081.",
+          "Emergency cleanup only targeted this run's server, Workspace/preview processes, CI containers, staging directories and test root; it did not target user data or the reserved user port 3000.",
           "",
         ].join("\n"),
         run.secrets,

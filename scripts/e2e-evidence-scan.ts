@@ -12,7 +12,7 @@ import { basename, join, relative } from "node:path";
 export const EVIDENCE_SECRET_PATTERNS = [
   /Bearer\s+(?!\[REDACTED\])[A-Za-z0-9._~+/=-]{8,}/i,
   /company_session=(?!\[REDACTED\])[A-Za-z0-9._~+/=-]{8,}/i,
-  /(?:PERI_MODEL_API_KEY|PERI_STORAGE_TOKEN|COMPANY_WEB_TOKEN|COMPANY_SQLD_TOKEN)\s*[:=]\s*["']?[A-Za-z0-9_./+=-]{8,}/,
+  /(?:PERI_MODEL_API_KEY|PERI_STORAGE_TOKEN|COMPANY_WEB_TOKEN)\s*[:=]\s*["']?[A-Za-z0-9_./+=-]{8,}/,
   /authToken["']?\s*[:=]\s*["']?(?!\[REDACTED\])[A-Za-z0-9._~+/=-]{8,}/,
   /apiKey["']?\s*[:=]\s*["']?(?!\[REDACTED\])[A-Za-z0-9._~+/=-]{8,}/i,
   /sk-[A-Za-z0-9]{20,}/,

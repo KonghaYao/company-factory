@@ -144,3 +144,11 @@
 - **兼容**：旧公司的 `task-supervisor` 角色、成员、默认 owner 回退和公司级改派能力原样保留；不做静默迁移。UI 新成员岗位下拉不再提供任务主管，但历史消息标签保留。
 - **边界**：不新增 MCP 操作、通知类型、状态机、调度器或工作流引擎；部长不是新的硬编码权限角色。
 - **状态**：生效中
+
+## 16. 会话存储只使用显式 url + token（2026-11-03）
+
+- **决策**：移除 `SharedSqldProvider` / `ExplicitFirstStoreProvider` 与 `COMPANY_SQLD_*` 本地 sqld 自动供给。会话存储的唯一来源是 `COMPANY_WASM_STORES_FILE` 指向的宿主私有 JSON：`stores` 精确匹配 `(companyId, agentId)`，未列出的 scope 可用 `default` 回退。
+- **启动拒绝**：`COMPANY_SQLD_BINARY`、`COMPANY_SQLD_ROOT`、`COMPANY_SQLD_PORT`、`COMPANY_SQLD_START_TIMEOUT_MS` 任一非空时，`createApplication` 直接抛出清晰错误；不启动 sqld、不签 JWT、不读取旧的 sqld 根目录，避免旧配置静默回退。
+- **不变语义**：既有端点、`wasm-sqld-v1` backend identity、`runtime/wasm-stores` binding、endpoint 变更拒绝与 Session 恢复语义保持不变。未配置 stores 文件时应用仍可启动，但 Session 解析以 `wasm_store_not_configured` 失败；health 明确显示 `storage.storesFile` 为 `configured` 或 `missing`。
+- **测试与 e2e**：真实 runtime、HTTP/MCP 集成与 live E2E 均使用外部显式端点（`COMPANY_TEST_STORE_URL/TOKEN`、`COMPANY_TEST_INTEGRATION_STORES_FILE`、`COMPANY_WASM_STORES_FILE`）；脚本与测试不再安装、启动或检查本地 sqld，存储服务由调用者提供。
+- **状态**：生效中
