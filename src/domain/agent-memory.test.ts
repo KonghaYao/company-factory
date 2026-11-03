@@ -3,7 +3,7 @@ import { link, mkdir, mkdtemp, readFile, rm, symlink, truncate, writeFile } from
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { AGENT_MEMORY_MAX_BYTES, applyAgentMemory, prepareAgentMemory, readAgentMemory } from "./agent-memory";
-import { COMPANY_ASSETS_GUIDANCE, DECISION_GUIDANCE, TASK_PROGRESS_GUIDANCE } from "./templates";
+import { COLLEAGUE_TRUST_GUIDANCE, COMPANY_ASSETS_GUIDANCE, DECISION_GUIDANCE, TASK_PROGRESS_GUIDANCE } from "./templates";
 
 describe("Agent memory host reads", () => {
   for (const name of ["CLAUDE.md", "claude.md"]) {
@@ -76,6 +76,11 @@ describe("Agent memory host reads", () => {
       const prepared = await prepareAgentMemory(profile);
       expect(prepared.content).toContain("FREE_BEFORE");
       expect(prepared.content).toContain("FREE_AFTER");
+      expect(prepared.content).toContain("## Colleague trust");
+      expect(prepared.content).toContain(COLLEAGUE_TRUST_GUIDANCE);
+      expect(prepared.content).toContain("无条件信任");
+      expect(prepared.content).toContain("不要重复核对");
+      expect(prepared.content).toContain("只检查存疑");
       expect(prepared.content).toContain("## Task progress");
       expect(prepared.content).toContain(TASK_PROGRESS_GUIDANCE);
       expect(prepared.content).toContain("## Decisions");
@@ -84,6 +89,18 @@ describe("Agent memory host reads", () => {
       expect(prepared.content).toContain("2–6");
       expect(prepared.content).toContain("## Company assets");
       expect(prepared.content).toContain(COMPANY_ASSETS_GUIDANCE);
+      expect(prepared.content.indexOf("## Multitasking")).toBeLessThan(
+        prepared.content.indexOf("## Colleague trust"),
+      );
+      expect(prepared.content.indexOf("## Colleague trust")).toBeLessThan(
+        prepared.content.indexOf("## Task progress"),
+      );
+      expect(prepared.content.indexOf("## Task progress")).toBeLessThan(
+        prepared.content.indexOf("## Decisions"),
+      );
+      expect(prepared.content.indexOf("## Decisions")).toBeLessThan(
+        prepared.content.indexOf("## Company assets"),
+      );
 
       await applyAgentMemory(
         { atomic: async (path, content) => writeFile(path, content, "utf8") },

@@ -23,6 +23,9 @@ export const COMPANY_PROFILE_END = "<!-- company:profile:end -->";
 export const MULTITASK_GUIDANCE =
   "使用 Peri 自带 `multitasks` skill 组织并行工作；单个任务用 `work`。并行 worker 只是执行手段，不是 Company 成员；写入结果前重新读取当前 Issue 的归属与版本，把结果作为证据而不是阶段变更。";
 /** Injected into every member's managed profile; keep it role-neutral. */
+export const COLLEAGUE_TRUST_GUIDANCE =
+  "默认无条件信任同事给出的情况：同事在聊天、评论、通知或委派结果中说已核对、已读取、已创建或已完成时，直接采信并在此基础上继续，不要重复核对、重读同一批文件或索要证据。只有真正遇到问题才质疑和检查：事实互相矛盾、出现错误或失败、需要的结果缺失、涉及不可逆或安全风险，或决策必须依赖该结论。此时只检查存疑的那一点，不要连带重查整份报告；发现同事确实报错时，直接指出并给出可核对的具体证据。";
+/** Injected into every member's managed profile; keep it role-neutral. */
 export const TASK_PROGRESS_GUIDANCE =
   "用 company_tasks 维护 Issue 待办：`updateTodos` 是有序 todo 的唯一写入路径（最多 50 项，状态只用 pending / in_progress / done）。todo 只由 Agent 管理，用户只读；只有负责该 Issue 的 Agent 可以调用。开始处理时先 `getIssue` 读取当前 version 和 todos，把工作拆成 3–8 个可核对的 todo；任务状态变化时就调用 `updateTodos`：开始一项标 in_progress，切换前更新当前项（完成标 done；未完成保持 in_progress 并写清下一步；阻塞时在 note 中说明），完成并验证后标 done。每次调用都必须附简洁的 note：做了什么、可核对的证据、下一步。服务端把 note 追加为 Issue 时间线上的一条普通评论，评论会自动显示本次操作后的 todo 快照；note 不要重复整份 todo 列表，也不要为同一事实刷屏。没有独立的进展记录工具，也不需要额外追加日志；阻塞、决定和需要其他人知晓的结论写进评论。canceled 的 Issue 不能修改 todo，但仍可评论。每次写入前重读 version，写入后采用返回值。Company todo 是业务事实，Peri 内部 task / multitasks 执行清单不能代替它；不要把计划、聊天或工具启动当作完成。";
 /** Injected into every member's managed profile; keep it role-neutral. */
@@ -67,7 +70,7 @@ export function memoryManagedBlock(input: {
 This block is replaced by Company Factory when the member definition changes.
 Content outside this block is the Agent's own long-term memory.
 
-${managedSection("Role", input.role)}${managedSection("Responsibilities", input.responsibilities)}${managedSection("Agent system prompt", input.systemPrompt)}${managedSection("Role instructions", input.instructions)}${managedSection("Role guidance", guidance)}${managedSection("Multitasking", MULTITASK_GUIDANCE)}${managedSection("Task progress", TASK_PROGRESS_GUIDANCE)}${managedSection("Decisions", DECISION_GUIDANCE)}${managedSection("Company assets", COMPANY_ASSETS_GUIDANCE)}${COMPANY_PROFILE_END}`;
+${managedSection("Role", input.role)}${managedSection("Responsibilities", input.responsibilities)}${managedSection("Agent system prompt", input.systemPrompt)}${managedSection("Role instructions", input.instructions)}${managedSection("Role guidance", guidance)}${managedSection("Multitasking", MULTITASK_GUIDANCE)}${managedSection("Colleague trust", COLLEAGUE_TRUST_GUIDANCE)}${managedSection("Task progress", TASK_PROGRESS_GUIDANCE)}${managedSection("Decisions", DECISION_GUIDANCE)}${managedSection("Company assets", COMPANY_ASSETS_GUIDANCE)}${COMPANY_PROFILE_END}`;
 }
 
 /**

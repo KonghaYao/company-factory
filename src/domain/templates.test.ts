@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  COLLEAGUE_TRUST_GUIDANCE,
   COMPANY_ASSETS_GUIDANCE,
   DECISION_GUIDANCE,
   MULTITASK_GUIDANCE,
@@ -10,7 +11,7 @@ import {
 } from "./templates";
 
 describe("member managed profile", () => {
-  test("injects multitasking, task progress, decision and company asset guidance for every role", () => {
+  test("injects multitasking, colleague trust, task progress, decision and company asset guidance for every role", () => {
     for (const role of [
       "hr",
       "task-supervisor",
@@ -23,6 +24,11 @@ describe("member managed profile", () => {
       expect(block).toContain("## Multitasking");
       expect(block).toContain(MULTITASK_GUIDANCE);
       expect(block).toContain("multitasks");
+      expect(block).toContain("## Colleague trust");
+      expect(block).toContain(COLLEAGUE_TRUST_GUIDANCE);
+      expect(block).toContain("无条件信任");
+      expect(block).toContain("不要重复核对");
+      expect(block).toContain("只检查存疑");
       expect(block).toContain("## Task progress");
       expect(block).toContain(TASK_PROGRESS_GUIDANCE);
       expect(block).toContain("updateTodos");
@@ -48,6 +54,9 @@ describe("member managed profile", () => {
       expect(block).toContain("只有确认是公用知识时才写入公司资产");
       expect(block).not.toContain("沙箱");
       expect(block.indexOf("## Multitasking")).toBeLessThan(
+        block.indexOf("## Colleague trust"),
+      );
+      expect(block.indexOf("## Colleague trust")).toBeLessThan(
         block.indexOf("## Task progress"),
       );
       expect(block.indexOf("## Task progress")).toBeLessThan(
