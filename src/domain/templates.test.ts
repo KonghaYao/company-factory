@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   COLLEAGUE_TRUST_GUIDANCE,
   COMPANY_ASSETS_GUIDANCE,
+  COMPANY_ASSETS_SKILL_GUIDANCE,
   DECISION_GUIDANCE,
   MULTITASK_GUIDANCE,
   MULTI_PERSON_GUIDANCE,
@@ -59,6 +60,15 @@ describe("member managed profile", () => {
       expect(block).toContain("不要写入 Company 业务记录");
       expect(block).toContain("只有确认是公用知识时才写入公司资产");
       expect(block).not.toContain("沙箱");
+      expect(block).toContain("## Company assets skill");
+      expect(block).toContain(COMPANY_ASSETS_SKILL_GUIDANCE);
+      expect(block).toContain("skill://company-assets/SKILL.md");
+      expect(block).toContain("company_org");
+      expect(block).toContain("mcp_read_resource");
+      expect(block).toContain("SkillTool");
+      expect(block).toContain("宿主秘密");
+      expect(block).toContain("私有");
+      expect(block).not.toContain(".claude/skills");
       expect(block.indexOf("## Multitasking")).toBeLessThan(
         block.indexOf("## Colleague trust"),
       );
@@ -74,6 +84,9 @@ describe("member managed profile", () => {
       expect(block.indexOf("## Decisions")).toBeLessThan(
         block.indexOf("## Company assets"),
       );
+      expect(block.indexOf("## Company assets")).toBeLessThan(
+        block.indexOf("## Company assets skill"),
+      );
     }
   });
 
@@ -87,6 +100,8 @@ describe("member managed profile", () => {
     expect(merged).toContain("## Task progress");
     expect(merged).toContain("## Decisions");
     expect(merged).toContain("## Company assets");
+    expect(merged).toContain("## Company assets skill");
+    expect(merged).toContain("skill://company-assets/SKILL.md");
   });
 
   test("replaces an older managed block in place and is idempotent", () => {

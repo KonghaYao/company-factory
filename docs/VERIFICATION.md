@@ -20,6 +20,19 @@
 - 服务：重启后 `/health` 返回 `@peri-code/sdk@0.4.0 WASM…`，`bun run check:restart` 返回 SAFE。
 - 回滚材料：旧镜像 `v1.1.26`（digest `sha256:c7614c0b22346cf6d2899bfe236c0ccbd1ad4a3038123599b2e4e9e70ef5d94a`）仍在本地；按要求未保留 volume 快照。
 
+## 公司资产 skill 协议验证（2026-11-03）
+
+范围：`templates/skills/company-assets/SKILL.md` 与 `company_org` MCP 的只读 skill resource。未启动 3400 上的运行服务，未读写 `~/.company`；集成测试使用临时根目录和随机回环端口。
+
+- `bun run typecheck`：通过。
+- `bun run build`：通过，保留既有 Monaco/chunk 体积提示。
+- `bun test`：**575 pass / 24 skip / 0 fail**，599 项、3,793 断言、76 个文件。24 个 skip 仍是需要真实 Peri/sqld 等显式外部条件的套件。
+- `tests/company-creation.test.ts`：真实 HTTP/MCP 适配器（unit provisioning）验证 `server/discover` 返回 `supportedVersions: ["2026-07-28"]`；`resources/list` 同时包含 `skill://company-assets/SKILL.md` 与 `company://current/company_org`；`resources/read` 返回 `text/markdown` 正文并包含分类标题；supervisor bearer 可读同一资源；无 bearer 返回 401；traversal/未知 URI 不返回文件内容；legacy `initialize` 返回 `400` / `-32022`；`application.mcp.paths` 与 `/health.mcpModules` 仍为三个模块。
+- `tests/company-assets-skill.test.ts`：`scanSkillsDir` 识别 `company-assets`；frontmatter 的 `name` / `description` 合法；包含 URI、`mcp_read_resource`、分类/判定/冲突/反例/非权限章节；无 `.claude/skills`；UTF-8 无 BOM、≤ 64 KiB、无 secret 形态。
+- `src/runtime/system-prompt.test.ts`：冻结提示词包含 `company-assets`、`company_org:company-assets`、`SkillTool`、`mcp_read_resource`、URI、`host secrets`、`Agent-private`；不包含 skill 长正文 sentinel 或 `.claude/skills`；预算断言保留。
+- `src/domain/templates.test.ts` 与 `scripts/refresh-agent-profiles.test.ts`：所有角色托管块包含 `## Company assets skill`，顺序在 `## Company assets` 之后；刷新脚本 dry-run 的 `blocks` 与 `--apply` 后的 `CLAUDE.md` 均包含新 section、URI 和 `mcp_read_resource`，自由记忆与 `agent.yaml` 不变，重复运行仍为 `unchanged`。
+- 未执行：live Peri Session 的 `mcp_read_resource` 验收（需要真实 Agent 凭据与运行服务）；Owner 侧 `refresh-agent-profiles.ts --apply` 未对真实 `~/.company` 运行。
+
 ## System For Agent 修复验证（2026-11-02）
 
 基线：`7ae47ad229650fc8e7c688da63e1f81428599b41`。先落实顶层责任边界，再并行修复事实一致性、职责/记忆、Session/输入；集成复核补齐上下文发现入口和通知状态读取。

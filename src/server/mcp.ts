@@ -1,5 +1,7 @@
+import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/server";
 import { createGatewayRoutes } from "@peri-code/mcpp/gateway";
+import { ResourceForSkills } from "@peri-code/mcpp/skills";
 import {
   MODULE_OPERATIONS,
   READ_OPERATIONS,
@@ -8,6 +10,11 @@ import {
 } from "./operations";
 import type { CallerContext } from "../domain/types";
 import type { AccessControl } from "./security";
+
+/** Single source of truth for hosted Agent skills. */
+const COMPANY_SKILLS_DIR = fileURLToPath(
+  new URL("../../templates/skills", import.meta.url),
+);
 
 export type Dispatch = (
   module: CompanyModule,
@@ -113,6 +120,22 @@ export function createCompanyMcp(access: AccessControl, dispatch: Dispatch) {
             };
           },
         );
+        if (module === "company_org") {
+          // Static, read-only skill resources shared by every Agent. Mounting
+          // on the existing company_org module avoids a new MCP route, a
+          // per-Agent file install, and any Agent Git versioning. The resource
+          // is re-scanned on each resources/list and resources/read.
+          ResourceForSkills(server, {
+            skillsDir: COMPANY_SKILLS_DIR,
+            namePrefix: "company",
+            origin: "company_org",
+            resourceLimits: {
+              maxFileBytes: 64 * 1024,
+              maxSkillBytes: 64 * 1024,
+              maxSkillFiles: 8,
+            },
+          });
+        }
         return server;
       },
     })),

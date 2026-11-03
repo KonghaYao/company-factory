@@ -111,3 +111,14 @@
 - **旧数据兼容**：旧公司无 `memberColors` 时按 agentId 做确定性 FNV-1a 回退；读取永不写盘、不做启动迁移。新建成员或 owner 改色时先把 roster 中缺失颜色的旧成员回退色一次性冻结写入，之后不再漂移；保留未知/历史 key。
 - **投影**：`organization()` 与 `members()` 的成员行增加 `avatarColor`；`AgentRecord` 和 `agent.yaml` 不新增该字段。不新增 MCP 工具、HTTP 路由、数据库或迁移脚本。
 - **状态**：生效中
+
+## 13. 公司资产 skill 由 `company_org` MCP 以只读资源投递（2026-11-03）
+
+- **决策**：`company-assets` skill 的唯一源文件是 `templates/skills/company-assets/SKILL.md`；通过已有的 `company_org` MCP 用 `@peri-code/mcpp/skills` 的 `ResourceForSkills` 挂载为只读 resource，URI 为 `skill://company-assets/SKILL.md`。不新增 MCP 路由，不新增知识写入 API，不修改 `.mcp.json`。
+- **读取路径**：`resources/list` 与 `resources/read` 返回 `text/markdown` 正文，复用 `/company_org/mcp` 的 Agent bearer 鉴权。Peri 的 `SkillTool` catalog 发现是 best-effort（当前栈不提供 `skills/list` / `skills/get`）；保证路径是 `mcp_read_resource(server_name="company_org", uri="skill://company-assets/SKILL.md")`。提示词同时覆盖 catalog 命中与资源读取，不引用本地 `.claude/skills` 路径。
+- **提示词分层**：新 Session 的冻结系统提示词只放短指针，并在权威规则行加入 `skills`；完整分类、读写规则、冲突与反例在 `SKILL.md`。`CLAUDE.md` 托管块新增 `## Company assets skill`，覆盖所有角色；旧 Session 不重建，运行 `scripts/refresh-agent-profiles.ts --apply` 只更新托管块，Agent Git 提交仅包含 profile 文件。
+- **无每 Agent 安装**：不创建每 Agent 的 skill 副本，不在 Agent Git 中版本化 skill，不写安装脚本；skill 由 MCP 在每次 list/read 时实时扫描模板目录。
+- **分类与边界**：公共事实只走 `company_org` / `company_tasks` / `company_im`；公共知识是 `knowledgebase/` 普通 Markdown，先搜索、读后写、合并、保留他人内容；公司定义/模板 Agent 只读；Agent 私有内容留在 Workspace / `CLAUDE.md`；宿主秘密与 `.mcp.json` / `.env` / `agent.yaml` 凭据不读、不复制、不写。
+- **知识库写入保持现状**：无 CAS、无自动 Company Git commit；Agent 直接写入后需要版本化时由 Owner 通过文件视图提交。不新增知识写入接口、资产子系统或第四个 MCP。
+- **不是 OS ACL**：本 skill 是产品约定与操作指引，不授予权限、不绕过角色校验，也不提供文件系统强制隔离。
+- **状态**：生效中

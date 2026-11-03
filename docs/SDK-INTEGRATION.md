@@ -93,6 +93,15 @@ The view adapter maps:
 
 Text editing is bounded to 1 MiB. Binary files are explicitly rejected for text editing. `Grep` retains upstream ignore semantics; it does not claim a custom all-files index. Attachments are not advertised because no upload capability has been integrated/verified. Runtime queue controls and interactions use the actual SDK actions rather than a fabricated queue.
 
+## Skills delivery (MCP resources)
+
+- `templates/skills/company-assets/SKILL.md` is the single source. `src/server/mcp.ts` mounts `ResourceForSkills` from `@peri-code/mcpp/skills` on the existing `company_org` server, with `skillsDir = templates/skills` and a 64 KiB / 8-file resource limit. There is no new route or module.
+- The MCP server merges static resources (`company://current/company_org`) with template resources in `resources/list`. `resources/read` for `skill://company-assets/SKILL.md` returns `text/markdown`.
+- Authentication is unchanged: each request resolves the Agent bearer through `access.agent` before the gateway. The Owner token is not accepted for Company MCP and no new credential exists.
+- The current MCPP/Peri stack does not implement `skills/list` / `skills/get`. `SkillTool` catalog discovery is best-effort; the guaranteed path is `mcp_read_resource(server_name="company_org", uri="skill://company-assets/SKILL.md")`. A client may cache `resources/list`, so prompts and profiles give the exact URI instead of relying on discovery.
+- The gateway is strict MCP 2026-07-28. The modern handshake is `server/discover`; legacy `initialize` is rejected (`-32022` without a modern envelope, `-32601` with one). Protocol tests therefore use `server/discover` → `resources/list` → `resources/read`.
+- No per-Agent skill files, no Agent Git skill commits, no `.mcp.json` change. `ResourceForSkills` re-scans the template directory on each list/read, so editing `SKILL.md` does not require per-Agent migration or a Session rebuild.
+
 ## Filesystem and credential boundary
 
 按 2026-11-02 所有者裁定，Workspace 本地运行，不使用 OS 沙箱。Agent Workspace MCP 与宿主 Git 直接以宿主用户身份运行；主 Agent 仍不启动 native ACP：

@@ -10,6 +10,8 @@ YAML uses the Document API. Specified fields are changed on the latest document;
 
 Only three custom MCP modules expose these services. Git, plain Markdown knowledge, and the official Workspace remain separate capabilities.
 
+`company_org` additionally exposes the read-only skill resource `skill://company-assets/SKILL.md` (`text/markdown`) from `templates/skills/company-assets/SKILL.md`, under the same Agent bearer authentication. It is not a fourth MCP, not an asset subsystem and not a knowledge write API; `knowledgebase/` remains plain Markdown through Workspace file tools with no CAS and no automatic Company Git commit. The skill explains the boundary between Company public facts, shared knowledge, Agent-private resources and host secrets, and grants no permissions.
+
 ## Organization / internal Agent binding
 
 - `createCompany`：仅用户可调用，输入 `name/goal?/config?/requestId`，禁止提交 `id`。后端以可信调用者的 `type/id` 和 `requestId` 的 SHA-256 前 32 位生成 `c-` 前缀的公司 ID，不使用显示名称或公司作用域；相同调用者、请求和输入重试复用公司与已完成绑定，改变输入仍报 `idempotency_conflict`。现存公司目录和 ID 不变。通过注入的 runtime port 创建总部、HR、任务主管、流水线、知识目录、个人文件与真实 Session 绑定；仅在两个绑定都成功后返回 `{company,organization,groups,agents}`，调用方使用返回的 `company.id`。runtime 失败向上传递。新公司直接写 `organization.yaml`（headquarters 根节点）与 roster v2，不写 `groups.yaml`；人员 `agent.yaml` 不含 `groupId`。

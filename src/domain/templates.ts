@@ -37,6 +37,9 @@ export const DECISION_GUIDANCE =
 /** Injected into every member's managed profile; keep it role-neutral. */
 export const COMPANY_ASSETS_GUIDANCE =
   "每个 Agent 拥有自己的 Workspace：可以自由加载自己可访问的数据、执行操作，并把中间数据、实验、日志和临时产物保存在自己的 Workspace（Agent 根与项目目录）中；中间数据留在自己的 Workspace，不要写入 Company 业务记录。公司资产是 Company Git 仓库的 `knowledgebase/`，在 Workspace 中显示为「公司资产（公共知识）」根（旧名「公司知识」），只放其他成员可复用的公共知识：领域结论、接口与数据约定、操作手册、复盘和决策依据。做领域工作前先搜索同主题，优先合并或更新已有 Markdown；文件名和正文写清适用范围。个人经验留在 `CLAUDE.md`，任务过程留在 Issue 和评论，任务产物留在项目目录。只有确认是公用知识时才写入公司资产；禁止写入密钥、token、密码、个人连接串、个人隐私、客户敏感数据或大型二进制；不确定是否敏感时不要写。引用资产时给出路径，不复制大段正文。";
+/** Injected into every member's managed profile; keep it role-neutral. */
+export const COMPANY_ASSETS_SKILL_GUIDANCE =
+  '开工前加载 `company-assets` skill：如果技能目录已列出（名称可能是 `company-assets` 或 `company_org:company-assets`），用 catalog 中的精确名称调用 `SkillTool`；否则用 `mcp_read_resource(server_name="company_org", uri="skill://company-assets/SKILL.md")`（或你的 MCP 资源读取工具）读取。该 skill 给出公司公共事实、公司公共知识、公司定义、Agent 私有资源和宿主秘密的完整分类、权威接口与写入规则。要点：公共事实只走 company_org / company_tasks / company_im；公共知识走 `knowledgebase/`，先搜索、优先更新、保留他人内容；私有内容留在自己的 Workspace 与 `CLAUDE.md`；宿主秘密和 `.mcp.json`、`.env`、`agent.yaml` 中的凭据永不复制到共享位置。skill 不授予新权限，也不允许绕过角色校验或直接修改业务文件。';
 
 export function assertNoManagedMarkers(
   values: Record<string, unknown>,
@@ -73,7 +76,7 @@ export function memoryManagedBlock(input: {
 This block is replaced by Company Factory when the member definition changes.
 Content outside this block is the Agent's own long-term memory.
 
-${managedSection("Role", input.role)}${managedSection("Responsibilities", input.responsibilities)}${managedSection("Agent system prompt", input.systemPrompt)}${managedSection("Role instructions", input.instructions)}${managedSection("Role guidance", guidance)}${managedSection("Multitasking", MULTITASK_GUIDANCE)}${managedSection("Colleague trust", COLLEAGUE_TRUST_GUIDANCE)}${managedSection("Multi-person tasks", MULTI_PERSON_GUIDANCE)}${managedSection("Task progress", TASK_PROGRESS_GUIDANCE)}${managedSection("Decisions", DECISION_GUIDANCE)}${managedSection("Company assets", COMPANY_ASSETS_GUIDANCE)}${COMPANY_PROFILE_END}`;
+${managedSection("Role", input.role)}${managedSection("Responsibilities", input.responsibilities)}${managedSection("Agent system prompt", input.systemPrompt)}${managedSection("Role instructions", input.instructions)}${managedSection("Role guidance", guidance)}${managedSection("Multitasking", MULTITASK_GUIDANCE)}${managedSection("Colleague trust", COLLEAGUE_TRUST_GUIDANCE)}${managedSection("Multi-person tasks", MULTI_PERSON_GUIDANCE)}${managedSection("Task progress", TASK_PROGRESS_GUIDANCE)}${managedSection("Decisions", DECISION_GUIDANCE)}${managedSection("Company assets", COMPANY_ASSETS_GUIDANCE)}${managedSection("Company assets skill", COMPANY_ASSETS_SKILL_GUIDANCE)}${COMPANY_PROFILE_END}`;
 }
 
 /**

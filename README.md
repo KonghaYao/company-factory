@@ -207,9 +207,9 @@ WASM Session/消息由本地 sqld 落盘：显式模式由所有者准备端点�
 
 旧 Agent 的小写 `claude.md` 可用 `bun scripts/migrate-agent-memory.ts --dry-run` 预览，再运行一次完成迁移；脚本把 `agent.yaml` 的当前档案写入托管块、保留自由记忆区，遇到同名 `CLAUDE.md` 与 `claude.md` 共存时只报告冲突而不覆盖，也不会自动提交 Agent 仓库。
 
-恰好三个自定义 MCP：`/company_org/mcp`、`/company_tasks/mcp`、`/company_im/mcp`，使用 `@peri-code/mcpp` 的 MCP **2026-07-28** mono 路由、资源与订阅。Workspace 沿用官方实际 stdio 传输，本地直接运行（无 OS 沙箱），不虚构 Company Workspace URL。AgentSystem 只在服务内部。
+恰好三个自定义 MCP：`/company_org/mcp`、`/company_tasks/mcp`、`/company_im/mcp`，使用 `@peri-code/mcpp` 的 MCP **2026-07-28** mono 路由、资源与订阅。Workspace 沿用官方实际 stdio 传输，本地直接运行（无 OS 沙箱），不虚构 Company Workspace URL。AgentSystem 只在服务内部。`company_org` 还以只读 MCP resource 提供 `company-assets` skill（`skill://company-assets/SKILL.md`，源文件 `templates/skills/company-assets/SKILL.md`）；它复用 Agent bearer 鉴权，不新增路由，也没有每 Agent skill 文件或 Agent Git skill 版本化。Agent 侧保证读取方式是 `mcp_read_resource(server_name="company_org", uri="skill://company-assets/SKILL.md")`；`SkillTool` catalog 发现是 best-effort。
 
-各 Agent 的官方 Workspace MCP 子进程以宿主用户身份本地运行，不再有 bubblewrap / 命名空间隔离。Agent 工具可读取与写入宿主用户可访问的本机文件；子进程环境只传 `PATH`/`LANG`/`HOME`，避免把模型凭据直接注入，但这不构成文件权限边界。主推理进程内使用 WASM，不启动 native ACP；数据库凭据只留在宿主/SDK，不写入模型/MCP 快照。公司业务写入仍应通过业务接口；这是产品约束，不是 OS 强制。所有者自己的「文件」视图与 Agent Workspace 都是本地直接运行。外部 HTTP MCP 保持，任意 stdio/SSE/ACP 外部描述符在 WASM 模式明确拒绝；只有官方 Workspace 接入宿主桥，不提供通用 MCP 进程桥。网络仍用于已配置的模型/MCP 与项目工作；建议仅监听本机。
+各 Agent 的官方 Workspace MCP 子进程以宿主用户身份本地运行，不再有 bubblewrap / 命名空间隔离。Agent 工具可读取与写入宿主用户可访问的本机文件；子进程环境只传 `PATH`/`LANG`/`HOME`，避免把模型凭据直接注入，但这不构成文件权限边界。主推理进程内使用 WASM，不启动 native ACP；数据库凭据只留在宿主/SDK，不写入模型/MCP 快照。公司业务写入仍应通过业务接口；这是产品约束，不是 OS 强制。`company-assets` skill 同样只是分类与操作指引，不授予权限、不绕过角色校验，也不是 OS ACL。公共知识仍是 `knowledgebase/` 中的普通 Markdown：Agent 直接写入没有 CAS，也不会自动提交 Company Git，需要版本化时由 Owner 通过文件视图提交。所有者自己的「文件」视图与 Agent Workspace 都是本地直接运行。外部 HTTP MCP 保持，任意 stdio/SSE/ACP 外部描述符在 WASM 模式明确拒绝；只有官方 Workspace 接入宿主桥，不提供通用 MCP 进程桥。网络仍用于已配置的模型/MCP 与项目工作；建议仅监听本机。
 
 按任务书，**生成的 Agent 个人仓库会跟踪 `.env`**。该文件不承载模型配置；Agent 工具现在可写本机文件，因此不要在其中写入任何秘密，也不要公开推送或打包个人数据目录。此交付 ZIP 不包含任何运行数据、生成的口令或模型凭据。
 

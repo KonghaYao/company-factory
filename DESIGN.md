@@ -466,7 +466,51 @@ bun run build
 - 长标题挤掉状态，窄栏无法操作，只有 hover 才能发现关键入口。
 - 修改右栏后改变了 Chat、输入框、组织树或所有弹层的外观。
 
-## 12. 将规范接入 Agent
+## 12. 公司资产 skill 与资产边界
+
+> 本节补充 Agent 使用公司资产时的统一边界，以及相关界面的表述约定；运行页、文件页、弹层和三栏布局仍按第 2–11 节执行。完整操作规则以 `templates/skills/company-assets/SKILL.md` 为准，本节不复制成第二份规格。
+
+### 12.1 为什么需要公司资产 skill
+
+公司资产是公司运转所必需的公共数据，不是发起任务的 Agent 的私有资源，也不是临时草稿区。组织、Issue、评论、决策、公共知识和公司定义需要被多个成员以同一口径读取和依赖；如果每个 Agent 自行决定什么该写进知识库、什么该走 MCP、什么属于秘密，就会出现事实被文件覆盖、私有内容进入共享知识、秘密被复制到 Issue 或 `CLAUDE.md`、以及近似重复的公共知识。
+
+因此每个 Agent 在读写公司数据前都需要同一份操作边界。`company-assets` skill 承担这份说明：它区分公共事实、公共知识、公共定义、Agent 私有资源和宿主秘密，并给出每类数据的权威接口与冲突处理方式。它是操作指引，不是新的业务系统。
+
+### 12.2 分类与权威接口
+
+| 类别 | 包含内容 | 读取 / 写入 | 边界 |
+| --- | --- | --- | --- |
+| **公司公共事实** | 组织树、placement、角色权限、roster；Issue、状态、负责人、todo、decision、评论、pipeline、Preview、验收与验证；IM 线程与消息；成员颜色 | 只通过 `company_org` / `company_tasks` / `company_im` MCP；变更带 `requestId`，版本化写入带 `expectedVersion`；todo 仅当前 owner，评论 append-only | 不直接编辑 `companys/<id>/` 下的业务文件，不写 SQL，不伪造 Git 提交，不用 IM 代替 Issue |
+| **公司公共知识** | `knowledgebase/**` 的 Markdown；可复用的领域结论、接口与数据约定、操作手册、复盘、决策依据、小型 SQL / 脚本说明 | 通过 Workspace 文件工具；先搜索、读后写、合并保留他人内容；优先更新既有 canonical 文档 | 无 CAS、无自动 Company Git commit；不放密钥、隐私、客户敏感数据、任务日志、Issue / IM 全文、大型二进制或近似重复文档；需要提交时由 Owner 通过文件视图完成 |
+| **公司公共定义 / 模板** | `company.yaml`、`organization.yaml`、`roster.yaml`、`pipelines/*.md`、角色与权限、成员颜色 | Agent 只读；Owner / HR 通过 `company_org` / `company_tasks` MCP 管理 | Agent 不直接编辑 YAML、模板或流水线，不自建流水线文件，不绕过角色与权限校验 |
+| **Agent 私有资源** | 固定 Session、Workspace、`CLAUDE.md` 自由记忆、个人 `tasks/`、`.claude/agents`、Agent Git、草稿 / 日志 / 实验、项目代码根 | 仅本人读写；宿主 / Owner 运维可读 | 其他 Agent 不读取；私有内容不复制到 `knowledgebase/`、Issue 正文或 IM；`CLAUDE.md` 不写密钥 |
+| **宿主秘密** | `owner-token`、`model-library.yaml`、sqld `auth.key` / JWT、模型凭据、`runtime/effective-config`、`runtime/wasm-stores`、`runtime/store-requests`、诊断日志、OAuth token；Agent 目录内 `.mcp.json`、`.env`、`agent.yaml` 的 authToken | 仅宿主 | 不读、不打印、不复制、不粘贴、不提交；界面、报告和 Issue 只出现类型 / 路径，不出现值 |
+
+界面表述沿用这一分类：模型页只展示 profile 与脱敏状态，不展示密钥值；文件页以「公司资产（公共知识）」根展示 `knowledgebase/`，内容仍是普通 Markdown；运行页不把 Agent ID、Session ID、原始配置当作日常业务内容。项目代码、外部 URL 和外部 Preview 环境不属于公司资产，按项目规则处理；Preview 的验收 / 验证记录仍属公共事实。
+
+### 12.3 读写、冲突与证据
+
+- **公共事实**：写前读取当前 version、owner 和状态；每次变更使用唯一 `requestId`，同一意图的相同重试才复用；版本化写入必须带 `expectedVersion`；`version_conflict` 时重读、合并意图再写；`idempotency_conflict` 时不要复用请求号。写后读回或采用返回值，不把计划、聊天、通知接收或工具启动当作完成。
+- **公共知识**：先用 `Grep` / `Glob` 搜主题和同义词，读最接近的 1–3 篇，优先更新既有文档；已有文档用 `Read` + `Edit`，`Write` 只用于新文档或完整重写且必须先读；保留他人段落。结论冲突时加“分歧 / 待确认”并链接两边，必要时用 `askDecision` 请 Owner 裁定。知识库没有专用写入 API、CAS 或自动 commit；Agent 不运行公司 `git`，需要版本化时由 Owner 通过文件视图提交。
+- **过程与产物**：当前任务的计划、日志、实验和产物留在 Issue 评论 / todo 或自己的 Workspace，不进入 `knowledgebase/`；从任务产出的知识在相关 Issue 留一条路径 + 摘要的评论即可，不复制全文。
+- **私有内容与秘密**：私有内容只在本人 Workspace / `CLAUDE.md` 使用，不复制到共享位置；`.mcp.json`、`.env`、`agent.yaml` 中的凭据不读、不打印、不复制。发现秘密出现在共享位置时停止使用、不回显值，只报告路径 / 类型并通知 Owner。
+
+### 12.4 投递与提示词接入
+
+- **唯一源文件**：`templates/skills/company-assets/SKILL.md`。
+- **投递方式**：已有的 `company_org` MCP 通过 `@peri-code/mcpp/skills` 的 `ResourceForSkills` 暴露只读资源 `skill://company-assets/SKILL.md`；`resources/list` 可发现该资源，`resources/read` 返回 `text/markdown` 正文，复用该 MCP 的 Agent bearer 鉴权；不新增 MCP 路由。
+- **不做每 Agent 安装**：不创建每 Agent 的 skill 文件，不在 Agent Git 中版本化 skill，不迁移 `.mcp.json`。修改模板后无需逐成员安装。
+- **读取路径**：`SkillTool` catalog 发现是 best-effort；保证路径是 `mcp_read_resource(server_name="company_org", uri="skill://company-assets/SKILL.md")`。提示词同时覆盖 catalog 精确名称（`company-assets` 或 `company_org:company-assets`）与资源读取，不引用本地 `.claude/skills` 路径。
+- **提示词分层**：新 Session 的冻结系统提示词只放短指针，完整分类和规则在 `SKILL.md`；每个角色的 `CLAUDE.md` 托管块包含 `## Company assets skill`，给出同一 URI 与读取方式。旧 Session 不重建，通过 `bun scripts/refresh-agent-profiles.ts --apply` 只更新托管块；界面不提供每 Agent skill 安装状态或副本管理。
+
+### 12.5 边界声明与既有决策
+
+- 本 skill 是产品约定与操作指引，**不是 OS ACL**，不授予访问权限，不绕过角色校验，也不提供文件系统强制隔离；Agent 工具仍按宿主用户权限运行。工具拒绝时不要寻找文件 workaround，报告事实并请 Owner 处理。
+- 公司业务写入仍必须走 `company_org` / `company_tasks` / `company_im` 业务接口；本 skill 不新增写入入口，也不改变任何业务字段或权限语义。
+- 不新增第四个 MCP、知识写入 API、资产子系统、知识索引或专用知识检索服务。`knowledgebase/` 保持普通 Markdown，现有三 MCP 边界不变。
+- `IMPLEMENTATION-HANDOFF.md` 中“一期不做……知识 Skill”的旧说法，针对的是独立知识检索服务、强制索引或新知识系统；本节将其衔接为：`company-assets` 只是只读操作指引，不承担知识服务，也不引入知识写入 API。若旧表述与本文件冲突，以本文件的当前设计口径为准；不因此修改 `IMPLEMENTATION-HANDOFF.md`。
+
+## 13. 将规范接入 Agent
 
 建议把本文件放在仓库根目录，并在 Agent 实际读取的入口（如根目录 `AGENTS.md` 或项目提示词）加入以下约束。**单独存放 `DESIGN.md` 不保证所有 Agent 自动读取，也不是自动检查器。**
 

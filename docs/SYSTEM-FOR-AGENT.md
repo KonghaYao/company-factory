@@ -43,6 +43,12 @@ CompanyDomain 保留公共应用边界。新增模块按以上责任提取，不
 
 工作清单、参与的 IM 线程和 Preview 都保留有界索引；未回复的发出线程与历史 Preview 也可重新发现。裁剪正文不能裁掉发现入口。所有者运行面板展示最近通知状态，只有确定未接收的通知允许显式重试；接收结果不明时先核对会话和队列。
 
+### 公司资产 skill（只读 MCP 资源）
+
+公司资产的操作边界由 `company-assets` skill 说明。源文件是应用仓库的 `templates/skills/company-assets/SKILL.md`，通过已有的 `company_org` MCP 挂载为只读 resource：`skill://company-assets/SKILL.md`。MCP 客户端用 `resources/list` / `resources/read` 读取，Agent 侧保证路径是 `mcp_read_resource(server_name="company_org", uri="skill://company-assets/SKILL.md")`；Peri 若把它纳入技能目录，则用 catalog 中的精确名称（可能是 `company-assets` 或 `company_org:company-assets`）调用 `SkillTool`，这是 best-effort。
+
+没有每 Agent 的 skill 文件、没有 Agent Git 版本化、没有 `.mcp.json` 迁移。MCP resource 是动态的，旧 Session 不需要重建；旧 Session 通过 `CLAUDE.md` 托管块的新 section 获得 URI 指针，刷新脚本只更新托管块。新 Session 的冻结系统提示词只保留短指针，完整分类与规则在 `SKILL.md`：公共事实走三个 Company MCP；公共知识走 `knowledgebase/` 普通 Markdown（无 CAS、无自动 commit，需要版本化时由 Owner 通过文件视图提交）；公司定义 Agent 只读；Agent 私有内容留在自己的 Workspace；宿主秘密与凭据不读、不复制、不写。该 skill 是产品约定，不授予权限，不是 OS ACL。
+
 ## 五 验证边界
 
 验证以用户行为与边界不变量为中心：失败重试、交接后权限、保存与重启顺序、固定 Session 投影、事实通知接受、有界读取及文件完整性。测试替身只用于明确的外部边界，结果区分宿主控制流测试与真实 WASM/模型验收。

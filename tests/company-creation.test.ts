@@ -30,8 +30,12 @@ describe("Company creation HTTP/MCP contract with unit provisioning", () => {
       }),
     });
   }
-  async function mcp(method: string, params: Record<string, unknown> = {}) {
-    const agent = await application.domain.getAgentInternal(`${companyId}-hr`);
+  async function mcp(
+    method: string,
+    params: Record<string, unknown> = {},
+    agentId = `${companyId}-hr`,
+  ) {
+    const agent = await application.domain.getAgentInternal(agentId);
     const response = await fetch(base + "/company_org/mcp", {
       method: "POST",
       headers: {
@@ -40,6 +44,7 @@ describe("Company creation HTTP/MCP contract with unit provisioning", () => {
         "MCP-Protocol-Version": "2026-07-28",
         "Mcp-Method": method,
         ...(params.name ? { "Mcp-Name": String(params.name) } : {}),
+        ...(params.uri ? { "Mcp-Name": String(params.uri) } : {}),
         authorization: `Bearer ${agent.authToken}`,
       },
       body: JSON.stringify({
@@ -118,6 +123,126 @@ describe("Company creation HTTP/MCP contract with unit provisioning", () => {
     expect(next.status).toBe(200);
     expect((await next.json()).company.id).not.toBe(companyId);
     expect(provisions).toHaveLength(4);
+  });
+  test("MCP serves the shared company-assets skill as a read-only resource", async () => {
+    // This gateway is strict MCP 2026-07-28: `initialize` belongs to the
+    // legacy 2025-era handshake and is not a modern method. The modern
+    // discovery handshake is `server/discover`.
+    const initialized = await mcp("server/discover", {});
+    expect(initialized.result?.supportedVersions).toContain("2026-07-28");
+    expect(initialized.result?._meta?.["io.modelcontextprotocol/serverInfo"]?.name).toBe(
+      "company_org",
+    );
+
+    const listed = await mcp("resources/list");
+    const uris = listed.result.resources.map(
+      (resource: { uri: string }) => resource.uri,
+    );
+    expect(uris).toContain("skill://company-assets/SKILL.md");
+    expect(uris).toContain("company://current/company_org");
+
+    const read = await mcp("resources/read", {
+      uri: "skill://company-assets/SKILL.md",
+    });
+    const content = read.result.contents[0];
+    expect(content.mimeType).toBe("text/markdown");
+    expect(content.text).toContain("name: company-assets");
+    expect(content.text).toContain("# Company assets");
+    expect(content.text).toContain("## 2. The boundary");
+    expect(content.text).toContain("## 5. Company shared knowledge");
+    expect(content.text).toContain("## 8. Host secrets");
+    expect(content.text).toContain("mcp_read_resource");
+    expect(content.text).not.toContain(".claude/skills");
+
+    const supervisorRead = await mcp(
+      "resources/read",
+      { uri: "skill://company-assets/SKILL.md" },
+      `${companyId}-supervisor`,
+    );
+    expect(supervisorRead.result.contents[0].text).toContain("# Company assets");
+
+    const agent = await application.domain.getAgentInternal(`${companyId}-hr`);
+    const legacyInitialize = await fetch(base + "/company_org/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "Mcp-Method": "initialize",
+        authorization: `Bearer ${agent.authToken}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: crypto.randomUUID(),
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-11-25",
+          capabilities: {},
+          clientInfo: { name: "legacy", version: "1.0.0" },
+        },
+      }),
+    });
+    expect(legacyInitialize.status).toBe(400);
+    expect((await legacyInitialize.json()).error?.code).toBe(-32022);
+
+    const unknown = await fetch(base + "/company_org/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        "MCP-Protocol-Version": "2026-07-28",
+        "Mcp-Method": "resources/read",
+        "Mcp-Name": "skill://../owner-token/SKILL.md",
+        authorization: `Bearer ${agent.authToken}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: crypto.randomUUID(),
+        method: "resources/read",
+        params: {
+          uri: "skill://../owner-token/SKILL.md",
+          _meta: {
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientInfo": {
+              name: "company-creation-unit-test",
+              version: "1.0.0",
+            },
+            "io.modelcontextprotocol/clientCapabilities": {},
+          },
+        },
+      }),
+    });
+    expect(unknown.status).toBe(200);
+    const unknownBody = await unknown.json();
+    expect(unknownBody.result?.contents).toBeUndefined();
+    expect(JSON.stringify(unknownBody)).not.toContain("owner-token\n");
+
+    const denied = await fetch(base + "/company_org/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        "MCP-Protocol-Version": "2026-07-28",
+        "Mcp-Method": "resources/read",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: crypto.randomUUID(),
+        method: "resources/read",
+        params: { uri: "skill://company-assets/SKILL.md" },
+      }),
+    });
+    expect(denied.status).toBe(401);
+
+    expect(application.mcp!.paths).toEqual([
+      "/company_org/mcp",
+      "/company_tasks/mcp",
+      "/company_im/mcp",
+    ]);
+    const health = await fetch(base + "/health");
+    expect((await health.json()).mcpModules).toEqual([
+      "company_org",
+      "company_tasks",
+      "company_im",
+    ]);
   });
   test("HTTP rejects caller-selected Company IDs without creating data", async () => {
     const before = await application.domain.store.ids(join(root, "companys"));

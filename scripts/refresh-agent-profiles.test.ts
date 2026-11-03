@@ -3,7 +3,11 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { refreshAgentProfiles } from "./refresh-agent-profiles";
-import { COMPANY_ASSETS_GUIDANCE, TASK_PROGRESS_GUIDANCE } from "../src/domain/templates";
+import {
+  COMPANY_ASSETS_GUIDANCE,
+  COMPANY_ASSETS_SKILL_GUIDANCE,
+  TASK_PROGRESS_GUIDANCE,
+} from "../src/domain/templates";
 import { CompanyStore } from "../src/storage/company-store";
 
 const OLD_BLOCK = [
@@ -74,7 +78,11 @@ describe("refresh agent profiles", () => {
       }),
     ]);
     expect(results[0]!.blocks).toEqual(
-      expect.arrayContaining(["Task progress", "Company assets"]),
+      expect.arrayContaining([
+        "Task progress",
+        "Company assets",
+        "Company assets skill",
+      ]),
     );
     expect(await readFile(join(root, "agents", "dev-a", "CLAUDE.md"), "utf8")).toBe(
       before,
@@ -138,6 +146,11 @@ describe("refresh agent profiles", () => {
     expect(memory).toContain(TASK_PROGRESS_GUIDANCE);
     expect(memory).toContain("## Company assets");
     expect(memory).toContain(COMPANY_ASSETS_GUIDANCE);
+    expect(memory).toContain("## Company assets skill");
+    expect(memory).toContain(COMPANY_ASSETS_SKILL_GUIDANCE);
+    expect(memory).toContain("skill://company-assets/SKILL.md");
+    expect(memory).toContain("mcp_read_resource");
+    expect(memory).not.toContain(".claude/skills");
     expect(memory).not.toContain("OLD_GUIDANCE");
     expect((memory.match(/<!-- company:profile:start -->/g) ?? []).length).toBe(1);
     expect(
