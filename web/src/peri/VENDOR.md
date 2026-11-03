@@ -34,10 +34,10 @@
 | # | 文件 | 改动 |
 |---|---|---|
 | P1 | `chat/runtime/useChat.ts` | `useChat(createApplication = createChatApplication)`，允许宿主注入组合根；导出队列/历史命令 |
-| P2 | `remote/controller.ts` | SDK 0.3.0 无 `setConfigOption` 时返回 `{ok:false}`，不抛 `TypeError` |
+| P2 | `remote/controller.ts` | SDK 缺少 `setConfigOption` 时返回 `{ok:false}`，不抛 `TypeError`；SDK 0.4.0 已有该动作，Company 服务端仍拒绝会话内改配置 |
 | P3 | `chat/components/ChatShell.tsx` | `h-dvh`→`h-full`；`chrome.sidebar/details` 开关；`beforeTimeline`/`composerExtras`/`injectedDraft` 宿主插槽 |
 | P4 | `chat/components/ChatHeader.tsx` | `showSidebar`/`showDetails` 为 false 时不渲染触发器 |
-| P5 | `chat/composer/composerLimits.ts`、`draftStorage.ts` | SDK 0.3.0 未导出 `CHAT_SEND_TEXT_MAX_LENGTH`，改用本地 `32_768` |
+| P5 | `chat/composer/composerLimits.ts`、`draftStorage.ts` | SDK 未导出 `CHAT_SEND_TEXT_MAX_LENGTH` 时改用本地 `32_768`；SDK 0.4.0 已导出，本地值保持不变 |
 | P6 | `chat/components/shell/ChatBanners.tsx` | “关闭并新建” → “重启会话”（Company DELETE 语义） |
 | P7 | `remote/controller.ts` | `rebuildChat` 重开同一固定 Session；新增 `loadEarlierHistory`/`takeBackInput`/`forceSendInput` |
 | P8 | `remote/index.ts` | 移除 `./monitor` 导出（公司不 vendor 监控页） |
@@ -47,7 +47,7 @@
 | P12 | `chat/timeline/rows/UserMessageRow.tsx` | 新增可选 `UserMessagePresentationContext`：宿主可把 `role === "user"` 的条目替换为公司 IM 卡片；无 Provider 时保持 Peri 原气泡，Provider 返回 `null` 时交回默认渲染 |
 | P13 | `chat/timeline/rows/UserMessageRow.tsx` | 超长用户输入（>480 字或 >10 行）默认限制高度，提供“展开全文/收起”；短消息与复制按钮行为不变 |
 
-P3/P7 是 Company 单会话外壳的宿主适配；P2/P5 是 SDK 0.3.0 与 Peri HEAD 的版本漂移守卫。
+P3/P7 是 Company 单会话外壳的宿主适配；P2/P5 是 SDK 与 Peri HEAD 的版本漂移守卫（当前 SDK 0.4.0）。
 除以上补丁外，`remote/` 与 `chat/` 的行为代码保持 Peri 原件。
 
 P11 只改文案与 `data-slot` 标记，不改发送/停止/IME/斜杠命令等行为。

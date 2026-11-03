@@ -2,7 +2,21 @@
 
 > **2026-11-02 架构变更：**Workspace 已改为本地运行，删除 Linux / bubblewrap 沙箱及 `COMPANY_SANDBOX`。本文 2026-10-31 的 live E2E 是沙箱版历史证据，不再代表当前实现；当前版本需要重新做 live 验收。下文提到的 `sandbox_unavailable`、bwrap 版本与 Linux 全量结果均不再适用。历史命令保留 npm 形式；当前项目统一使用 Bun（`bun install` / `bun run` / `bun test`）。
 
-日期：2026-10-30（UTC）。最后更新：2026-11-02（UTC）。2026-11-02 的自主性优先裁定见 `SYSTEM-FOR-AGENT.md`；较早章节保留为历史证据。
+日期：2026-10-30（UTC）。最后更新：2026-11-03（UTC）。2026-11-02 的自主性优先裁定见 `SYSTEM-FOR-AGENT.md`；较早章节保留为历史证据。
+
+## SDK 0.4.0 与 peri-loom v1.2.0 升级验证（2026-11-03）
+
+范围：`@peri-code/sdk` 0.3.0 → 0.4.0（npm `latest`，tag `sdk-v0.4.0`，commit `df6ef30c8993aa117fa83ba6a32e20e4f6ff93f2`），peri-loom `v1.1.26` → `v1.2.0`。只做实现、自动化与真实存储读验证；未做浏览器视觉验收，未跑真实模型 live E2E。
+
+- `bun run typecheck`：通过。
+- `bun test`：**560 pass / 24 skip / 0 fail**，584 项、3,632 断言、74 个文件（与升级前一致）。
+- `bun run build`：通过，保留既有 Monaco/chunk 体积提示。
+- SDK 生命周期适配：0.4.0 的 `TursoStorage` 持有一条持久连接并新增 `close()`，`ChatManager.shutdown()` 不再关闭注入的 `database`。运行时在替换 Manager 前关闭旧目录实例，`shutdown()` 关闭全部目录实例；失败仍映射为 `wasm_cleanup_unconfirmed`。
+- 会话配置：0.4.0 新增 `set_config_option` 动作；Company 固定模型与 bypass 权限模式，HTTP 层明确拒绝该动作（`invalid_action` 400），UI 选择器保持只读。
+- 真实存储读：临时脚本用 SDK 0.4.0 的 `TursoStorage` 连接升级后的 loom 端点，读取 agent `c-77ac6210f78c0efb4e91afb06ce14d57-developer-2` 的绑定 Session：`sessions=1`、绑定 Session 存在、`getSession` 命中，连续两次 `close()` 均成功；未输出端点或凭据。
+- 容器：`ghcr.io/konghayao/peri-loom:v1.2.0`（digest `sha256:de8b50e274e8aa837367234c72d24cb212800ed38760964f09b0544d3beaa332`）以原配置运行（host network、`127.0.0.1:9443`、`/data/peri` volume、`PERI_HRANA_EXPERIMENTAL=1`、`--no-build`）；容器内 `PERI_IMAGE_VERSION=v1.2.0`。另设 `--stop-timeout 90`（Docker 29 存于 `Config.StopTimeout`），覆盖 launcher 的 40s 关停预算 + 5s finalize；停止时用 `docker stop --timeout 90`。
+- 服务：重启后 `/health` 返回 `@peri-code/sdk@0.4.0 WASM…`，`bun run check:restart` 返回 SAFE。
+- 回滚材料：旧镜像 `v1.1.26`（digest `sha256:c7614c0b22346cf6d2899bfe236c0ccbd1ad4a3038123599b2e4e9e70ef5d94a`）仍在本地；升级前 volume 快照 `$TMPDIR/company-factory/backups/peri-loom-data-v1.1.26-20261103T145739.tgz`（125 MB）。
 
 ## System For Agent 修复验证（2026-11-02）
 

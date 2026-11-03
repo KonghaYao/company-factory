@@ -213,6 +213,13 @@ async function executeAction(
         details: { status: result.status },
       };
     }
+    case "set_config_option":
+      // 模型与权限模式由宿主配置并在 Session 建立后固定；UI 选择器保持只读。
+      throw new RuntimeError(
+        "invalid_action",
+        "Company 固定会话配置，不支持在会话内切换模型或权限模式。",
+        400,
+      );
     case "load_earlier_history": {
       try {
         const result = await chat.execute(action);
@@ -368,6 +375,12 @@ export function createPeriChatApi(deps: PeriChatApiDeps): Hono<SyncEnv> {
       return invalidAction(
         c,
         "每个 Agent 只有一个固定会话，不能新建 Session。",
+        action.requestId,
+      );
+    if (action.type === "set_config_option")
+      return invalidAction(
+        c,
+        "Company 固定会话配置，不支持在会话内切换模型或权限模式。",
         action.requestId,
       );
     if (

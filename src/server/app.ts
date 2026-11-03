@@ -301,7 +301,7 @@ export async function createApplication(options: ApplicationOptions = {}) {
       version: packageJson.version,
       mcpModules: Object.keys(MODULE_OPERATIONS),
       runtime:
-        "@peri-code/sdk@0.3.0 WASM + local sqld (explicit or host-provisioned shared)",
+        "@peri-code/sdk@0.4.0 WASM + local sqld (explicit or host-provisioned shared)",
       storage: {
         sharedSqld: sharedStores ? "enabled" : "disabled",
       },

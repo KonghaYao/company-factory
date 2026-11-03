@@ -427,8 +427,13 @@ export class PeriRuntime {
         let failed = false;
         try { await prior.manager.shutdown(); } catch { failed = true; }
         try { await prior.modules.close(); } catch { failed = true; }
-        if (failed)
+        // SDK 0.4.0 的 Manager 不再关闭注入的 database；旧目录实例必须显式关闭。
+        try { await prior.store.close(); } catch { failed = true; }
+        if (failed) {
+          // 新目录实例尚未建立连接；失败路径也释放它，避免留在目录表里。
+          await store.close().catch(() => {});
           throw new RuntimeError("wasm_cleanup_unconfirmed", "此前 Manager 或网络端口关闭未获确认；拒绝启动新 activation。");
+        }
         this.managers.delete(this.key(input));
       }
       const modules = createAgentWasmModules(
@@ -739,7 +744,7 @@ export class PeriRuntime {
       throw new RuntimeError("reserved_mcp_server", "workspace 是宿主保留 MCP 名称，不能通过 .mcp.json 替换。");
     for (const descriptor of Object.values(mcpServers)) {
       if (!descriptor || descriptor.type !== "http")
-        throw new RuntimeError("wasm_mcp_transport_unsupported", "SDK 0.3.0 WASM 只接受外部 HTTP MCP；任意 stdio/SSE/ACP 描述符不会被静默忽略或直接 spawn。只有宿主官方 Workspace 使用独立桥。");
+        throw new RuntimeError("wasm_mcp_transport_unsupported", "Peri SDK WASM 只接受外部 HTTP MCP；任意 stdio/SSE/ACP 描述符不会被静默忽略或直接 spawn。只有宿主官方 Workspace 使用独立桥。");
     }
     const appliedInput = {
       ...input,
@@ -1794,17 +1799,18 @@ export class PeriRuntime {
         let incomplete = false;
         try { await entry.manager.shutdown(); } catch { incomplete = true; }
         try { await entry.modules.close(); } catch { incomplete = true; }
+        try { await entry.store.close(); } catch { incomplete = true; }
         if (incomplete) failed = true;
         else this.managers.delete(key);
       }
-      // TursoStorage 仅按请求访问 HTTP，无 close()/dispose() 契约，不伪造关闭。
+      // SDK 0.4.0 起 TursoStorage 持有持久连接；Manager.shutdown 不再关闭注入的 database。
+      if (await this.database.closeAll()) failed = true;
       if (failed)
         throw new RuntimeError("wasm_cleanup_unconfirmed", "部分 WASM、Workspace 或 view 关闭未获确认；保留 handle，可重试 shutdown。");
       this.agents.clear();
       this.provisioned.clear();
       this.promptTransports.clear();
       this.deliveries.clear();
-      this.database.clear();
     })();
     this.shutdownPromise = shutdown;
     void shutdown.catch(() => { this.shutdownPromise = undefined; });

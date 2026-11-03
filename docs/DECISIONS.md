@@ -14,7 +14,7 @@
 
 ## 1. 永不迁移到原生 `peri acp` 子进程
 
-- **决策**：继续使用 `@peri-code/sdk` 0.3.0 的 WASM 运行时，不替换为原生 Peri ACP / child-process 传输。永不迁移。
+- **决策**：继续使用 `@peri-code/sdk` 0.4.0 的 WASM 运行时，不替换为原生 Peri ACP / child-process 传输。永不迁移。
 - **理由/约束**：用户确定运行时边界；后续改造不得突破该边界。
 - **影响**：
   - MCP 仍由宿主读取 `~/.company/agents/<agentId>/.mcp.json`（公司 MCP 为 HTTP），并在显式重启时注入。

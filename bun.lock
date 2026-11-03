@@ -10,7 +10,7 @@
         "@modelcontextprotocol/server": "2.4.0",
         "@monaco-editor/react": "4.7.0",
         "@peri-code/mcpp": "0.8.0",
-        "@peri-code/sdk": "0.3.0",
+        "@peri-code/sdk": "0.4.0",
         "@tanstack/react-query": "5.105.0",
         "clsx": "^2.1.1",
         "hono": "4.13.14",
@@ -89,7 +89,7 @@
 
     "@peri-code/mcpp": ["@peri-code/mcpp@0.8.0", "", { "dependencies": { "@modelcontextprotocol/server": "^2.0.0", "yaml": "^2.6.1", "zod": "^4.4.3" }, "peerDependencies": { "typescript": "^7" } }, "sha512-ySkKdW+6nSh2cvK986z0Cg2Od7YC8mjLglK35WPGgzFQ2ovXScbjMuF42SfzLNTl+4wcvScsBdT8md82I+aOSA=="],
 
-    "@peri-code/sdk": ["@peri-code/sdk@0.3.0", "", { "dependencies": { "@microsoft/fetch-event-source": "2.0.1", "@openuidev/lang-core": "1.0.2", "@openuidev/react-lang": "1.0.2", "@tursodatabase/serverless": "1.4.1", "lib0": "^0.2.119", "yjs": "^13.6.33", "zod": "^4.6.7" }, "peerDependencies": { "react": ">=18", "react-dom": ">=18" }, "optionalPeers": ["react", "react-dom"] }, "sha512-oRmlNXmSaM9DhyvMJ8zi9m/jgc2wRpuAIusqOUWejzUEc9Ba0RMiClSEtaAdcashVH3EsEDyH6DZ3OqSTc+cqA=="],
+    "@peri-code/sdk": ["@peri-code/sdk@0.4.0", "", { "dependencies": { "@microsoft/fetch-event-source": "2.0.1", "@openuidev/lang-core": "1.0.2", "@openuidev/react-lang": "1.0.2", "@tursodatabase/serverless": "1.4.1", "lib0": "^0.2.119", "yjs": "^13.6.33", "zod": "^4.6.7" }, "peerDependencies": { "react": ">=18", "react-dom": ">=18" }, "optionalPeers": ["react", "react-dom"] }, "sha512-kojm5JZTTD4d7Nbv44fb1rMhBVK6dpraE5c4girAbfLYJTzFxXfyWQvlHaLwUkmxLB61qOWtLzCtHzdX0KAsQA=="],
 
     "@pinojs/redact": ["@pinojs/redact@0.4.0", "", {}, "sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg=="],
 

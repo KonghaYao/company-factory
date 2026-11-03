@@ -135,6 +135,8 @@ export class ScopedWasmStore implements ChatDatabase {
   ) {}
   get sessionId() { return this.binding?.sessionId; }
   get replacesSessionId() { return this.binding?.replacesSessionId; }
+  /** SDK 0.4.0 起 TursoStorage 持有一条持久连接，关闭责任在宿主。 */
+  close() { return this.storage.close(); }
   async listSessions(path?: string) {
     if (!this.sessionId || (path !== undefined && path !== this.scope.directory)) return [];
     const session = await this.getSession(this.sessionId);
@@ -286,7 +288,17 @@ export class WasmStoreDirectory implements ChatDatabase {
     this.stores.set(scopeKey(scope), store);
     return store;
   }
-  clear() { this.stores.clear(); }
+  /** 关闭所有目录实例；只移除关闭成功的实例，失败项保留供 shutdown 重试。 */
+  async closeAll() {
+    const entries = [...this.stores.entries()];
+    const results = await Promise.allSettled(entries.map(([, store]) => store.close()));
+    let failed = false;
+    results.forEach((result, index) => {
+      if (result.status === "rejected") failed = true;
+      else this.stores.delete(entries[index][0]);
+    });
+    return failed;
+  }
   async listSessions(path?: string) {
     const sessions = await Promise.all([...this.stores.values()].map((store) => store.listSessions(path)));
     return sessions.flat().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));

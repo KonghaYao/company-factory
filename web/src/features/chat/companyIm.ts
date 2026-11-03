@@ -1,8 +1,7 @@
 /**
  * Company IM 投递信封解析。
  *
- * SDK 0.3.0 的 EntryView 只保留 role/blocks/messageId，结构化 sender 在投影层
- * 被丢弃；投递文本本身保留稳定信封，因此展示层只从文本开头还原发送者与话题。
+ * SDK 0.4.0 的 EntryView 不携带结构化 sender，展示层只从文本开头还原发送者与话题。
  * 正文中的 `[Company IM ...]` 不会被当作信封。
  */
 export type CompanyImEnvelope = {

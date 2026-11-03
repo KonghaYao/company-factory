@@ -215,7 +215,7 @@ class WorkspaceMcpServer implements AcpMcpServerInstance {
 
   private async fromServer(frame: RpcFrame) {
     if (frame.method !== undefined) {
-      // SDK 0.3.0 没有 server 通知的出站通道；不触发其带 method 的 console.warn。
+      // 当前 SDK 没有 server 通知的出站通道；不触发其带 method 的 console.warn。
       if (frame.id === undefined) return;
       if (this.reversePending.has(frame.id) || this.reversePending.size >= MAX_PENDING)
         throw new Error("Workspace MCP 反向请求关联超过限制或重复。");

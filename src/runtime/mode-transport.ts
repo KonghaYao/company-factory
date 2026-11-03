@@ -57,17 +57,18 @@ function diagnostic(record: Record<string, unknown>): string {
  * 依据 Peri 源码（只读核对）：WASM 启动配置只读取 cwd/machineId/storage/settings
  * （peri-wasm/src/emscripten/acp.rs:32-56），权限模式没有启动字段；唯一公共入口是
  * ACP `session/set_mode`（peri-acp/src/host/requests/config_options.rs:26-42）。
- * 安装的 @peri-code/sdk 0.3.0 对应 sdk-v0.3.0 快照，WASM 初始模式仍为 Default；
- * 源码 HEAD 的 f5cfed893 才把 WASM 默认值改为 Bypass，因此本包装在升级后仍然幂等。
+ * 安装的 @peri-code/sdk 0.4.0 不提供启动期权限模式字段；本包装在
+ * session/new|load 成功后显式补发 set_mode(bypass)，无论随包 WASM 的初始值
+ * 是 Default 还是 Bypass，结果都幂等。
  *
  * 失败策略为 fail-open：会话建立照常返回，只输出结构化诊断。若后续要求
  * 模式不可降级，可改为 fail-closed（向调用方抛出 set_mode 错误）。
  *
  * 注意：Peri 的 set_mode 只更新核心权限状态并发送 config_option_update
  * （peri-acp/src/host/requests/config_options.rs:26-42），不发送
- * session_info_update；SDK 0.3.0 仅在 seed（session/new|load 的 modes）与
- * session_info_update 时刷新 modeState（dist/view.js:2926,2948-2960），
- * 因此 `GET /chat` 的 view.session.modeState 会保留建立时的值。该方法只做
+ * session_info_update；SDK 0.4.0 仅在 seed（session/new|load 的 modes）与
+ * session_info_update 时刷新 modeState（`dist/index.js` 的 seedConfig /
+ * acceptSessionInfo），因此 `GET /chat` 的 view.session.modeState 会保留建立时的值。该方法只做
  * 展示，权威状态是核心的 permission_mode（可用 ACP session/metadata 读取）。
  */
 export class ModeTransport implements Transport {
@@ -159,7 +160,7 @@ export class ModeTransport implements Transport {
   /**
    * 把 direct `session/prompt` 投影到 SDK 视图。
    *
-   * SDK 0.3.0 的 `ChatView` 只从 `session/update` 推导用户气泡与回合边界；
+   * SDK 0.4.0 的 `ChatView` 只从 `session/update` 推导用户气泡与回合边界；
    * Peri 的 direct prompt 不发送 `user_message_chunk`（仅 Defer 消息与
    * session/load replay 发送），因此这里在本地注入一条等价通知，只进入
    * SDK 订阅者，不写入 WASM、不改变 ACP 请求本身。

@@ -64,7 +64,7 @@ describe("user send text stays free of host profile injection", () => {
   });
 });
 realRuntime(
-  "REAL SDK 0.3.0 WASM + local sqld + isolated official Peri 4.4.1 Workspace（非 live-model 验收）",
+  "REAL SDK 0.4.0 WASM + local sqld + isolated official Peri 4.4.1 Workspace（非 live-model 验收）",
   () => {
     let root: string;
     let input: RuntimeAgent;

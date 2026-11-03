@@ -1,6 +1,6 @@
 # Company Factory
 
-一个 **Bun HTTP 服务 + 本地磁盘** 的 Agent 软件工厂。React 三栏工作台以 Agent 为第一维度，业务事实保存在 YAML / Markdown / Git；主 Agent 推理、Session 与控制面采用 **Peri SDK 0.3.0 WASM**，接入用户显式配置的本地 sqld 或宿主自动供给的单一共享本地 sqld；**官方 Peri 4.4.1 进程提供本地 Workspace MCP（无 OS 沙箱）**，不启动 native `peri acp`，不自动回退。
+一个 **Bun HTTP 服务 + 本地磁盘** 的 Agent 软件工厂。React 三栏工作台以 Agent 为第一维度，业务事实保存在 YAML / Markdown / Git；主 Agent 推理、Session 与控制面采用 **Peri SDK 0.4.0 WASM**，接入用户显式配置的本地 sqld 或宿主自动供给的单一共享本地 sqld；**官方 Peri 4.4.1 进程提供本地 Workspace MCP（无 OS 沙箱）**，不启动 native `peri acp`，不自动回退。
 
 **System For Agent：Agent 自主性优先。** 代码提供可靠事实、能力入口、会话与身份边界；拆解、流程选择、协作和下一步行动由 Agent 决定。当前顶层设计见 [SYSTEM-FOR-AGENT](docs/SYSTEM-FOR-AGENT.md)。2026-10-31 的 live 证据属于历史版本；本轮改动的验证范围单独记录于 [VERIFICATION](docs/VERIFICATION.md)。
 
