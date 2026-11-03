@@ -160,6 +160,21 @@ describe("WASM 本地 sqld 配置与可信 backend（无数据库请求）", () 
     expect(JSON.parse(unchanged).sessionId).toBe("replacement-session");
     expect(unchanged).not.toContain("another");
   });
+  test("同一端点与凭据共用一条 TursoStorage；closeAll 只关闭一次", async () => {
+    const f = await fixture();
+    const other: StoreScope = { companyId: f.scope.companyId, agentId: "other", directory: join(f.root, "agents", "other") };
+    await mkdir(other.directory, { recursive: true });
+    await f.write([f.entry, { ...f.entry, agentId: "other" }]);
+    const stores = new WasmStoreDirectory({ root: f.root, provider: f.provider });
+    const first = await stores.acquire(f.scope);
+    const second = await stores.acquire(other);
+    expect(first.storage).toBe(second.storage);
+    let closes = 0;
+    const close = first.storage.close.bind(first.storage);
+    first.storage.close = async () => { closes++; await close(); };
+    expect(await stores.closeAll()).toBe(false);
+    expect(closes).toBe(1);
+  });
   test("provider 原始异常不泄露；运行时响应递归移除 store 凭据", async () => {
     const f = await fixture();
     const broken = new WasmStoreDirectory({ root: f.root, provider: { async resolve() { throw new Error(f.entry.authToken); } } });

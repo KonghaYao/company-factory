@@ -30,6 +30,8 @@ const failure = (code: string, message: string) => new WasmStoreError(code, mess
 const scopeKey = (scope: Pick<StoreScope, "companyId" | "agentId">) =>
   JSON.stringify([scope.companyId, scope.agentId]);
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
+/** 同一端点与凭据共用一个 SDK 连接；Session 隔离仍由 scope/cwd 绑定负责。 */
+const storageKey = (config: WasmStoreConfiguration) => hash(JSON.stringify([config.url, config.authToken]));
 export const storeScopeId = (scope: Pick<StoreScope, "companyId" | "agentId">) => hash(scopeKey(scope));
 function within(parent: string, child: string) {
   const path = relative(parent, child);
@@ -135,8 +137,6 @@ export class ScopedWasmStore implements ChatDatabase {
   ) {}
   get sessionId() { return this.binding?.sessionId; }
   get replacesSessionId() { return this.binding?.replacesSessionId; }
-  /** SDK 0.4.0 起 TursoStorage 持有一条持久连接，关闭责任在宿主。 */
-  close() { return this.storage.close(); }
   async listSessions(path?: string) {
     if (!this.sessionId || (path !== undefined && path !== this.scope.directory)) return [];
     const session = await this.getSession(this.sessionId);
@@ -209,6 +209,7 @@ export class ScopedWasmStore implements ChatDatabase {
 /** 只聚合已明确授权且有可信绑定的 scope；不扫描 native 数据库，不共享 Manager。 */
 export class WasmStoreDirectory implements ChatDatabase {
   private stores = new Map<string, ScopedWasmStore>();
+  private storages = new Map<string, TursoStorage>();
   private confidential = new Set<string>();
   constructor(private options: { root: string; provider: StoreProvider }) {}
   redact<T>(value: T): T {
@@ -284,18 +285,24 @@ export class WasmStoreDirectory implements ChatDatabase {
       throw failure("wasm_store_backend_changed", "配置端点与持久 backend 身份不同；拒绝将旧 Session 连接到新库或自动创建替代。凭据轮转不改变 backend 身份。");
     // 显式配置与宿主自动供给都允许不同 scope 共用同一回环端点；
     // Session 隔离由各 ScopedWasmStore 的 scope/cwd 绑定负责。
-    const store = new ScopedWasmStore(new TursoStorage({ url: config.url, authToken: config.authToken, currentCwd: scope.directory, legacyCwd: scope.directory }), scope, config.identity, binding, path);
+    const key = storageKey(config);
+    let storage = this.storages.get(key);
+    if (!storage) {
+      storage = new TursoStorage({ url: config.url, authToken: config.authToken, currentCwd: scope.directory, legacyCwd: scope.directory });
+      this.storages.set(key, storage);
+    }
+    const store = new ScopedWasmStore(storage, scope, config.identity, binding, path);
     this.stores.set(scopeKey(scope), store);
     return store;
   }
-  /** 关闭所有目录实例；只移除关闭成功的实例，失败项保留供 shutdown 重试。 */
+  /** 关闭共享连接；只移除关闭成功的端点，失败项保留供 shutdown 重试。 */
   async closeAll() {
-    const entries = [...this.stores.entries()];
-    const results = await Promise.allSettled(entries.map(([, store]) => store.close()));
+    const entries = [...this.storages.entries()];
+    const results = await Promise.allSettled(entries.map(([, storage]) => storage.close()));
     let failed = false;
     results.forEach((result, index) => {
       if (result.status === "rejected") failed = true;
-      else this.stores.delete(entries[index][0]);
+      else this.storages.delete(entries[index][0]);
     });
     return failed;
   }

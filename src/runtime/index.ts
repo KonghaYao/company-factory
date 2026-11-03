@@ -427,13 +427,8 @@ export class PeriRuntime {
         let failed = false;
         try { await prior.manager.shutdown(); } catch { failed = true; }
         try { await prior.modules.close(); } catch { failed = true; }
-        // SDK 0.4.0 的 Manager 不再关闭注入的 database；旧目录实例必须显式关闭。
-        try { await prior.store.close(); } catch { failed = true; }
-        if (failed) {
-          // 新目录实例尚未建立连接；失败路径也释放它，避免留在目录表里。
-          await store.close().catch(() => {});
+        if (failed)
           throw new RuntimeError("wasm_cleanup_unconfirmed", "此前 Manager 或网络端口关闭未获确认；拒绝启动新 activation。");
-        }
         this.managers.delete(this.key(input));
       }
       const modules = createAgentWasmModules(
@@ -1795,16 +1790,17 @@ export class PeriRuntime {
       for (const bound of this.agents.values()) {
         try { await this.closeBound(bound); } catch { failed = true; }
       }
+      let managersFailed = false;
       for (const [key, entry] of this.managers) {
         let incomplete = false;
         try { await entry.manager.shutdown(); } catch { incomplete = true; }
         try { await entry.modules.close(); } catch { incomplete = true; }
-        try { await entry.store.close(); } catch { incomplete = true; }
-        if (incomplete) failed = true;
+        if (incomplete) { failed = true; managersFailed = true; }
         else this.managers.delete(key);
       }
-      // SDK 0.4.0 起 TursoStorage 持有持久连接；Manager.shutdown 不再关闭注入的 database。
-      if (await this.database.closeAll()) failed = true;
+      // SDK 0.4.0 起同一端点的所有 scope 共用一条 TursoStorage 连接；
+      // 只有所有 Manager 都已关闭时才释放它，失败时保留供再次 shutdown。
+      if (!managersFailed && (await this.database.closeAll())) failed = true;
       if (failed)
         throw new RuntimeError("wasm_cleanup_unconfirmed", "部分 WASM、Workspace 或 view 关闭未获确认；保留 handle，可重试 shutdown。");
       this.agents.clear();
