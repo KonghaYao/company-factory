@@ -286,12 +286,77 @@
   margin-top: 12px;
 }
 
-.collapsible-footer .comment-form {
-  margin-top: 0;
+@media (prefers-reduced-motion: reduce) {
+  .collapsible-chevron {
+    transition: none;
+  }
+}
+
+/* ---------- 逐条正文折叠 ---------- */
+.collapsible-text {
+  display: block;
+  min-width: 0;
+}
+
+.collapsible-text-body[data-state="collapsed"] {
+  max-height: var(--collapsible-text-h, 136px);
+  overflow: hidden;
+}
+
+.collapsible-text-inner {
+  display: flow-root; /* 让 scrollHeight 包含子元素 margin */
+}
+
+.collapsible-text[data-overflow="true"]
+  .collapsible-text-body[data-state="collapsed"] {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    #000 calc(100% - 32px),
+    transparent
+  );
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent);
+}
+
+.collapsible-text[data-overflow="true"]
+  .collapsible-text-body[data-state="collapsed"]
+  .collapsible-text-inner {
+  pointer-events: none;
+}
+
+.collapsible-text-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 1px 0;
+  border-radius: var(--radius-sm);
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 550;
+  line-height: 1.4;
+}
+
+.collapsible-text-toggle:hover {
+  color: var(--accent-strong);
+}
+
+.collapsible-text-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.collapsible-text-chevron {
+  flex: 0 0 auto;
+  color: var(--faint);
+  transition: transform 160ms ease;
+}
+
+.collapsible-text[data-open="true"] .collapsible-text-chevron {
+  transform: rotate(180deg);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .collapsible-chevron {
+  .collapsible-text-chevron {
     transition: none;
   }
 }
@@ -1156,6 +1221,10 @@
 }
 
 .comment.is-user .comment-author {
+  color: var(--accent-strong);
+}
+
+.comment.is-user .collapsible-text-toggle {
   color: var(--accent-strong);
 }
 

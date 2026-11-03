@@ -74,22 +74,58 @@ function render(
 }
 
 describe("IssueDetail", () => {
-  test("both sections start collapsed but keep their content", () => {
+  test("description collapses but the comment section never does", () => {
     const html = render();
+    const commentsSection = tag(html, "comments-section");
 
     expect(tag(html, "description-section-trigger")).toContain(
       'aria-expanded="false"',
     );
-    expect(tag(html, "comments-section-trigger")).toContain(
-      'aria-expanded="false"',
-    );
     expect(tag(html, "description-section-body")).toContain("inert");
-    expect(tag(html, "comments-section-body")).toContain("inert");
-    expect(html).toContain("描述正文");
+
+    expect(commentsSection).not.toBe("");
+    expect(commentsSection).not.toContain("collapsible-section");
+    expect(tag(html, "comments-section-trigger")).toBe("");
+    expect(tag(html, "comments-section-body")).toBe("");
+    expect(tag(html, "comments-section-footer")).toBe("");
+    expect(html).toContain('data-testid="comment-timeline"');
     expect(html).toContain("用户");
     expect(html).toContain("Agent 回复");
     expect(html).toContain("--collapsible-h:160px");
-    expect(html).toContain("--collapsible-h:240px");
+    expect(html).not.toContain("--collapsible-h:240px");
+  });
+
+  test("each comment gets its own collapsed body and keeps its content", () => {
+    const html = render();
+    const userBody = tag(html, "comment-comment-1-body");
+    const agentBody = tag(html, "comment-comment-2-body");
+
+    expect((html.match(/class="collapsible-text"/g) ?? []).length).toBe(2);
+    expect((html.match(/--collapsible-text-h:136px/g) ?? []).length).toBe(2);
+    expect(tag(html, "comment-comment-1")).toContain('data-open="false"');
+    expect(tag(html, "comment-comment-2")).toContain('data-open="false"');
+    expect(userBody).toContain('data-state="collapsed"');
+    expect(agentBody).toContain('data-state="collapsed"');
+    // SSR 尚未测量：不裁剪标记、不显示按钮，但正文保留在 DOM。
+    expect(userBody).not.toContain("inert");
+    expect(agentBody).not.toContain("inert");
+    expect(tag(html, "comment-comment-1-toggle")).toBe("");
+    expect(tag(html, "comment-comment-2-toggle")).toBe("");
+    expect(html).toContain("评论");
+    expect(html).toContain("Agent 回复");
+  });
+
+  test("comment meta, edit button and edited marker stay outside the collapsed body", () => {
+    const html = render();
+    const userBodyIndex = html.indexOf(
+      'data-testid="comment-comment-1-body"',
+    );
+    const editedIndex = html.indexOf("已编辑");
+
+    expect(html).toContain('class="comment-author"');
+    expect((html.match(/aria-label="编辑我的评论"/g) ?? []).length).toBe(1);
+    expect(editedIndex).toBeGreaterThan(userBodyIndex);
+    expect(html.match(/inert/g) ?? []).toHaveLength(1);
   });
 
   test("markdown bodies are rendered by Streamdown", () => {
@@ -114,16 +150,17 @@ describe("IssueDetail", () => {
     expect((html.match(/aria-label="编辑我的评论"/g) ?? []).length).toBe(1);
   });
 
-  test("renders edited marker and keeps composer outside the clipped body", () => {
-    const html = render();
+  test("timeline, load more and composer keep their order", () => {
+    const html = render({ nextCursor: "30" });
+    const timelineIndex = html.indexOf('data-testid="comment-timeline"');
+    const loadMoreIndex = html.indexOf("加载更多评论");
+    const composerIndex = html.indexOf('aria-label="评论内容"');
 
-    expect(html).toContain("已编辑");
-    expect(html).toContain('aria-label="评论内容"');
+    expect(timelineIndex).toBeGreaterThan(-1);
+    expect(loadMoreIndex).toBeGreaterThan(timelineIndex);
+    expect(composerIndex).toBeGreaterThan(loadMoreIndex);
     expect(html).toContain('data-testid="comment-submit"');
-    expect(
-      html.indexOf('data-testid="comments-section-footer"'),
-    ).toBeGreaterThan(html.indexOf('data-testid="comments-section-body"'));
-    expect(tag(html, "comments-section-footer")).not.toContain("inert");
+    expect(tag(html, "comments-section")).not.toContain("inert");
   });
 
   test("load more only appears when there is a next page", () => {
