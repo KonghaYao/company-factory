@@ -25,6 +25,9 @@ export const MODULE_OPERATIONS = {
     "comments",
     "addComment",
     "updateComment",
+    "updates",
+    "addUpdate",
+    "updateTodos",
     "askDecision",
     "answerDecision",
     "resolveDecision",
@@ -199,6 +202,46 @@ export const schemas: Record<string, z.ZodType> = {
     expectedVersion: z.number(),
     requestId: str,
   }),
+  updates: z.object({
+    issueId: str,
+    cursor: str.optional(),
+    limit: z.number().int().min(1).max(50).optional(),
+  }),
+  addUpdate: z.object({
+    issueId: str,
+    expectedVersion: z.number(),
+    requestId: str,
+    kind: z.enum(["progress", "blocker", "decision"]).optional(),
+    body: str.min(1).max(4000),
+  }),
+  updateTodos: z.looseObject({
+    issueId: str,
+    expectedVersion: z.number(),
+    requestId: str,
+    changes: z
+      .array(
+        z.discriminatedUnion("op", [
+          z.object({
+            op: z.literal("add"),
+            text: str.min(1).max(500),
+            status: z.enum(["pending", "in_progress", "done"]).optional(),
+          }),
+          z.object({
+            op: z.literal("update"),
+            todoId: str,
+            text: str.min(1).max(500).optional(),
+            status: z.enum(["pending", "in_progress", "done"]).optional(),
+          }),
+          z.object({ op: z.literal("remove"), todoId: str }),
+        ]),
+      )
+      .min(1)
+      .max(20)
+      .optional(),
+    order: z.array(str).min(1).max(50).optional(),
+    note: str.min(1).max(2000).optional(),
+    kind: z.enum(["progress", "blocker", "decision"]).optional(),
+  }),
   askDecision: z.object({
     issueId: str,
     question: str,
@@ -303,6 +346,7 @@ export const READ_OPERATIONS = new Set([
   "getIssue",
   "getPreview",
   "comments",
+  "updates",
   "listPipelines",
   "workspace",
   "members",

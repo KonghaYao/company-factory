@@ -193,6 +193,47 @@ export type IssueStatus =
   | "verifying"
   | "ready_merge"
   | "cancel";
+export type TodoStatus = "pending" | "in_progress" | "done";
+export type TodoItem = {
+  /** Server-generated stable id: `<issueId>-T<n>`; never reused. */
+  id: string;
+  /** Single-line plain text, 1..500 chars. */
+  text: string;
+  status: TodoStatus;
+  created_at: string;
+  created_by_type: "user" | "agent";
+  created_by_id: string;
+  updated_at: string;
+  updated_by_type: "user" | "agent";
+  updated_by_id: string;
+  done_at?: string;
+};
+export type TaskUpdateKind = "progress" | "blocker" | "decision";
+export type LatestUpdate = {
+  id: string;
+  created_at: string;
+  author_type: "user" | "agent";
+  author_id: string;
+  kind: TaskUpdateKind;
+  /** Whitespace-normalized excerpt of the Markdown body, <= 180 chars. */
+  excerpt: string;
+};
+export type TaskUpdate = {
+  schema: "company-update/v1";
+  /** `<issueId>-U<n>`; immutable. */
+  id: string;
+  issue_id: string;
+  author_type: "user" | "agent";
+  author_id: string;
+  kind: TaskUpdateKind;
+  created_at: string;
+  /** Immutable record shape version. */
+  version: 1;
+  /** Issue status snapshot at append time. */
+  status: IssueStatus;
+  todo_counts: { total: number; done: number; in_progress: number };
+  body: string;
+};
 export type Issue = {
   id: string;
   title: string;
@@ -221,6 +262,12 @@ export type Issue = {
   version: number;
   body: string;
   cancel_reason?: string;
+  /** Ordered todo list; server-owned, changed only through updateTodos. */
+  todos?: TodoItem[];
+  /** Derived list projection; append-only update files are authoritative. */
+  latest_update?: LatestUpdate | null;
+  /** Internal monotonic high-water mark so deleted todo ids are never reused. */
+  todo_seq?: number;
 };
 export type Comment = {
   id: string;

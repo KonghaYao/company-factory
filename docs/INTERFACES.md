@@ -34,6 +34,48 @@ Normal domain operations are serialized within Company write boundaries. YAML fr
 
 Preview updates validate ownership of every affected Issue, including removed members, before writing. An Agent must explicitly revise an Issue whose current acceptance/verification still uses that Preview before removing it; the host does not choose a rollback workflow.
 
+## Task todos and append-only progress
+
+An Issue owns one ordered todo list (`Issue.todos`, at most 50) and one append-only progress log (`updates/<issueId>/<issueId>-U<n>.md`). `Issue.latest_update` is only a list/summary projection; the immutable update files are authoritative. Old Issues without either field read as `todos: []` and `latest_update: null`; malformed stored todos or unknown update schemas fail with `invalid_document` (500). `todo_seq` is an optional internal high-water mark so deleted todo IDs are never reused. `updateIssue.patch` rejects both `todos` and `latest_update`; only the dedicated operations below may write them.
+
+`updateTodos` (`POST /api/action` with `{companyId, module:"company_tasks", operation:"updateTodos", input}` or MCP tool `company_tasks/updateTodos`):
+
+```ts
+{
+  issueId: string;
+  expectedVersion: number; // dispatch aliases this to the Issue version
+  requestId: string;
+  changes?: Array<
+    | { op: "add"; text: string; status?: "pending" | "in_progress" | "done" }
+    | { op: "update"; todoId: string; text?: string; status?: "pending" | "in_progress" | "done" }
+    | { op: "remove"; todoId: string }
+  >; // 1..20 when present
+  order?: string[]; // complete permutation of the post-change todo IDs, 1..50
+  note?: string; // 1..2000; required for Agent callers
+  kind?: "progress" | "blocker" | "decision"; // default progress
+}
+// -> { issue: Issue; update: TaskUpdate | null }
+```
+
+At least one of `changes` or `order` must be nonempty. Server-generated IDs use `<issueId>-T<n>`; array order is display order. Agent writes without `note` return `invalid_input`. A note creates one immutable `TaskUpdate` with the post-change `status` and `todo_counts` snapshot inside the same Company lock and Git commit. The list is capped at 50 (`todo_limit`, 400); text is one line of at most 500 characters; a 21st change is `invalid_input`. Canceled Issues return `terminal_issue` (409).
+
+`addUpdate`:
+
+```ts
+{
+  issueId: string;
+  expectedVersion: number;
+  requestId: string;
+  kind?: "progress" | "blocker" | "decision"; // default progress
+  body: string; // Markdown, 1..4000
+}
+// -> { issue: Issue; update: TaskUpdate }
+```
+
+`addUpdate` only appends (never edits/deletes), increments the Issue version, and refreshes `latest_update`; it never changes status, todos or decisions. It is allowed on canceled Issues. More than 2000 records returns `update_limit` (409). The record shape is `{schema:"company-update/v1", id, issue_id, author_type, author_id, kind, created_at, version:1, status, todo_counts:{total,done,in_progress}, body}`. The 2000-record/file and Issue projection write is not a crash transaction: a failed Issue write can leave an authoritative log entry with a stale projection, corrected by the next append or repair script. No cross-process lock is claimed.
+
+`updates` is read-only and returns `{items: TaskUpdate[]; nextCursor: string | null}` newest first. `limit` defaults to 20 and accepts 1–50; `cursor` is a non-negative offset string and `nextCursor` is the next offset when more rows remain. Invalid cursor/limit is `invalid_input` (400). Reads require the same participant/archived-member rules as `getIssue`; writes require the owner user or current owner Agent (`not_current_owner`, 403). Missing Issues are `not_found` (404), stale versions `version_conflict` (409), and replaying a request ID with different input is `idempotency_conflict` (409). Exact replays return the original result without adding another todo or update. Owner `getIssue` via `/api/action` returns the full normalized todos and latest projection; Agent `listIssues`/`workspace` summaries include only `todos:{total,done,in_progress}` and a short `latest_update` excerpt, never full todo text or update bodies.
+
 ## Agent reads and notification receipts
 
 Agent `listIssues` defaults to current ownership/collaboration and excludes `cancel`/`ready_merge`. `includeHistory: true` includes former participation and terminal states; `status` explicitly filters stages. Pages default to 20 items, accept `limit` 1–50 and return `nextCursor`; summaries are clipped with `getIssue(issueId)` pointers. Agent `workspace` adds the current profile reference plus bounded thread/Preview indexes. Its complete response and each Issue page fit 32 KiB. Identity always comes from the bearer credential; an empty or different `agentId` cannot widen scope. Full detail remains available through `getIssue`, `getPreview`, `thread` and normal Workspace file reads.
