@@ -182,6 +182,52 @@ describe("selectAsyncTaskRows", () => {
     ]);
   });
 
+  test("终态先去重再占名额：重复投影不会挤掉第 6 个不同终态", () => {
+    const unique = ["u1", "u2", "u3", "u4", "u5"].map((taskId, index) =>
+      task({
+        taskId,
+        status: "completed",
+        completedAt: iso(-(index + 2) * 1_000),
+        updatedAt: iso(-(index + 2) * 1_000),
+      }),
+    );
+    const rows = selectAsyncTaskRows(
+      [
+        task({
+          taskId: "dup-bg",
+          kind: "background",
+          isBackground: true,
+          title: "重复任务",
+          status: "completed",
+          startedAt: iso(-60_000),
+          completedAt: iso(-1_000),
+          durationMs: 59_000,
+        }),
+        task({
+          taskId: "dup-inst",
+          kind: "subagent",
+          isBackground: true,
+          title: "fork",
+          status: "completed",
+          startedAt: iso(-59_900),
+          completedAt: iso(-1_100),
+        }),
+        ...unique,
+      ],
+      NOW,
+    );
+
+    expect(rows.map((row) => row.taskId)).toEqual([
+      "dup-bg",
+      "u1",
+      "u2",
+      "u3",
+      "u4",
+    ]);
+    expect(rows).toHaveLength(5);
+    expect(rows.some((row) => row.title === "fork")).toBe(false);
+  });
+
   test("终态同时受 10 分钟窗口限制，缺时间戳的旧记录不展示", () => {
     const rows = selectAsyncTaskRows(
       [
@@ -224,6 +270,50 @@ describe("selectAsyncTaskRows", () => {
     expect(rows.map((row) => row.taskId)).toEqual(["updated-only"]);
   });
 
+  test("合并后的终态按两侧较新的时间戳校验 10 分钟窗口", () => {
+    const WINDOW = 10 * 60_000;
+    const merged = (backgroundOffset: number, subagentOffset: number) =>
+      selectAsyncTaskRows(
+        [
+          task({
+            taskId: "bg-window",
+            kind: "background",
+            isBackground: true,
+            title: "独立核验",
+            status: "completed",
+            startedAt: iso(-15 * 60_000),
+            completedAt: iso(backgroundOffset),
+            updatedAt: iso(backgroundOffset),
+          }),
+          task({
+            taskId: "inst-window",
+            kind: "subagent",
+            isBackground: true,
+            title: "fork",
+            status: "completed",
+            startedAt: iso(-15 * 60_000 + 200),
+            completedAt: iso(subagentOffset),
+            updatedAt: iso(subagentOffset),
+          }),
+        ],
+        NOW,
+      );
+
+    // 双方都超窗：合并后依然省略。
+    expect(merged(-(WINDOW + 1_000), -(WINDOW + 1_000))).toEqual([]);
+    // 旧后台 + 新 subagent：以新的一侧为准，边界仍显示。
+    expect(
+      merged(-(WINDOW + 1_000), -WINDOW).map((row) => [row.taskId, row.status]),
+    ).toEqual([["bg-window", "completed"]]);
+    // 反向也不能让旧 subagent 掩盖新的后台终态。
+    expect(
+      merged(-(WINDOW - 1_000), -(WINDOW + 1_000)).map((row) => [
+        row.taskId,
+        row.status,
+      ]),
+    ).toEqual([["bg-window", "completed"]]);
+  });
+
   test("时长：运行中由 startedAt 计算，终态优先用 durationMs", () => {
     const rows = selectAsyncTaskRows(
       [
@@ -257,6 +347,534 @@ describe("selectAsyncTaskRows", () => {
     expect(
       selectAsyncTaskRows([task({ taskId: "tool", kind: "tool" })], NOW),
     ).toEqual([]);
+  });
+});
+
+describe("同一任务的双投影去重", () => {
+  test("活跃的后台任务与其 subagent 投影只出一行，标题取后台 summary", () => {
+    const rows = selectAsyncTaskRows(
+      [
+        task({
+          taskId: "bg-1",
+          kind: "background",
+          isBackground: true,
+          title: "复核发布清单",
+          summary: "复核发布清单",
+          startedAt: iso(-30_000),
+        }),
+        task({
+          taskId: "inst-1",
+          kind: "subagent",
+          isBackground: true,
+          title: "fork",
+          startedAt: iso(-29_600),
+        }),
+      ],
+      NOW,
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      taskId: "bg-1",
+      kind: "background",
+      kindLabel: "后台",
+      title: "复核发布清单",
+      status: "running",
+      statusLabel: "运行中",
+      active: true,
+      duration: "30s",
+    });
+  });
+
+  test("已完成的重复对只出一行，标题取后台投影，时长按较新终态计算", () => {
+    const rows = selectAsyncTaskRows(
+      [
+        task({
+          taskId: "bg-1",
+          kind: "background",
+          isBackground: true,
+          title: "独立核验",
+          status: "completed",
+          startedAt: iso(-70_000),
+          completedAt: iso(-1_000),
+          updatedAt: iso(-1_000),
+          durationMs: 69_000,
+        }),
+        task({
+          taskId: "inst-1",
+          kind: "subagent",
+          isBackground: true,
+          title: "fork",
+          status: "completed",
+          startedAt: iso(-70_400),
+          completedAt: iso(-800),
+        }),
+      ],
+      NOW,
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      taskId: "bg-1",
+      kindLabel: "后台",
+      title: "独立核验",
+      status: "completed",
+      active: false,
+      duration: "1m 09s",
+    });
+  });
+
+  test("活跃后台 + 旧终态 subagent：合并后仍为运行中，不因终态窗口消失", () => {
+    const background = task({
+      taskId: "bg-long",
+      kind: "background",
+      isBackground: true,
+      title: "长任务",
+      status: "running",
+      startedAt: iso(-12 * 60_000),
+    });
+    const staleSubagent = task({
+      taskId: "inst-stale",
+      kind: "subagent",
+      isBackground: true,
+      title: "fork",
+      status: "completed",
+      startedAt: iso(-12 * 60_000 + 200),
+      completedAt: iso(-11 * 60_000),
+      updatedAt: iso(-11 * 60_000),
+    });
+
+    expect(selectAsyncTaskRows([background], NOW)).toHaveLength(1);
+
+    const rows = selectAsyncTaskRows([background, staleSubagent], NOW);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      taskId: "bg-long",
+      kindLabel: "后台",
+      title: "长任务",
+      status: "running",
+      statusLabel: "运行中",
+      active: true,
+    });
+  });
+
+  test("旧终态后台 + 活跃 subagent：合并后仍为运行中", () => {
+    const rows = selectAsyncTaskRows(
+      [
+        task({
+          taskId: "bg-stale",
+          kind: "background",
+          isBackground: true,
+          title: "长任务",
+          status: "completed",
+          startedAt: iso(-12 * 60_000),
+          completedAt: iso(-11 * 60_000),
+          updatedAt: iso(-11 * 60_000),
+        }),
+        task({
+          taskId: "inst-active",
+          kind: "subagent",
+          isBackground: true,
+          title: "fork",
+          status: "running",
+          startedAt: iso(-12 * 60_000 + 200),
+        }),
+      ],
+      NOW,
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      taskId: "bg-stale",
+      title: "长任务",
+      status: "running",
+      statusLabel: "运行中",
+      active: true,
+    });
+  });
+
+  test("活跃后台 + 终态 subagent 缺终态时间戳：仍保持活跃", () => {
+    const rows = selectAsyncTaskRows(
+      [
+        task({
+          taskId: "bg-long",
+          kind: "background",
+          isBackground: true,
+          title: "长任务",
+          status: "running",
+          startedAt: iso(-12 * 60_000),
+        }),
+        task({
+          taskId: "inst-no-time",
+          kind: "subagent",
+          isBackground: true,
+          title: "fork",
+          status: "completed",
+          startedAt: iso(-12 * 60_000 + 200),
+        }),
+      ],
+      NOW,
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      taskId: "bg-long",
+      status: "running",
+      active: true,
+    });
+  });
+
+  test("双方终态：新鲜度与时长取较新的一侧，旧后台时间戳不掩盖新 subagent", () => {
+    const rows = selectAsyncTaskRows(
+      [
+        task({
+          taskId: "bg-1",
+          kind: "background",
+          isBackground: true,
+          title: "独立核验",
+          status: "completed",
+          startedAt: iso(-11 * 60_000),
+          completedAt: iso(-11 * 60_000),
+          updatedAt: iso(-11 * 60_000),
+          durationMs: 69_000,
+        }),
+        task({
+          taskId: "inst-1",
+          kind: "subagent",
+          isBackground: true,
+          title: "fork",
+          status: "completed",
+          startedAt: iso(-11 * 60_000 + 200),
+          completedAt: iso(-60_000),
+          updatedAt: iso(-60_000),
+          durationMs: 60_000,
+        }),
+      ],
+      NOW,
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      taskId: "bg-1",
+      title: "独立核验",
+      status: "completed",
+      active: false,
+      // 后台的 69s 是旧终态的时长；新终态来自 subagent，展示它的 60s。
+      duration: "1m 00s",
+    });
+  });
+
+  test("双方终态且都无终态时间戳：无法证明新鲜，整行省略", () => {
+    const rows = selectAsyncTaskRows(
+      [
+        task({
+          taskId: "bg-1",
+          kind: "background",
+          isBackground: true,
+          title: "独立核验",
+          status: "completed",
+          startedAt: iso(-30_000),
+        }),
+        task({
+          taskId: "inst-1",
+          kind: "subagent",
+          isBackground: true,
+          title: "fork",
+          status: "completed",
+          startedAt: iso(-29_800),
+        }),
+      ],
+      NOW,
+    );
+
+    expect(rows).toEqual([]);
+  });
+
+  test("没有 isBackground 标记的 subagent 照常显示，不被误删", () => {
+    const rows = selectAsyncTaskRows(
+      [
+        task({
+          taskId: "bg-1",
+          kind: "background",
+          isBackground: true,
+          title: "复核发布清单",
+          startedAt: iso(-30_000),
+        }),
+        task({
+          taskId: "foreground",
+          kind: "subagent",
+          title: "阅读代码",
+          startedAt: iso(-30_000),
+        }),
+        task({
+          taskId: "explicit-false",
+          kind: "subagent",
+          isBackground: false,
+          title: "跑测试",
+          startedAt: iso(-29_800),
+        }),
+      ],
+      NOW,
+    );
+
+    expect(rows.map((row) => row.taskId)).toEqual([
+      "bg-1",
+      "foreground",
+      "explicit-false",
+    ]);
+    expect(rows.map((row) => row.kindLabel)).toEqual([
+      "后台",
+      "Subagent",
+      "Subagent",
+    ]);
+  });
+
+  test("只有 background 投影时正常显示", () => {
+    const rows = selectAsyncTaskRows(
+      [
+        task({
+          taskId: "bg-1",
+          kind: "background",
+          isBackground: true,
+          title: "npm run dev",
+          startedAt: iso(-12_000),
+        }),
+      ],
+      NOW,
+    );
+
+    expect(rows.map((row) => [row.taskId, row.kindLabel, row.title])).toEqual([
+      ["bg-1", "后台", "npm run dev"],
+    ]);
+  });
+
+  test("两个并发后台任务逐对配对：不合并成一行，也不丢任务，活跃侧状态优先", () => {
+    const rows = selectAsyncTaskRows(
+      [
+        task({
+          taskId: "bg-a",
+          kind: "background",
+          isBackground: true,
+          title: "任务 A",
+          startedAt: iso(-30_000),
+        }),
+        task({
+          taskId: "bg-b",
+          kind: "background",
+          isBackground: true,
+          title: "任务 B",
+          startedAt: iso(-20_000),
+        }),
+        task({
+          taskId: "inst-a",
+          kind: "subagent",
+          isBackground: true,
+          title: "fork",
+          status: "completed",
+          startedAt: iso(-30_400),
+          completedAt: iso(-1_000),
+        }),
+        task({
+          taskId: "inst-b",
+          kind: "subagent",
+          isBackground: true,
+          title: "fork",
+          startedAt: iso(-19_000),
+        }),
+      ],
+      NOW,
+    );
+
+    // bg-a 的 subagent 投影已完成，但后台侧仍 running：任一侧活跃即保持活跃，
+    // 两行都活跃后按 startedAt 升序排列（bg-a 先启动）。
+    expect(rows.map((row) => [row.taskId, row.status, row.title])).toEqual([
+      ["bg-a", "running", "任务 A"],
+      ["bg-b", "running", "任务 B"],
+    ]);
+  });
+
+  test("启动时间接近时不做跨对配对：歧义投影被抑制，状态不串用", () => {
+    const rows = selectAsyncTaskRows(
+      [
+        task({
+          taskId: "bg-a",
+          kind: "background",
+          isBackground: true,
+          title: "任务 A",
+          status: "running",
+          startedAt: iso(-60_000),
+        }),
+        task({
+          taskId: "bg-b",
+          kind: "background",
+          isBackground: true,
+          title: "任务 B",
+          status: "completed",
+          startedAt: iso(-56_000),
+          completedAt: iso(-1_000),
+          durationMs: 55_000,
+        }),
+        task({
+          taskId: "inst-a",
+          kind: "subagent",
+          isBackground: true,
+          title: "fork",
+          status: "running",
+          startedAt: iso(-55_950),
+        }),
+        task({
+          taskId: "inst-b",
+          kind: "subagent",
+          isBackground: true,
+          title: "fork",
+          status: "completed",
+          startedAt: iso(-55_900),
+          completedAt: iso(-1_000),
+        }),
+      ],
+      NOW,
+    );
+
+    expect(rows.map((row) => [row.taskId, row.status, row.title])).toEqual([
+      ["bg-a", "running", "任务 A"],
+      ["bg-b", "completed", "任务 B"],
+    ]);
+  });
+
+  test("容差边缘的第三个 subagent 投影不残留为 fork 行", () => {
+    const rows = selectAsyncTaskRows(
+      [
+        task({
+          taskId: "bg-a",
+          kind: "background",
+          isBackground: true,
+          title: "任务 A",
+          startedAt: iso(-60_000),
+        }),
+        task({
+          taskId: "bg-b",
+          kind: "background",
+          isBackground: true,
+          title: "任务 B",
+          status: "completed",
+          startedAt: iso(-55_000),
+          completedAt: iso(-1_000),
+        }),
+        task({
+          taskId: "inst-a",
+          kind: "subagent",
+          isBackground: true,
+          title: "fork",
+          startedAt: iso(-55_100),
+        }),
+        task({
+          taskId: "inst-b",
+          kind: "subagent",
+          isBackground: true,
+          title: "fork",
+          startedAt: iso(-54_900),
+        }),
+      ],
+      NOW,
+    );
+
+    expect(rows.map((row) => [row.taskId, row.kindLabel, row.title])).toEqual([
+      ["bg-a", "后台", "任务 A"],
+      ["bg-b", "后台", "任务 B"],
+    ]);
+    expect(rows.some((row) => row.title === "fork")).toBe(false);
+  });
+
+  test("时间戳缺失时不配对，宁可多显示一行也不丢任务", () => {
+    const subagentWithoutStart = selectAsyncTaskRows(
+      [
+        task({
+          taskId: "bg-1",
+          kind: "background",
+          isBackground: true,
+          title: "复核发布清单",
+          startedAt: iso(-30_000),
+        }),
+        task({
+          taskId: "inst-1",
+          kind: "subagent",
+          isBackground: true,
+          title: "fork",
+        }),
+      ],
+      NOW,
+    );
+    expect(subagentWithoutStart.map((row) => row.taskId)).toEqual([
+      "bg-1",
+      "inst-1",
+    ]);
+
+    const backgroundWithoutStart = selectAsyncTaskRows(
+      [
+        task({
+          taskId: "bg-2",
+          kind: "background",
+          isBackground: true,
+          title: "独立核验",
+        }),
+        task({
+          taskId: "inst-2",
+          kind: "subagent",
+          isBackground: true,
+          title: "fork",
+          startedAt: iso(-5_000),
+        }),
+      ],
+      NOW,
+    );
+    expect(backgroundWithoutStart.map((row) => row.taskId)).toEqual([
+      "inst-2",
+      "bg-2",
+    ]);
+  });
+
+  test("配对容差含边界，超出容差不再配对", () => {
+    const atBoundary = selectAsyncTaskRows(
+      [
+        task({
+          taskId: "bg-1",
+          kind: "background",
+          isBackground: true,
+          title: "复核发布清单",
+          startedAt: iso(-30_000),
+        }),
+        task({
+          taskId: "inst-1",
+          kind: "subagent",
+          isBackground: true,
+          title: "fork",
+          startedAt: iso(-25_000),
+        }),
+      ],
+      NOW,
+    );
+    expect(atBoundary.map((row) => row.taskId)).toEqual(["bg-1"]);
+
+    const beyondBoundary = selectAsyncTaskRows(
+      [
+        task({
+          taskId: "bg-2",
+          kind: "background",
+          isBackground: true,
+          title: "复核发布清单",
+          startedAt: iso(-30_000),
+        }),
+        task({
+          taskId: "inst-2",
+          kind: "subagent",
+          isBackground: true,
+          title: "fork",
+          startedAt: iso(-24_999),
+        }),
+      ],
+      NOW,
+    );
+    expect(beyondBoundary.map((row) => row.taskId)).toEqual(["bg-2", "inst-2"]);
   });
 });
 

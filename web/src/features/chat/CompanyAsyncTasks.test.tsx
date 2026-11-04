@@ -54,6 +54,99 @@ describe("CompanyAsyncTasks", () => {
     expect(html).toContain('aria-expanded="true"');
   });
 
+  test("同一后台任务的两副投影只渲染一行，表头计数等于去重后的任务数", () => {
+    const now = Date.now();
+    const isoAgo = (ms: number) => new Date(now - ms).toISOString();
+    const html = renderToStaticMarkup(
+      <CompanyAsyncTasks
+        tasks={[
+          task({
+            taskId: "bg-1",
+            kind: "background",
+            isBackground: true,
+            title: "复核发布清单",
+            startedAt: isoAgo(30_000),
+          }),
+          task({
+            taskId: "inst-1",
+            isBackground: true,
+            title: "fork",
+            startedAt: isoAgo(30_200),
+          }),
+          task({
+            taskId: "bg-2",
+            kind: "background",
+            isBackground: true,
+            title: "独立核验",
+            status: "completed",
+            startedAt: isoAgo(70_000),
+            completedAt: isoAgo(1_000),
+            durationMs: 69_000,
+          }),
+          task({
+            taskId: "inst-2",
+            isBackground: true,
+            title: "fork",
+            status: "completed",
+            startedAt: isoAgo(70_300),
+            completedAt: isoAgo(1_000),
+          }),
+        ]}
+      />,
+    );
+
+    expect(rowCount(html)).toBe(2);
+    expect(html).toContain("异步任务 2");
+    expect(html).toContain('title="复核发布清单"');
+    expect(html).toContain('title="独立核验"');
+    expect(html).not.toContain("fork");
+  });
+
+  test("启动时间接近的并发任务只渲染后台行，歧义投影不残留 fork", () => {
+    const now = Date.now();
+    const isoAgo = (ms: number) => new Date(now - ms).toISOString();
+    const html = renderToStaticMarkup(
+      <CompanyAsyncTasks
+        tasks={[
+          task({
+            taskId: "bg-a",
+            kind: "background",
+            isBackground: true,
+            title: "任务 A",
+            startedAt: isoAgo(60_000),
+          }),
+          task({
+            taskId: "bg-b",
+            kind: "background",
+            isBackground: true,
+            title: "任务 B",
+            status: "completed",
+            startedAt: isoAgo(55_000),
+            completedAt: isoAgo(1_000),
+          }),
+          task({
+            taskId: "inst-a",
+            isBackground: true,
+            title: "fork",
+            startedAt: isoAgo(55_100),
+          }),
+          task({
+            taskId: "inst-b",
+            isBackground: true,
+            title: "fork",
+            startedAt: isoAgo(54_900),
+          }),
+        ]}
+      />,
+    );
+
+    expect(rowCount(html)).toBe(2);
+    expect(html).toContain("异步任务 2");
+    expect(html).toContain('title="任务 A"');
+    expect(html).toContain('title="任务 B"');
+    expect(html).not.toContain("fork");
+  });
+
   test("没有任务或只有非异步任务时完全不渲染", () => {
     expect(renderToStaticMarkup(<CompanyAsyncTasks tasks={[]} />)).toBe("");
     expect(
@@ -79,6 +172,41 @@ describe("CompanyAsyncTasks", () => {
     );
 
     expect(html).toBe("");
+  });
+
+  test("活跃任务与旧终态投影合并后仍渲染，整栏不消失", () => {
+    const now = Date.now();
+    const isoAgo = (ms: number) => new Date(now - ms).toISOString();
+    const html = renderToStaticMarkup(
+      <CompanyAsyncTasks
+        tasks={[
+          task({
+            taskId: "bg-long",
+            kind: "background",
+            isBackground: true,
+            title: "长任务",
+            status: "running",
+            startedAt: isoAgo(12 * 60_000),
+          }),
+          task({
+            taskId: "inst-stale",
+            isBackground: true,
+            title: "fork",
+            status: "completed",
+            startedAt: isoAgo(12 * 60_000 - 200),
+            completedAt: isoAgo(11 * 60_000),
+            updatedAt: isoAgo(11 * 60_000),
+          }),
+        ]}
+      />,
+    );
+
+    expect(rowCount(html)).toBe(1);
+    expect(html).toContain("异步任务 1");
+    expect(html).toContain('title="长任务"');
+    expect(html).toContain("运行中");
+    expect(html).toContain('data-active="true"');
+    expect(html).not.toContain("fork");
   });
 
   test("重启后超过 10 分钟的 unobserved 任务不再渲染，也不再占用刷新", () => {
