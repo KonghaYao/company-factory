@@ -217,22 +217,116 @@
  * 不放 @layer：这里需要稳定覆盖 Peri 内层 textarea 的 utilities，统一成
  * 外框唯一焦点指示（textarea 自身无边框、无背景、无 ring）。base 层的
  * 全局 textarea 重置已不会再压过 Peri 的 utilities。
+ *
+ * 卡片皮肤画在 shell 的 ::before 上：异步任务栏仍是 shell 的 DOM 子节点，
+ * 任务存在时 shell 预留 100px 透明停靠区，使 offsetHeight 继续覆盖任务栏，
+ * 时间线 bottomInset 不会因任务栏脱离文档流而变小；边框只包住输入区。
  */
 .peri-chat [data-slot="composer-shell"] {
-  background: var(--panel, var(--surface, #fff));
+  --company-composer-dock: 0px;
+  position: relative;
+  isolation: isolate;
+  padding-top: var(--company-composer-dock);
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg, 14px);
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  /* 停靠区是透明的，但 shell 自身仍是浮层里的命中目标：折叠态下任务栏与
+     卡片之间的空白会挡住时间线的点击、选中与滚轮滚动。交互内容都是 shell
+     的直接子节点，逐个恢复（见下一条规则）；::before 已经是 none。 */
+  pointer-events: none;
+}
+
+.peri-chat [data-slot="composer-shell"] > * {
+  pointer-events: auto;
+}
+
+/*
+ * shell 的父级是 Peri 的 `pointer-events-auto` 浮层槽位；它当前唯一的子节点
+ * 就是 composer-shell，本身没有可交互内容。不关掉它，停靠区会改由槽位截获
+ * 指针。用 :has 精确限定“直接包含 composer-shell 的元素”，避免误伤其他浮层。
+ */
+.peri-chat :has(> [data-slot="composer-shell"]) {
+  pointer-events: none;
+}
+
+.peri-chat [data-slot="composer-shell"]::before {
+  content: "";
+  position: absolute;
+  top: calc(var(--company-composer-dock) - 1px);
+  right: -1px;
+  bottom: -1px;
+  left: -1px;
+  z-index: -1;
   border: 1px solid var(--line-strong, var(--border, #d6d2c9));
   border-radius: var(--radius-lg, 14px);
+  background: var(--panel, var(--surface, #fff));
   box-shadow: var(--shadow-sm, 0 1px 2px rgba(32, 36, 42, 0.05));
+  pointer-events: none;
   transition:
     border-color 0.15s ease,
     box-shadow 0.15s ease;
 }
 
-.peri-chat [data-slot="composer-shell"]:focus-within {
+/*
+ * 卡片皮肤的透明命中层。
+ *
+ * shell 与 ::before 都是 pointer-events: none，子节点只覆盖各自的内容盒；
+ * 卡片上可见、但落在子节点之间的空白（Issue chip 与输入行之间的 8px
+ * margin、1px 边框、圆角内缘）因此会穿透到背后的时间线。这里用与 ::before
+ * 完全重合的透明层接住这些点。
+ *
+ * top 与 ::before 相同：相对 padding box 的 dock - 1px，算上 shell 的 1px
+ * 透明边框后正好从卡片可见上沿开始，上方停靠区（含任务栏到卡片之间的
+ * 8px 间隙）仍然穿透给时间线。
+ *
+ * z-index: -1 让它在内容之下，textarea/按钮/chip/页脚的点击与文字选择不受
+ * 影响；pointer-events: auto 只接管没有子节点覆盖的空白区域。
+ */
+.peri-chat [data-slot="composer-shell"]::after {
+  content: "";
+  position: absolute;
+  top: calc(var(--company-composer-dock) - 1px);
+  right: -1px;
+  bottom: -1px;
+  left: -1px;
+  z-index: -1;
+  border-radius: var(--radius-lg, 14px);
+  pointer-events: auto;
+}
+
+/*
+ * 任务存在时预留停靠区：100px = 任务栏最高 92px（列表最多 3 行）
+ * + 卡片上沿 8px 间隙。任务栏因此完全落在 shell 的透明区域内，
+ * offsetHeight 始终覆盖它。
+ *
+ * 折叠态不单独缩短停靠区：dock 参与 offsetHeight（时间线 bottomInset），
+ * 100px → 47px 会让底部锚定的时间线内容在折叠瞬间下移 53px。
+ */
+.peri-chat
+  [data-slot="composer-shell"]:has(> [data-slot="peri-company-async-tasks"]) {
+  --company-composer-dock: 100px;
+}
+
+/* 任务栏已移到卡片外，但仍是 composer-shell 的 DOM 子节点；焦点光环只跟随
+   输入框，避免点任务栏的折叠按钮时整张卡片变蓝。旧浏览器退回 :focus-within。 */
+.peri-chat [data-slot="composer-shell"]:has(
+    [data-slot="peri-composer-textarea"]:focus
+  )::before {
   border-color: var(--accent-strong, var(--accent, #2d47b2));
   box-shadow:
     0 0 0 3px var(--accent-soft, #eef2ff),
     var(--shadow-sm, 0 1px 2px rgba(32, 36, 42, 0.05));
+}
+
+@supports not selector(:has(*)) {
+  .peri-chat [data-slot="composer-shell"]:focus-within::before {
+    border-color: var(--accent-strong, var(--accent, #2d47b2));
+    box-shadow:
+      0 0 0 3px var(--accent-soft, #eef2ff),
+      var(--shadow-sm, 0 1px 2px rgba(32, 36, 42, 0.05));
+  }
 }
 
 .peri-chat [data-slot="peri-composer-input"] {
@@ -270,6 +364,14 @@
 .peri-chat [data-slot="peri-composer-textarea"]::placeholder {
   color: var(--faint, #98a0aa);
   opacity: 1;
+}
+
+/* 任务栏脱离文档流后，Issue/引用 chips 成为卡片的首个正常流内容；
+   补 8px 顶距，保持它原来与任务栏之间的呼吸感。 */
+.peri-chat
+  [data-slot="composer-shell"]:has(> [data-slot="peri-company-async-tasks"])
+  > [data-slot="company-composer-extras"] {
+  padding-top: 8px;
 }
 
 .peri-chat [data-slot="peri-composer-status"] {
@@ -311,14 +413,22 @@
  *
  * 每个 subagent / 后台 shell 一行；标题是唯一的弹性项，其余字段 shrink 为 0，
  * 窄屏时先截断标题，不撑破 composer。数据来自 `ChatDisplayState.tasks`。
+ *
+ * 栏位视觉上停在输入卡片外、紧贴卡片上沿：absolute + bottom 脱离文档流。
+ * 停靠区高度参与 shell 的偏移计算，9px = shell 1px 透明边框 + 卡片上方
+ * 8px 间隙；左右 -1px 让栏位与卡片外沿对齐（abs 包含块是 padding box）。
  */
 .peri-chat [data-slot="peri-company-async-tasks"] {
+  position: absolute;
+  right: -1px;
+  bottom: calc(100% - var(--company-composer-dock, 0px) + 9px);
+  left: -1px;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   gap: 2px;
   min-width: 0;
-  max-width: 100%;
-  margin: 8px 12px;
+  margin: 0;
   padding: 6px 8px;
   border: 1px solid var(--chat-border-1, rgba(0, 0, 0, 0.06));
   border-radius: 10px;
@@ -367,8 +477,13 @@
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+  /* 最多 3 行（3×16px + 2×2px gap）；超出的任务在栏内滚动。
+     栏高上限 92px，不超过 shell 预留的 100px 停靠区。 */
+  max-height: 52px;
   margin: 0;
   padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   list-style: none;
 }
 
@@ -376,6 +491,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  flex: 0 0 auto;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
