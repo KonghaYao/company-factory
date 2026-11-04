@@ -753,6 +753,11 @@ describe("Company domain — files, permissions and business invariants", () => 
       version: i.version,
     });
     expect(await domain.listPendingDecisions(user)).toEqual([]);
+    expect(i.needs_user).toBe(false);
+    expect(i.decisions.find((q) => q.id === "1-Q3")).toMatchObject({
+      status: "pending",
+      answer: "Yes",
+    });
   });
   test("A09 IM persists, delivers once, replies distinct from delivery and does not create Issues", async () => {
     const before = (await domain.listIssues(user)).length;

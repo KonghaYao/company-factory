@@ -35,7 +35,7 @@ export function RunView({
 }) {
   const pending = issues.flatMap((issue) =>
     (issue.decisions || [])
-      .filter((decision) => decision.status === "pending")
+      .filter((decision) => decision.status === "pending" && !decision.answer)
       .map((decision) => ({ issue, decision })),
   );
   const activities = runtime?.activities || [];

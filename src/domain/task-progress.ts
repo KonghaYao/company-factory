@@ -133,6 +133,12 @@ export function normalizeIssueProgress(
   const { latest_update: _legacyLatestUpdate, ...rest } = issue;
   const normalized: Issue = {
     ...rest,
+    // Answered-but-unresolved decisions are no longer waiting for the user.
+    // Derive on read so legacy stored values cannot keep the yellow dot alive.
+    needs_user:
+      rest.decisions?.some(
+        (decision) => decision.status === "pending" && decision.answer == null,
+      ) ?? false,
     todos: normalizeTodos(rest.todos),
   };
   if (

@@ -15,31 +15,18 @@ export class AccessError extends Error {
 }
 const equal = (a: string, b: string) =>
   a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
-/** Local single-user UI and independent per-agent bearer identities. Never trusts input.role/id. */
+/**
+ * Local single-user UI and independent per-agent bearer identities. Never trusts input.role/id.
+ * Host and Origin are intentionally not validated: the workbench may be reached through any
+ * hostname (including a Tailscale address). Every data route still requires an owner cookie or
+ * an Agent bearer credential.
+ */
 export class AccessControl {
   private readonly webSession = crypto.randomUUID() + crypto.randomUUID();
   constructor(
     readonly root: string,
-    readonly baseUrl: string,
     readonly webToken?: string,
   ) {}
-  allowed(request: Request) {
-    const expected = new URL(this.baseUrl);
-    const incoming = new URL(request.url);
-    const allowedHosts = new Set([expected.host]);
-    if (["127.0.0.1", "localhost", "[::1]"].includes(expected.hostname)) {
-      allowedHosts.add(`localhost:${expected.port || "80"}`);
-      allowedHosts.add(`127.0.0.1:${expected.port || "80"}`);
-    }
-    if (!allowedHosts.has(incoming.host))
-      throw new AccessError("forbidden", "Unrecognized host");
-    const origin = request.headers.get("origin");
-    if (origin && !allowedHosts.has(new URL(origin).host))
-      throw new AccessError("forbidden", "Cross-origin requests are rejected");
-    const site = request.headers.get("sec-fetch-site");
-    if (site === "cross-site")
-      throw new AccessError("forbidden", "Cross-site requests are rejected");
-  }
   private hasCookie(request: Request) {
     return (request.headers.get("cookie") || "")
       .split(";")
@@ -51,7 +38,6 @@ export class AccessControl {
     return `company_session=${this.webSession}; HttpOnly; SameSite=Strict; Path=/`;
   }
   bootstrap(request: Request) {
-    this.allowed(request);
     if (!this.hasCookie(request))
       throw new AccessError(
         "unauthorized",
@@ -60,14 +46,12 @@ export class AccessControl {
       );
     return this.cookie();
   }
-  login(request: Request, token: string) {
-    this.allowed(request);
+  login(token: string) {
     if (!this.webToken || !equal(token, this.webToken))
       throw new AccessError("unauthorized", "Invalid local access token", 401);
     return this.cookie();
   }
   user(request: Request, companyId: string): CallerContext {
-    this.allowed(request);
     if (!this.hasCookie(request))
       throw new AccessError(
         "unauthorized",
@@ -77,7 +61,6 @@ export class AccessControl {
     return { type: "user", id: "owner", companyId };
   }
   async agent(request: Request): Promise<CallerContext> {
-    this.allowed(request);
     const authorization = request.headers.get("authorization") || "";
     if (!authorization.startsWith("Bearer "))
       throw new AccessError(

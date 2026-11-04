@@ -802,16 +802,36 @@ if (!enabled)
         body: JSON.stringify({ caller: head }),
       });
       expect(forged.status).toBe(401);
-      const csrf = await fetch(base + "/api/action", {
+      // Any Host is accepted; the owner cookie is the boundary for user data.
+      const foreign = "http://100.105.157.106:3400";
+      const spa = await application.app.fetch(new Request(foreign + "/"));
+      expect(spa.status).not.toBe(403);
+      expect(await spa.text()).not.toContain("Unrecognized host");
+      const anonymous = await application.app.fetch(
+        new Request(foreign + "/api/companies"),
+      );
+      expect(anonymous.status).toBe(401);
+      const owner = await application.app.fetch(
+        new Request(foreign + "/api/companies", { headers: { cookie } }),
+      );
+      expect(owner.status).toBe(200);
+      // Origin and Sec-Fetch-Site are no longer validated either.
+      const crossOrigin = await fetch(base + "/api/action", {
         method: "POST",
         headers: {
           cookie,
           origin: "https://attacker.invalid",
+          "sec-fetch-site": "cross-site",
           "content-type": "application/json",
         },
-        body: "{}",
+        body: JSON.stringify({
+          companyId: user.companyId,
+          module: "company_org",
+          operation: "organization",
+          input: {},
+        }),
       });
-      expect(csrf.status).toBe(403);
+      expect(crossOrigin.status).toBe(200);
     });
     test("A04/A06 real HTTP user role grant, MCP allowed creation, parallel scoped read isolation", async () => {
       const org = await api(`/api/companies/${user.companyId}`);

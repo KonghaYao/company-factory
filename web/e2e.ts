@@ -211,12 +211,15 @@ try {
     .fill("本期仅支持整单退款。");
   await page.getByTestId("decision-answer-1-Q1").click();
   await expect(page.getByText("答复：本期仅支持整单退款。")).toBeVisible();
+  await expect(page.getByText("已答复，等待 Agent 处理")).toBeVisible();
+  await expect(page.getByTestId("decision-answer-1-Q1")).toHaveCount(0);
+  await expect(page.getByTestId("pending-question-1-Q1")).toHaveCount(0);
   const answered = await application.domain.getIssue(
     { type: "user", id: "owner", companyId },
     { issueId: "1" },
   );
   expect(answered.decisions[0].answer).toBe("本期仅支持整单退款。");
-  expect(answered.needs_user).toBe(true);
+  expect(answered.needs_user).toBe(false);
   step(
     "A08: explicit question ID answer saved; remains pending until current Agent processes it",
   );

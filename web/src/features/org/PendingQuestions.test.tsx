@@ -54,7 +54,6 @@ function render(
       questions={options.questions ?? questions}
       agents={agents}
       error={options.error ?? null}
-      onAnswer={async () => {}}
       onOpenIssue={() => {}}
     />,
   );
@@ -65,7 +64,7 @@ describe("PendingQuestions", () => {
     expect(render({ questions: [] })).toBe("");
   });
 
-  test("questions show the count, issue, agent, question and independent forms", () => {
+  test("questions show the count and one clickable summary row without answer forms", () => {
     const html = render();
 
     expect(html).toContain('data-testid="pending-questions-count">2</em>');
@@ -73,32 +72,36 @@ describe("PendingQuestions", () => {
       'aria-expanded="true"',
     );
 
-    expect(html).toContain("#1");
-    expect(html).toContain("登录页改版");
-    expect(html).toContain("开发一号");
-    expect(html).toContain("采用哪个登录方案？");
-    expect(html).toContain("#2");
-    expect(html).toContain("支付接口");
-    expect(html).toContain("是否继续等待第三方回调？");
+    const first = buttonWith(html, "pending-question-1-Q1");
+    expect(first).toContain('type="button"');
+    expect(first).toContain("#1");
+    expect(first).toContain("采用哪个登录方案？");
+    expect(first).toContain("开发一号");
+    expect(first).toContain('title="打开 Issue #1：登录页改版：采用哪个登录方案？"');
+    expect(first).toContain(
+      'aria-label="开发一号 · #1 · 登录页改版：采用哪个登录方案？"',
+    );
+    expect(buttonWith(html, "pending-question-2-Q1")).toContain(
+      "是否继续等待第三方回调？",
+    );
 
-    expect(tag(html, "pending-question-1-Q1-option-0")).toContain('aria-pressed="false"');
-    expect(tag(html, "pending-question-1-Q1-option-1")).not.toBe("");
-    expect(tag(html, "pending-question-2-Q1-option-0")).toBe("");
-    expect(tag(html, "pending-question-1-Q1-custom")).toContain("<textarea");
-    expect(tag(html, "pending-question-2-Q1-custom")).toContain("<textarea");
-    expect(tag(html, "pending-question-1-Q1-submit")).not.toBe("");
-    expect(tag(html, "pending-question-2-Q1-submit")).not.toBe("");
+    expect(html).not.toContain("<textarea");
+    expect(tag(html, "pending-question-1-Q1-option-0")).toBe("");
+    expect(tag(html, "pending-question-1-Q1-custom")).toBe("");
+    expect(tag(html, "pending-question-1-Q1-submit")).toBe("");
+    expect(tag(html, "pending-question-2-Q1-submit")).toBe("");
   });
 
-  test("archived agents are labeled and keep the issue link disabled, answers open", () => {
+  test("archived agents keep a single disabled-announced row with the full summary", () => {
     const html = render();
-    const issue = buttonWith(html, "pending-question-issue-2-Q1");
+    const row = buttonWith(html, "pending-question-2-Q1");
 
-    expect(issue).toContain("disabled");
-    expect(issue).toContain("已归档");
-    expect(html).toContain("归档成员 · 已归档");
-    expect(tag(html, "pending-question-2-Q1-custom")).toContain("<textarea");
-    expect(tag(html, "pending-question-2-Q1-submit")).not.toBe("");
+    expect(row).toContain('aria-disabled="true"');
+    expect(row).toContain("归档成员 · 已归档");
+    expect(row).toContain(
+      "该成员已归档，无法在工作区打开 Issue",
+    );
+    expect(html).not.toContain("<textarea");
   });
 
   test("an error renders inside the inbox even when there are no questions", () => {

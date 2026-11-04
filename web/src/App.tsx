@@ -216,49 +216,6 @@ export default function App() {
     refetchInterval: POLL_INTERVAL.questions,
   });
   const pendingQuestions = pendingDecisions.data?.items || [];
-  const answerPendingDecision = useMutation({
-    mutationFn: (vars: {
-      companyId: string;
-      item: PendingDecision;
-      answer: string;
-    }) =>
-      action(vars.companyId, "company_tasks", "answerDecision", {
-        issueId: vars.item.issueId,
-        questionId: vars.item.decisionId,
-        answer: vars.answer,
-        requestId: uuid(),
-      }),
-    onSuccess: (_result, vars) => {
-      // 立即隐藏，不等下一次 3s 轮询。
-      qc.setQueryData<{ items: PendingDecision[] }>(
-        ["pending-decisions", vars.companyId],
-        (current) =>
-          current
-            ? {
-                items: current.items.filter(
-                  (item) => item.decisionId !== vars.item.decisionId,
-                ),
-              }
-            : current,
-      );
-      qc.invalidateQueries({
-        queryKey: ["pending-decisions", vars.companyId],
-      });
-      qc.invalidateQueries({
-        queryKey: ["workspace", vars.companyId, vars.item.agentId],
-      });
-      qc.invalidateQueries({
-        queryKey: [
-          "comments",
-          vars.companyId,
-          vars.item.agentId,
-          vars.item.issueId,
-        ],
-      });
-      qc.invalidateQueries({ queryKey: ["company", vars.companyId] });
-      setToast("答复已提交；Agent 将继续处理。");
-    },
-  });
   const issues = workspace.data?.issues || [];
   const previews = workspace.data?.previews || [];
   const threads = workspace.data?.threads || [];
@@ -284,7 +241,7 @@ export default function App() {
   const openPendingQuestion = (targetAgentId: string, issueId: string) => {
     const target = agents.find((item) => agentId(item) === targetAgentId);
     if (!target || target.status === "archived") {
-      setToast("该成员已归档；问题仍可直接答复，但不会切换工作区。");
+      setToast("该成员已归档；无法在工作区打开该 Issue，请先恢复成员后再处理。");
       return;
     }
     selectAgent(targetAgentId);
@@ -466,9 +423,6 @@ export default function App() {
             error={organization.error}
             pendingQuestions={pendingQuestions}
             pendingQuestionsError={pendingDecisions.error}
-            onAnswerQuestion={(item, answer) =>
-              answerPendingDecision.mutateAsync({ companyId, item, answer })
-            }
             onOpenQuestion={openPendingQuestion}
             onChooseCompany={chooseCompany}
             onSelectAgent={selectAgent}

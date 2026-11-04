@@ -314,6 +314,35 @@ describe("Pending decision inbox HTTP/MCP contract", () => {
     expect(decision).toMatchObject({ status: "pending", answer: "Plan A" });
   });
 
+  test("an answered decision stops needing the user while remaining pending until resolve", async () => {
+    const created = await issue("Answered unresolved");
+    const asked = await ask(created.id, "Ready to ship?");
+    const decisionId = asked.decisions[0].id as string;
+
+    const answered = await actionJson("answerDecision", {
+      issueId: created.id,
+      questionId: decisionId,
+      answer: "Yes",
+      requestId: requestId("answer-unresolved"),
+    });
+    expect(answered.status).toBe(200);
+    expect(answered.body.needs_user).toBe(false);
+
+    const detail = await read(created.id);
+    expect(detail.needs_user).toBe(false);
+    expect(
+      detail.decisions.find((item: any) => item.id === decisionId),
+    ).toMatchObject({ status: "pending", answer: "Yes" });
+
+    const after = await pending();
+    expect(
+      (after.body.items as any[]).some(
+        (item) =>
+          item.issueId === created.id && item.decisionId === decisionId,
+      ),
+    ).toBe(false);
+  });
+
   test("withdrawn decisions and canceled Issues are excluded from the inbox", async () => {
     const active = await issue("Pending inbox withdraw");
     await ask(active.id, "Withdraw me?");

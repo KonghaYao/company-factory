@@ -65,7 +65,8 @@ export function TasksView({
             );
             const pending =
               item.decisions?.filter(
-                (decision) => decision.status === "pending",
+                (decision) =>
+                  decision.status === "pending" && !decision.answer,
               ).length || 0;
             const todo = todoProgress(item.todos);
             return (

@@ -14,12 +14,15 @@ import {
   UserMessagePresentationContext,
   type UserMessagePresentation,
 } from "../../peri/chat/timeline/rows/UserMessageRow";
+import { CompanyAsyncTasks } from "./CompanyAsyncTasks";
 import { CompanyImMessageRow } from "./CompanyImMessageRow";
+import type { AsyncTask } from "./asyncTaskRows";
 import { parseCompanyImMessage } from "./companyIm";
 import { createCompanyChatApplication } from "./company-chat-application";
 
 const NO_AGENTS: Agent[] = [];
 const NO_THREADS: Thread[] = [];
+const NO_TASKS: AsyncTask[] = [];
 
 /**
  * Company 的 Peri ChatShell 宿主。
@@ -90,12 +93,15 @@ export function CompanyChatShell({
           chrome={{ sidebar: false, details: false }}
           beforeTimeline={<LoadEarlier chat={chat} />}
           composerExtras={
-            <CompanyComposerExtras
-              chat={chat}
-              scope={scope}
-              issues={issues}
-              local={local}
-            />
+            <>
+              <CompanyAsyncTasks tasks={chat.state?.tasks ?? NO_TASKS} />
+              <CompanyComposerExtras
+                chat={chat}
+                scope={scope}
+                issues={issues}
+                local={local}
+              />
+            </>
           }
           injectedDraft={injectedDraft}
           onInjectedDraft={onInjectedDraft}

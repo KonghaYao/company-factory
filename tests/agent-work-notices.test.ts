@@ -578,7 +578,7 @@ describe("Company fact notices through the HTTP/MCP boundary", () => {
     });
     expect((await settled(answered.notification.id)).status).toBe("accepted");
     expect(answered.decisions[0].status).toBe("pending");
-    expect(answered.needs_user).toBe(true);
+    expect(answered.needs_user).toBe(false);
     expect(deliveries.at(-1)!.text).toContain(asked.decisions[0].id);
   });
   test("MCP lists use the bounded Agent projection; owner HTTP remains compatible", async () => {

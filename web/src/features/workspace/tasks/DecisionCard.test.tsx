@@ -46,6 +46,8 @@ describe("DecisionCard", () => {
     });
 
     expect(html).toContain("选择登录方案");
+    expect(html).toContain("待用户裁定");
+    expect(html).toContain("等待你的裁定");
     expect(buttonWith(html, "decision-1-Q1-option-0")).toContain("方案 A");
     expect(buttonWith(html, "decision-1-Q1-option-1")).toContain("方案 B");
     expect(tag(html, "decision-1-Q1-custom")).toContain("<textarea");
@@ -61,8 +63,27 @@ describe("DecisionCard", () => {
     });
 
     expect(html).not.toContain('class="decision-options"');
+    expect(html).toContain("待用户裁定");
     expect(tag(html, "decision-1-Q1-option-0")).toBe("");
     expect(tag(html, "decision-1-Q1-custom")).toContain("<textarea");
     expect(tag(html, "decision-answer-1-Q1")).toContain('type="submit"');
+  });
+
+  test("an answered but unresolved decision is not waiting for the user", () => {
+    const html = render({
+      id: "1-Q1",
+      question: "选择登录方案",
+      options: ["方案 A", "方案 B"],
+      status: "pending",
+      answer: "方案 A",
+    });
+
+    expect(html).not.toContain("待用户裁定");
+    expect(html).toContain("已答复，等待 Agent 处理");
+    expect(html).not.toContain("等待你的裁定");
+    expect(html).not.toContain("<textarea");
+    expect(html).not.toContain('type="submit"');
+    expect(tag(html, "decision-1-Q1-custom")).toBe("");
+    expect(tag(html, "decision-answer-1-Q1")).toBe("");
   });
 });

@@ -33,7 +33,9 @@ bun start
 
 打开终端打印的私密 `http://127.0.0.1:3000/#access=...` 链接。访问口令仅用于本地所有者登录；浏览器完成登录后移除 URL fragment，使用 HttpOnly / SameSite cookie。不要把此链接交给 Agent 或其他人。若丢失链接，口令在 `$COMPANY_HOME/owner-token`，登录页也可手动输入。
 
-> Workspace 与宿主 Git 不再提供 OS 级隔离：Agent 工具可以读写宿主用户可访问的本机文件，包括 Company 业务源文件、其他 Agent 目录与所有者口令。请只在本机可信环境运行，不要把服务暴露到非回环地址。需要调试时可用 `COMPANY_WORKSPACE=disabled` 关闭 Agent Workspace；所有者文件视图不受影响。
+服务接受任意 `Host` 访问（例如 Tailscale 地址 `http://100.x.y.z:3400`），不会再因 `Host`、`Origin` 或 `Sec-Fetch-Site` 不匹配返回 403。数据面仍然要求凭证：`/api/login` 校验 `COMPANY_WEB_TOKEN`，`/api/*` 与 `/sync` WS 需要 owner cookie，Company MCP 需要 Agent Bearer。相应地，服务不再提供 DNS-rebinding 与跨站请求的来源防线；请只在可信网络中暴露端口（例如通过 Tailscale 或防火墙限制），不要直接公开到互联网。
+
+> Workspace 与宿主 Git 不提供 OS 级隔离：Agent 工具可以读写宿主用户可访问的本机文件，包括 Company 业务源文件、其他 Agent 目录与所有者口令。请只在可信主机与可信网络运行；需要非回环访问时使用 Tailscale 等受控网络，并设置 `COMPANY_WEB_TOKEN`。需要调试时可用 `COMPANY_WORKSPACE=disabled` 关闭 Agent Workspace；所有者文件视图不受影响。
 
 环境变量：
 
@@ -42,8 +44,8 @@ bun start
 | `COMPANY_HOME` | `~/.company`；Company / Agent 文件与宿主 Session 绑定元数据 |
 | `COMPANY_WASM_STORES_FILE` | 会话存储的唯一来源：宿主私有 0600 JSON，`stores` 为每个 `(companyId, agentId)` 配置一条 `url/authToken`，或用全局 `default` 覆盖所有未列出的 scope；不同 scope 可共用同一回环 URL。缺失时服务可启动，但 Session 解析报 `wasm_store_not_configured` |
 | `PORT` | `3000` |
-| `COMPANY_HOST` | `127.0.0.1`；建议保留本机监听 |
-| `COMPANY_BASE_URL` | 对应本机地址；写入 Agent 的三个 Company MCP 配置 |
+| `COMPANY_HOST` | `127.0.0.1`；使用非回环监听时必须设置 `COMPANY_WEB_TOKEN`（启动期校验） |
+| `COMPANY_BASE_URL` | 写入 Agent 的三个 Company MCP 配置；不再用于校验入站 `Host` |
 | `COMPANY_WEB_TOKEN` | 可选：覆盖本地自动生成的所有者口令 |
 | `COMPANY_WORKSPACE` | 可选：仅 `disabled` 时关闭 Agent 的宿主 Workspace MCP（公司/会话/聊天与所有者「文件」视图不受影响）；缺省启用本地官方 Workspace |
 | `PERI_BINARY` | `.tools/peri/peri`；官方 4.4.1，仅用于 Workspace/MCP，不承载 Agent ACP |

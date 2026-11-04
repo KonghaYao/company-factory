@@ -162,8 +162,9 @@ export function IssueDetail({
     (agent) => (agent.agentId || agent.id) === issue.agent_id,
   );
   const pending =
-    issue.decisions?.filter((decision) => decision.status === "pending")
-      .length || 0;
+    issue.decisions?.filter(
+      (decision) => decision.status === "pending" && !decision.answer,
+    ).length || 0;
 
   return (
     <div className="panel-scroll issue-detail">

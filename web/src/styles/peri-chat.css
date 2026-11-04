@@ -305,3 +305,139 @@
   outline: 2px solid var(--accent-strong, var(--accent, #2d47b2));
   outline-offset: 2px;
 }
+
+/*
+ * 公司聊天宿主：异步任务简略栏。
+ *
+ * 每个 subagent / 后台 shell 一行；标题是唯一的弹性项，其余字段 shrink 为 0，
+ * 窄屏时先截断标题，不撑破 composer。数据来自 `ChatDisplayState.tasks`。
+ */
+.peri-chat [data-slot="peri-company-async-tasks"] {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  max-width: 100%;
+  margin: 8px 12px;
+  padding: 6px 8px;
+  border: 1px solid var(--chat-border-1, rgba(0, 0, 0, 0.06));
+  border-radius: 10px;
+  background: var(--chat-code-bg, #f9fafb);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.peri-chat [data-slot="peri-company-async-tasks-header"] {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  color: var(--chat-fg-3, #81858c);
+  font-weight: 500;
+}
+
+.peri-chat [data-slot="peri-company-async-tasks-toggle"] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-width: 24px;
+  min-height: 24px;
+  margin-left: auto;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  line-height: 0;
+}
+
+.peri-chat [data-slot="peri-company-async-tasks-toggle"]:hover {
+  background: var(--chat-hover, rgba(38, 49, 72, 0.06));
+}
+
+.peri-chat [data-slot="peri-company-async-tasks-toggle"]:focus-visible {
+  outline: 2px solid var(--chat-focus, #4176e6);
+  outline-offset: 1px;
+}
+
+.peri-chat [data-slot="peri-company-async-tasks-list"] {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.peri-chat [data-slot="peri-company-async-task"] {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.peri-chat [data-slot="peri-company-async-task-kind"] {
+  flex: 0 0 auto;
+  padding: 0 4px;
+  border: 1px solid var(--chat-border-2, rgba(0, 0, 0, 0.1));
+  border-radius: 4px;
+  background: var(--chat-floating, #fff);
+  color: var(--chat-fg-2, #61666b);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.peri-chat
+  [data-slot="peri-company-async-task"][data-kind="subagent"]
+  [data-slot="peri-company-async-task-kind"] {
+  color: var(--chat-link, #4176e6);
+}
+
+.peri-chat [data-slot="peri-company-async-task-title"] {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--chat-fg, #0f1115);
+}
+
+.peri-chat [data-slot="peri-company-async-task-status"] {
+  flex: 0 0 auto;
+  color: var(--chat-fg-3, #81858c);
+}
+
+.peri-chat
+  [data-slot="peri-company-async-task"][data-tone="running"]
+  [data-slot="peri-company-async-task-status"] {
+  color: var(--chat-running, #4176e6);
+}
+
+.peri-chat
+  [data-slot="peri-company-async-task"][data-tone="waiting"]
+  [data-slot="peri-company-async-task-status"] {
+  color: var(--chat-warn, #f59e0b);
+}
+
+.peri-chat
+  [data-slot="peri-company-async-task"][data-tone="done"]
+  [data-slot="peri-company-async-task-status"] {
+  color: var(--chat-success, #22c55e);
+}
+
+.peri-chat
+  [data-slot="peri-company-async-task"][data-tone="failed"]
+  [data-slot="peri-company-async-task-status"] {
+  color: var(--chat-error, #ec1313);
+}
+
+.peri-chat [data-slot="peri-company-async-task-duration"] {
+  flex: 0 0 auto;
+  color: var(--chat-caption, #adb2b8);
+  font-variant-numeric: tabular-nums;
+}

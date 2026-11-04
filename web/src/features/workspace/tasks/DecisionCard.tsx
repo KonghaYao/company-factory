@@ -1,6 +1,7 @@
+import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Check } from "lucide-react";
-import type { Issue, Scope } from "../../../lib/types";
+import type { Issue, PendingDecision, Scope } from "../../../lib/types";
 import { action } from "../../../lib/api";
 import { uuid } from "../../../lib/uuid";
 import { statusLabel, statusTone } from "../../../lib/format";
@@ -20,6 +21,9 @@ export function DecisionCard({
   onSuccess: () => void;
 }) {
   const qc = useQueryClient();
+  const [justAnswered, setJustAnswered] = useState(false);
+  const waiting = item.status === "pending" && !item.answer && !justAnswered;
+  const answered = item.status === "pending" && Boolean(item.answer || justAnswered);
   const mutation = useMutation({
     mutationFn: (text: string) =>
       action(scope.companyId, "company_tasks", "answerDecision", {
@@ -28,7 +32,23 @@ export function DecisionCard({
         answer: text,
         requestId: uuid(),
       }),
-    onSuccess: () => {
+    onSuccess: async () => {
+      // 先取消在途轮询，再乐观移除，避免旧响应把已答复的条目写回。
+      await qc.cancelQueries({
+        queryKey: ["pending-decisions", scope.companyId],
+      });
+      qc.setQueryData<{ items: PendingDecision[] }>(
+        ["pending-decisions", scope.companyId],
+        (current) =>
+          current
+            ? {
+                items: current.items.filter(
+                  (pending) => pending.decisionId !== item.id,
+                ),
+              }
+            : current,
+      );
+      setJustAnswered(true);
       qc.invalidateQueries({
         queryKey: ["pending-decisions", scope.companyId],
       });
@@ -40,12 +60,16 @@ export function DecisionCard({
     <section className={`decision-card decision-${item.status}`}>
       <header className="decision-row">
         <span className="decision-code">{item.id}</span>
-        <Badge
-          value={statusLabel(item.status)}
-          tone={statusTone(item.status)}
-        />
-        {item.status === "pending" && (
-          <span className="pending-flag">等待你的裁定</span>
+        {/* 已答复但状态仍是 pending 时，不再展示“待用户裁定”状态。 */}
+        {!answered && (
+          <Badge
+            value={statusLabel(item.status)}
+            tone={statusTone(item.status)}
+          />
+        )}
+        {waiting && <span className="pending-flag">等待你的裁定</span>}
+        {answered && (
+          <span className="answered-flag">已答复，等待 Agent 处理</span>
         )}
       </header>
       <h4>{item.question}</h4>
@@ -55,7 +79,7 @@ export function DecisionCard({
           {item.answer}
         </p>
       )}
-      {item.status === "pending" && (
+      {waiting && (
         <DecisionAnswerForm
           decisionId={item.id}
           options={item.options}

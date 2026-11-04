@@ -87,4 +87,35 @@ describe("TasksView todo progress", () => {
     expect(tag(html, "issue-8-latest-update")).toBe("");
     expect(html).toContain("旧摘要");
   });
+
+  test("answered decisions are not counted as pending on task cards", () => {
+    const html = renderToStaticMarkup(
+      <TasksView
+        scope={scope}
+        issues={[
+          {
+            id: 9,
+            title: "已答复的任务",
+            status: "code",
+            agent_id: "agent-1",
+            decisions: [
+              {
+                id: "9-Q1",
+                question: "可以上线吗？",
+                status: "pending",
+                answer: "可以",
+              },
+            ],
+          },
+        ]}
+        previews={[]}
+        onSelect={() => {}}
+        onCreate={() => {}}
+        onAgent={() => {}}
+        agents={agents}
+      />,
+    );
+
+    expect(html).not.toContain("待裁定");
+  });
 });

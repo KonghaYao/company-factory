@@ -572,7 +572,9 @@ export class CompanyDomain {
     const previous = issue.version;
     issue.version++;
     issue.updated_at = now();
-    issue.needs_user = issue.decisions.some((q) => q.status === "pending");
+    issue.needs_user = issue.decisions.some(
+      (q) => q.status === "pending" && q.answer == null,
+    );
     await this.store.putMarkdown(
       this.issuePath(ctx, issue.id),
       issue,

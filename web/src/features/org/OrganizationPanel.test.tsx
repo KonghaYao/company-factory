@@ -100,7 +100,6 @@ function render(
       onMoveAgent={noop}
       onArchiveAgent={noop}
       onRestoreAgent={noop}
-      onAnswerQuestion={async () => {}}
       onOpenQuestion={noop}
     />,
   );
@@ -217,7 +216,11 @@ describe("OrganizationPanel", () => {
     expect(pendingIndex).toBeGreaterThan(-1);
     expect(scrollIndex).toBeGreaterThan(-1);
     expect(pendingIndex).toBeLessThan(scrollIndex);
-    expect(html).toContain("是否今天就上线？");
-    expect(html).toContain("上线检查");
+    const row = html.match(
+      /<button[^>]*data-testid="pending-question-7-Q1"[\s\S]*?<\/button>/,
+    )?.[0];
+    expect(row).toContain("是否今天就上线？");
+    expect(row).toContain("上线检查：是否今天就上线？");
+    expect(html).not.toContain("<textarea");
   });
 });

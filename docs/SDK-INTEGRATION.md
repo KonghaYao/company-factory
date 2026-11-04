@@ -45,7 +45,7 @@ The current default Workspace is a Rust builtin in the official Peri executable.
 | GET | `/api/projects` | 空项目目录（公司不暴露项目） |
 
 - 公司策略：`create_new_session` 一律 400 `invalid_action`；`change_session` 只允许切到当前固定 Session；同 Session 的换绑是无操作（Peri 客户端对已绑定句柄仍按空句柄目标发送）。
-- 鉴权顺序固定为 `AccessControl.user` → Agent 归属 → `chatId` 归属 → `views.attach`；WS 握手与其他 HTTP 请求走同一 Host/Origin/Cookie 检查。
+- 鉴权顺序固定为 `AccessControl.user` → Agent 归属 → `chatId` 归属 → `views.attach`；WS 握手与其他 HTTP 请求使用同一 Cookie/Agent Bearer 鉴权，服务不校验 Host、Origin 或 Sec-Fetch-Site。
 - 脱敏：`ChatViewRegistry` 只 attach `ChatFactSource` 脱敏代理（`database.redact` 逐条 fact），服务端 replica 与浏览器收到同一份文档；Yjs 原文不直出。
 - 旧 `/api/agents/:id/{chat,stop,answer,queue/*}` HTTP 路由已删除；`AgentService` 的同名方法保留给 IM/MCP 内部投递。`GET /api/chats/:chatId/projection` 是只读诊断/验收投影，替代旧 `/chat` 的消息读取；所有写操作仍必须走 `/actions`。
 - `load_earlier_history` 翻到最早一页时，SDK 以 `HistoryPageUnavailableError("exhausted")` 表示分页终止；API 将其映射为成功空页（202，`applied: 0, nextCursor: null, exhausted: true`），不当作 500 存储故障。

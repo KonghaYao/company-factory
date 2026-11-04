@@ -86,7 +86,7 @@ export async function createApplication(options: ApplicationOptions = {}) {
       });
     }
   }
-  const access = new AccessControl(root, baseUrl, ownerToken);
+  const access = new AccessControl(root, ownerToken);
   const diagnostics: DiagnosticsSink =
     options.diagnostics === false || options.diagnostics === undefined
       ? disabledDiagnostics
@@ -94,7 +94,6 @@ export async function createApplication(options: ApplicationOptions = {}) {
   const pendingTokens = new Map<string, CallerContext>();
   const authenticate = access.agent.bind(access);
   access.agent = async (request) => {
-    access.allowed(request);
     const token = request.headers.get("authorization")?.replace(/^Bearer /, "");
     if (token && pendingTokens.has(token)) return pendingTokens.get(token)!;
     return authenticate(request);
@@ -315,7 +314,7 @@ export async function createApplication(options: ApplicationOptions = {}) {
   );
   app.post("/api/login", async (c) => {
     const body = await c.req.json();
-    c.header("Set-Cookie", access.login(c.req.raw, String(body.token ?? "")));
+    c.header("Set-Cookie", access.login(String(body.token ?? "")));
     return c.json({ ok: true });
   });
   app.get("/api/companies", async (c) => {
@@ -580,7 +579,6 @@ export async function createApplication(options: ApplicationOptions = {}) {
         { error: { code: "not_found", message: "Unknown API route" } },
         404,
       );
-    access.allowed(c.req.raw);
     const index = Bun.file(join(staticRoot, "index.html"));
     if (!(await index.exists()))
       return c.text("Build the workbench first: npm run build", 503);

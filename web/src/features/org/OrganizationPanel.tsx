@@ -366,7 +366,6 @@ export function OrganizationPanel({
   onMoveAgent,
   onArchiveAgent,
   onRestoreAgent,
-  onAnswerQuestion,
   onOpenQuestion,
 }: {
   companies: Company[];
@@ -392,7 +391,6 @@ export function OrganizationPanel({
   onMoveAgent: (agentId: string) => void;
   onArchiveAgent: (agentId: string) => void;
   onRestoreAgent: (agentId: string) => void;
-  onAnswerQuestion: (item: PendingDecision, answer: string) => Promise<unknown>;
   onOpenQuestion: (agentId: string, issueId: string) => void;
 }) {
   const company = companies.find((c) => c.id === companyId);
@@ -585,7 +583,6 @@ export function OrganizationPanel({
         questions={pendingQuestions}
         agents={agents}
         error={pendingQuestionsError}
-        onAnswer={onAnswerQuestion}
         onOpenIssue={onOpenQuestion}
       />
 
