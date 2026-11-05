@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CompanyDomain, type CallerContext } from "./index";
 import { createDepartmentWithHead } from "./test-support";
-import { roleGuidance } from "./templates";
+import { roleCardFor } from "./prompt-library";
 
 const requestId = () => randomUUID();
 
@@ -219,16 +219,20 @@ describe("Department heads are derived from organization node leads", () => {
     ).rejects.toMatchObject({ code: "member_archived" });
   });
 
-  test("prompts describe the HR department-head flow and no longer fall back to the old supervisor", () => {
-    expect(roleGuidance.hr).toContain("department-head");
-    expect(roleGuidance.hr).toContain("leadPersonId");
-    expect(roleGuidance.hr).toContain("不要向用户确认");
-    expect(roleGuidance.secretary).toContain("leadPersonId");
-    expect(roleGuidance.secretary).toContain("active 祖先节点负责人");
-    expect(roleGuidance.secretary).not.toContain("回退任务主管");
-    expect(roleGuidance["department-head"]).toContain("本部门");
-    expect(roleGuidance["department-head"]).toContain("leadPersonId");
-    expect(roleGuidance["department-head"]).toContain("验收仍属于用户");
-    expect(roleGuidance["task-supervisor"]).toBeDefined();
+  test("role cards describe the HR department-head flow and no longer fall back to the old supervisor", () => {
+    expect(roleCardFor("hr")).toContain("leadPersonId");
+    expect(roleCardFor("hr")).toContain("成立部门");
+    expect(roleCardFor("hr")).toContain("不把常规选项反复交用户");
+    expect(roleCardFor("secretary")).toContain("leadPersonId");
+    expect(roleCardFor("secretary")).toContain("最近有效祖先负责人");
+    expect(roleCardFor("secretary")).toContain("不要默认逐题访谈");
+    expect(roleCardFor("secretary")).not.toContain("任务主管");
+    expect(roleCardFor("department-head")).toContain("名为部长不等于有权");
+    expect(roleCardFor("department-head")).toContain("active 节点 lead");
+    expect(roleCardFor("department-head")).toContain(
+      "验收前的普通自检不是正式 CI/Review",
+    );
+    expect(roleCardFor("task-supervisor")).toBe(roleCardFor("colleague"));
+    expect(roleCardFor("task-supervisor")).not.toBe(roleCardFor("department-head"));
   });
 });

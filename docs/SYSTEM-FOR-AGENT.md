@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | CompanyDomain | 身份、业务事实、版本、证据一致性 | 校验事实是否成立；不选择 Agent 的下一步 |
 | CompanyStore 与 mutation completion | 原子文件、Git、请求完成与局部失败续做 | 不推断任务是否完成 |
-| Agent profile | 安全读取与合并 CLAUDE、saved/applied 配置 | 稳定边界由系统定义；长期记忆和工作方法由 Agent 维护 |
+| Agent profile | 安全读取与合并 CLAUDE、saved/applied 配置 | 稳定边界来自 `templates/prompts/stable.md`；公司协议与岗位卡来自托管块；长期记忆和工作方法由 Agent 维护 |
 | AgentService 与 notices | 唤醒固定 Session、投递简短事实通知、呈现接受状态 | 收到通知后是否及如何工作由 Agent 决定 |
 | PeriRuntime | 固定会话、SDK 激活、本地 Workspace（无 OS 沙箱）、有限幂等缓存 | 并发工作由 Peri multitasks/work 执行 |
 | Agent context view | 有界工作摘要、按 ID 取正文、历史分页 | Agent 自主决定读取哪些正文与历史 |
@@ -39,7 +39,7 @@ CompanyDomain 保留公共应用边界。新增模块按以上责任提取，不
 
 新工作到来时，Agent 读取当前 CLAUDE profile、目标 Issue 与流程文件，自主确定行动。multitask/work 带 Issue ID、当前版本和工作目录等最小定位信息；迟到结果回写前重读当前 owner/status。任务判断来自最新业务事实，历史聊天只作参考。
 
-新 Session 的固定系统提示词只说明身份、稳定操作边界和如何获得当前事实。当前职责、专属指导与已应用 instructions 统一来自 CLAUDE；已有 Session 不重建、不改写冻结历史。配置与业务正文不在每条输入中重复灌入；事实通知仅传引用和变化原因。
+新 Session 的固定系统提示词只说明身份、稳定操作边界和如何获得当前事实，内容来自 `templates/prompts/stable.md`，仅替换公司与成员 ID。当前职责、专属指导、已应用 instructions、`common.md` + `communication.md` 与单张岗位卡统一来自 `CLAUDE.md` 托管块；`## Host tool notes` 只补宿主工具指针，不授予权限、不能覆盖包内协议。已有 Session 不重建、不改写冻结历史；刷新托管块不会替换旧 Session 的稳定提示词。配置与业务正文不在每条输入中重复灌入；事实通知仅传引用和变化原因。详见 `docs/PROMPTS.md`。
 
 工作清单、参与的 IM 线程和 Preview 都保留有界索引；未回复的发出线程与历史 Preview 也可重新发现。裁剪正文不能裁掉发现入口。所有者运行面板展示最近通知状态，只有确定未接收的通知允许显式重试；接收结果不明时先核对会话和队列。
 

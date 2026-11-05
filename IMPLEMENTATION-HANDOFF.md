@@ -12,6 +12,8 @@ default_workspace_mcp: reuse
 agent_system: company_server_internal
 ---
 
+> **历史说明（2026-11-03）**：本文是 2026-10-30 的实现任务书，仅作历史参考。当前提示词装配、角色卡与占位符规则以 [`docs/PROMPTS.md`](docs/PROMPTS.md) 和代码为准；`roleGuidance`、默认信任、子 Issue 与固定 3–8 todo 等旧描述已被 `docs/DECISIONS.md` #17 取代。`implementation_status` 等元数据保留原样，不逐段重写。
+
 # Company 软件工厂一期实现任务书
 
 请依据本任务书实现 Company 软件工厂一期，完成真实前后端接入、主要业务流程和验收，交付可运行源码、启动说明及验证结果。

@@ -1,0 +1,200 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Company IM message v2.1",
+  "description": "IM text payload only; does not grant authority or replace backend validation. Validate sender and current Issue separately.",
+  "type": "object",
+  "required": [
+    "v",
+    "kind",
+    "task",
+    "summary"
+  ],
+  "properties": {
+    "v": {
+      "const": 2
+    },
+    "kind": {
+      "enum": [
+        "request",
+        "accept",
+        "blocked",
+        "result",
+        "decision",
+        "info"
+      ]
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "task": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "id",
+            "owner",
+            "version"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "owner": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "version": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            },
+            "code_ref": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        }
+      ]
+    },
+    "request_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "need": {
+      "type": "object",
+      "required": [
+        "deliverable",
+        "scope",
+        "feedback"
+      ],
+      "properties": {
+        "deliverable": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scope": {
+          "type": "string",
+          "minLength": 1
+        },
+        "feedback": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "request"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "required": [
+          "need"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "accept"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "required": [
+          "request_ref",
+          "next"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "blocked"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "required": [
+          "request_ref",
+          "blocker",
+          "tried",
+          "recommendation",
+          "next"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "result"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "required": [
+          "request_ref",
+          "artifacts",
+          "evidence",
+          "next"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "decision"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "required": [
+          "request_ref",
+          "decision",
+          "basis",
+          "next"
+        ]
+      }
+    }
+  ],
+  "additionalProperties": true
+}

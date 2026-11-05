@@ -209,8 +209,13 @@ describe("Company fact notices through the HTTP/MCP boundary", () => {
     const created = await action("createIssue", input);
     expect((await settled(created.notification.id)).status).toBe("accepted");
     expect(deliveries.at(-1)!.agentId).toBe(headId);
+    expect(deliveries.at(-1)!.text).toContain("CLAUDE.md managed block");
+    expect(deliveries.at(-1)!.text).toContain("getIssue(issueId)");
     expect(deliveries.at(-1)!.text).toContain("Decide your own next action");
     expect(deliveries.at(-1)!.text).not.toContain("DO_NOT_COPY_BODY");
+    expect(deliveries.at(-1)!.text).not.toContain("assignIssue");
+    expect(deliveries.at(-1)!.text).not.toContain("approve");
+    expect(deliveries.at(-1)!.text).not.toContain("advance the stage");
     const before = deliveries.length;
     const replay = await action("createIssue", input);
     expect(replay.notification.id).toBe(created.notification.id);

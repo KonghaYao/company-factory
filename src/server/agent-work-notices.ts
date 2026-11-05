@@ -326,7 +326,7 @@ export class AgentWorkNotices {
             expectedOwner: notice.agentId,
             ...(notice.questionId ? { questionId: notice.questionId } : {}),
           }),
-          "Read the current CLAUDE.md and getIssue(issueId). This is a fact-change notice, not an instruction to advance a workflow stage. Decide your own next action using current ownership, status and evidence. A repeated noticeId is the same notice.",
+          "Read the current CLAUDE.md managed block and getIssue(issueId). This is a fact-change notice, not an instruction to advance a workflow stage. Decide your own next action using current ownership, status and evidence. A repeated noticeId is the same notice.",
         ].join("\n");
         sendInvoked = true;
         const receipt = await this.agents.send(caller, notice.agentId, {

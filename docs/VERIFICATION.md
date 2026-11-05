@@ -200,3 +200,15 @@ npm audit --json
 - 真实自然语言 HR 创建与 Agent 间推理往返已在 2026-10-31 live 轮用真实模型验证；用户自有项目的复杂多任务编码、真实项目人工验收仍待你的环境验证。
 - 2026-10-31 live 轮验证的是 Linux arm64 沙箱版；2026-11-02 起 Workspace 本地运行，macOS 本地产品级运行仍需重新验收。
 - 浏览器已被用户排除，本报告不声称做过视觉验收。早期启动限制保留在 `browser-results.json` 作为历史记录，不是当前验收阻塞。
+
+## 2026-11-03 提示词架构 v2.3 验证记录
+
+范围：权威提示词资产落盘、`stable.md` 冻结、`common.md` + `communication.md` + 单张岗位卡托管块、角色映射、旧指引清理、interview/流水线/通知文案。
+
+- **资产逐字校验**：`templates/prompts/` 下 11 份提示词与 `manifest.json` 的 sha256 全部匹配（11/11）；UTF-8、LF、无 BOM、末尾换行；`message.schema.json` JSON 形状测试通过。
+- **类型检查**：`bun run typecheck` 通过（exit 0）。
+- **完整测试**：`bun test` 为 **662 pass / 24 skip / 0 fail**（686 项、4,099 断言、85 文件）；skip 均为缺少 `COMPANY_TEST_STORE_*` 等外部环境变量的集成/真实 SDK 用例，不计为通过。
+- **构建**：`bun run build`（Vite）通过，exit 0；仅保留既有 chunk 体积警告。
+- **空白检查**：`git diff --check` exit 0。
+- **未运行**：浏览器 E2E（本机无 chromium/Playwright），不声称视觉验收。
+- **边界**：未改 `web/src/peri/`、`src/domain/index.ts` 的服务端 `task-supervisor` 兼容授权、`scripts/e2e-live.ts`、`web/e2e.ts`；未提交、未推送、未重启服务。

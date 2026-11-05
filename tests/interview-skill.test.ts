@@ -11,7 +11,7 @@ describe("interview skill template", () => {
     const meta = await readSkillMeta(skillsDirectory, "interview");
     expect(meta).toBeDefined();
     expect(meta!.name).toBe("interview");
-    expect(meta!.description).toContain("Interview the user");
+    expect(meta!.description).toContain("Interview");
     expect(meta!.uri).toContain("skill://interview/SKILL.md");
   });
 
@@ -26,12 +26,19 @@ describe("interview skill template", () => {
       "（推荐）",
       "不要进入 plan mode",
       "do not wait for a separate approval step",
-      "interview itself is the confirmation",
+      "already executable",
+      "one self-contained question",
+      "leadPersonId",
+      "reversible defaults",
     ])
       expect(text).toContain(expected);
     expect(text).not.toContain("$ARGUMENTS");
     expect(text).not.toContain("AskUserQuestionTool");
     expect(text).not.toContain(".claude/skills");
+    expect(text).not.toContain("task supervisor");
+    expect(text).not.toContain("逐题澄清");
+    expect(text).not.toContain("Interview in detail");
+    expect(text).not.toContain("Every question MUST have a recommended option");
   });
 
   test("is UTF-8, below the resource budget and contains no secret-shaped values", async () => {

@@ -3,7 +3,7 @@ import { link, mkdir, mkdtemp, readFile, rm, symlink, truncate, writeFile } from
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { AGENT_MEMORY_MAX_BYTES, applyAgentMemory, prepareAgentMemory, readAgentMemory } from "./agent-memory";
-import { COLLEAGUE_TRUST_GUIDANCE, COMPANY_ASSETS_GUIDANCE, DECISION_GUIDANCE, MULTI_PERSON_GUIDANCE, TASK_PROGRESS_GUIDANCE } from "./templates";
+import { COMMON_PROMPT, COMMUNICATION_PROMPT, ROLE_PROMPTS } from "./prompt-library";
 
 describe("Agent memory host reads", () => {
   for (const name of ["CLAUDE.md", "claude.md"]) {
@@ -76,38 +76,30 @@ describe("Agent memory host reads", () => {
       const prepared = await prepareAgentMemory(profile);
       expect(prepared.content).toContain("FREE_BEFORE");
       expect(prepared.content).toContain("FREE_AFTER");
-      expect(prepared.content).toContain("## Colleague trust");
-      expect(prepared.content).toContain(COLLEAGUE_TRUST_GUIDANCE);
-      expect(prepared.content).toContain("无条件信任");
-      expect(prepared.content).toContain("不要重复核对");
-      expect(prepared.content).toContain("只检查存疑");
-      expect(prepared.content).toContain("## Multi-person tasks");
-      expect(prepared.content).toContain(MULTI_PERSON_GUIDANCE);
-      expect(prepared.content).toContain("以 Company Issue 为中心");
-      expect(prepared.content).toContain("写明 Issue ID");
-      expect(prepared.content).toContain("登记过程");
-      expect(prepared.content).toContain("## Task progress");
-      expect(prepared.content).toContain(TASK_PROGRESS_GUIDANCE);
-      expect(prepared.content).toContain("## Decisions");
-      expect(prepared.content).toContain(DECISION_GUIDANCE);
+      expect(prepared.content).toContain("## Company protocol");
+      expect(prepared.content).toContain(COMMON_PROMPT);
+      expect(prepared.content).toContain("## Communication");
+      expect(prepared.content).toContain(COMMUNICATION_PROMPT);
+      expect(prepared.content).toContain("## Role card");
+      expect(prepared.content).toContain(ROLE_PROMPTS.executor);
+      expect(prepared.content).not.toContain(ROLE_PROMPTS.coordinator);
+      expect(prepared.content).toContain("## Host tool notes");
+      expect(prepared.content).toContain("updateTodos");
       expect(prepared.content).toContain("askDecision");
-      expect(prepared.content).toContain("2–6");
-      expect(prepared.content).toContain("## Company assets");
-      expect(prepared.content).toContain(COMPANY_ASSETS_GUIDANCE);
-      expect(prepared.content.indexOf("## Multitasking")).toBeLessThan(
-        prepared.content.indexOf("## Colleague trust"),
+      expect(prepared.content).not.toContain("## Colleague trust");
+      expect(prepared.content).not.toContain("无条件信任");
+      expect(prepared.content).not.toContain("## Multi-person tasks");
+      expect(prepared.content).not.toContain("以 Company Issue 为中心");
+      expect(prepared.content).not.toContain("## Task progress");
+      expect(prepared.content).not.toContain("## Company assets");
+      expect(prepared.content.indexOf("## Company protocol")).toBeLessThan(
+        prepared.content.indexOf("## Communication"),
       );
-      expect(prepared.content.indexOf("## Colleague trust")).toBeLessThan(
-        prepared.content.indexOf("## Multi-person tasks"),
+      expect(prepared.content.indexOf("## Communication")).toBeLessThan(
+        prepared.content.indexOf("## Role card"),
       );
-      expect(prepared.content.indexOf("## Multi-person tasks")).toBeLessThan(
-        prepared.content.indexOf("## Task progress"),
-      );
-      expect(prepared.content.indexOf("## Task progress")).toBeLessThan(
-        prepared.content.indexOf("## Decisions"),
-      );
-      expect(prepared.content.indexOf("## Decisions")).toBeLessThan(
-        prepared.content.indexOf("## Company assets"),
+      expect(prepared.content.indexOf("## Role card")).toBeLessThan(
+        prepared.content.indexOf("## Host tool notes"),
       );
 
       await applyAgentMemory(

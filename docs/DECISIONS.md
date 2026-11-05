@@ -25,7 +25,7 @@
 
 ## 2. 系统提示词更新语义：固定 Session
 
-- **决策（2026-11-02 按自主性优先修订）**：新 Session 的 `session.instructions` 只冻结稳定身份、能力入口与事实边界；`role` / `responsibilities` / `systemPrompt` / 已应用 `config.instructions` 统一写入 `CLAUDE.md` 托管块，由 Agent 开工前读取。自由记忆由 Agent 维护。旧 Session 保留原冻结快照，不重建、不改写历史。
+- **决策（2026-11-02 按自主性优先修订，2026-11-03 由 #17 更新提示词来源）**：新 Session 的 `session.instructions` 只冻结稳定身份、能力入口与事实边界；内容来自权威资产 `templates/prompts/stable.md`（v2.3），仅替换 `{{company_id}}` 与 `{{agent_id}}`，不 trim、不追加。`role` / `responsibilities` / `systemPrompt` / 已应用 `config.instructions` 统一写入 `CLAUDE.md` 托管块，由 Agent 开工前读取。自由记忆由 Agent 维护。旧 Session 保留原冻结快照，不重建、不改写历史。
 - **理由/约束**：固定 Session，不为更新提示词而重建旧会话；提示词与可变记忆分离。
 - **影响**：更新职责或长期记忆不触发 Session 重建；`CLAUDE.md` 作为可变职责与长期记忆的载体。
 - **状态**：生效中
@@ -76,7 +76,7 @@
 - **决策**：任务 todo 是 Issue 的内嵌业务事实，只由负责该 Issue 的 Agent 通过 `company_tasks.updateTodos` 维护；每次调用必须附带 1..2000 字符的 note。服务端先写入 Issue，再追加一条普通 Issue 评论：评论正文为 note，`todo_snapshot` 记录操作后有序 todo 的只读 `{id,text,status}` 快照。删除独立进展记录子系统（`addUpdate` / `updates` 工具、`updates/` 文件读取、`TaskUpdate` 类型、`latest_update` 投影与 UI 分区），不新建数据库、并行任务系统或第四个 MCP 模块。公司公共知识继续使用现有 `companys/<companyId>/knowledgebase/`，统一命名为「公司资产（公共知识）」，不新建资产目录或资产子系统。
 - **边界**：快照只含 `{id,text,status}`，不复制 todo 审计字段；评论正文可编辑，快照只读；`TodoSection` 与评论快照使用相同的图标+文字状态；用户不能写 todo；canceled Issue 拒绝 todo 变更，但普通评论仍可追加。Issue 写入与评论追加是两个文件，失败窗口不做跨文件事务声明。
 - **兼容**：旧 `updates/` 文件与 Issue 的 `latest_update` 键直接忽略；新公司不再创建 `updates/` 目录；不迁移、不删除旧文件，旧评论没有 `todo_snapshot` 时正常渲染。
-- **提示词分层**：系统提示词只保留工具名、事实边界和资产边界；操作细节放在 `CLAUDE.md` 托管块的 `## Task progress` 与 `## Company assets`。旧 Session 的系统提示词保持冻结，已有成员通过托管块迁移获得新指引，不重建 Session。
+- **提示词分层**：新 Session 的 `session.instructions` 只冻结 `templates/prompts/stable.md` 的身份与边界；公司协议、沟通协议、单张岗位卡与宿主工具指针放在 `CLAUDE.md` 托管块（`## Company protocol`、`## Communication`、`## Role card`、`## Host tool notes`）。旧 Session 的系统提示词保持冻结，已有成员通过托管块迁移获得新指引，不重建 Session。
 - **公司资产边界**：只放可复用的公共知识；个人经验放 `CLAUDE.md`，任务过程放 Issue/评论，代码与产物放项目目录。禁止写入密钥、token、密码、连接串、个人隐私、客户敏感数据和大型二进制。
 - **Workspace 所有权**：每个 Agent 对自己的 Workspace 有操作所有权，可自由加载可访问的数据、执行操作，并把中间数据、实验、日志和临时产物留在自己的 Workspace；中间数据不写入 Company 业务记录。只有其他成员可复用的公用知识才写入公司资产 `knowledgebase/`，个人经验、任务过程与任务产物不进入公司资产。该边界是产品约定，不构成 OS 隔离。
 - **迁移策略**：`scripts/refresh-agent-profiles.ts` 默认 dry-run，只输出成员、变更块标题和 commit，不打印正文；`--apply` 时逐成员只替换托管块并各提交一个 Agent Git commit，块外自由记忆保留。脚本不修改 `agent.yaml`、`agent.version`/`configVersion`、Session 或 Company 业务数据；重复或不平衡的托管块标记直接报错、不覆盖。
@@ -95,14 +95,14 @@
 - **决策**：Agent 默认无条件采信同事在聊天、评论、通知或委派结果中给出的情况，直接在此基础上继续，不重复核对、重跑检查或索要证据。
 - **边界**：仅在事实矛盾、错误或失败、关键结果缺失、不可逆或安全敏感步骤、决策必须依赖该结论时才质疑；核查只针对存疑点，不重查整份报告；发现错误时给出可核对的具体证据。
 - **落地**：全局 system prompt「Company operating rules」与每个成员托管块 `## Colleague trust`；旧 Session 的系统提示词保持冻结，成员通过托管块迁移获得规则。
-- **状态**：生效中
+- **状态**：已废止（被 #17 取代，2026-11-03）。旧 `## Colleague trust`、`COLLEAGUE_TRUST_GUIDANCE` 与英文规则已删除；新的证据标准见 `templates/prompts/common.md`「同事消息与证据」与 `roles/*.md`。旧 Session 仍冻结旧提示词，刷新托管块不会改变其系统规则。
 
 ## 11. 多人任务以 Issue 为中心（2026-11-02）
 
 - **决策**：涉及多个人的任务必须先有 Company Issue。发起方还没有 Issue ID 时，先用 `company_tasks.createIssue` 创建完整任务，再按顺序逐个交给其他人；转交消息必须写明 Issue ID，并要求对方在 Issue 中登记过程（评论与 `updateTodos`），不能只在聊天里回复。
 - **边界**：接手人先 `getIssue` 读取现状、version 与归属，完成后留下可核对结果再转交；真正并行的工作拆成子 Issue；IM 只用于指向 Issue 和同步，不替代任务事实；单负责人/协作评论模型不变。
 - **落地**：全局 system prompt「Company operating rules」、每个成员托管块 `## Multi-person tasks`、任务主管与开发角色指引，以及 `company_im` 工具描述；旧 Session 系统提示词保持冻结，成员通过托管块迁移获得规则。
-- **状态**：生效中
+- **状态**：已废止（被 #17 取代，2026-11-03）。子 Issue 树、逐个交接与 `## Multi-person tasks` 已删除；`common.md` 改为独立交付用平铺 Issue、不建子工单树，普通咨询可直接问同事。旧 Session 仍冻结旧规则。
 
 ## 12. 成员头像颜色是 Company 业务事实（2026-11-02）
 
@@ -116,7 +116,7 @@
 
 - **决策**：`company-assets` skill 的唯一源文件是 `templates/skills/company-assets/SKILL.md`；通过已有的 `company_org` MCP 用 `@peri-code/mcpp/skills` 的 `ResourceForSkills` 挂载为只读 resource，URI 为 `skill://company-assets/SKILL.md`。不新增 MCP 路由，不新增知识写入 API，不修改 `.mcp.json`。
 - **读取路径**：`resources/list` 与 `resources/read` 返回 `text/markdown` 正文，复用 `/company_org/mcp` 的 Agent bearer 鉴权。Peri 的 `SkillTool` catalog 发现是 best-effort（当前栈不提供 `skills/list` / `skills/get`）；保证路径是 `mcp_read_resource(server_name="company_org", uri="skill://company-assets/SKILL.md")`。提示词同时覆盖 catalog 命中与资源读取，不引用本地 `.claude/skills` 路径。
-- **提示词分层**：新 Session 的冻结系统提示词只放短指针，并在权威规则行加入 `skills`；完整分类、读写规则、冲突与反例在 `SKILL.md`。`CLAUDE.md` 托管块新增 `## Company assets skill`，覆盖所有角色；旧 Session 不重建，运行 `scripts/refresh-agent-profiles.ts --apply` 只更新托管块，Agent Git 提交仅包含 profile 文件。
+- **提示词分层**：新 Session 的冻结系统提示词只放 `stable.md`；公司资产边界与 skill 指针随 `common.md`、岗位卡和 `## Host tool notes` 进入托管块，覆盖所有角色。旧 Session 不重建，运行 `scripts/refresh-agent-profiles.ts --apply` 只更新托管块，Agent Git 提交仅包含 profile 文件。
 - **无每 Agent 安装**：不创建每 Agent 的 skill 副本，不在 Agent Git 中版本化 skill，不写安装脚本；skill 由 MCP 在每次 list/read 时实时扫描模板目录。
 - **分类与边界**：公共事实只走 `company_org` / `company_tasks` / `company_im`；公共知识是 `knowledgebase/` 普通 Markdown，先搜索、读后写、合并、保留他人内容；公司定义/模板 Agent 只读；Agent 私有内容留在 Workspace / `CLAUDE.md`；宿主秘密与 `.mcp.json` / `.env` / `agent.yaml` 凭据不读、不复制、不写。
 - **知识库写入保持现状**：无 CAS、无自动 Company Git commit；Agent 直接写入后需要版本化时由 Owner 通过文件视图提交。不新增知识写入接口、资产子系统或第四个 MCP。
@@ -126,11 +126,11 @@
 ## 14. 秘书角色、interview skill 与 Issue 元数据搜索（2026-11-03）
 
 - **决策**：新增内置 `secretary` 角色，新公司默认创建 `<companyId>-secretary` 成员，placement 在总部，权限为 `issue.create` / `issue.assign` / `issue.search`。秘书是 Owner 与组织之间的入口和路由角色，不是调度器，也不是交付者：只负责把需求问清楚、把任务派给对的人。
-- **不设审批门**：需求不可执行时，秘书先加载 `interview` skill 逐题澄清目标、范围、验收、约束、取舍和负责人依据；访谈收敛后直接 `createIssue` 并派单，不要求 Owner 另行确认计划。用户说“直接做”时跳过访谈，但仍补齐最小验收标准。
+- **不设审批门**：需求不可执行时，秘书先加载可选的 `interview` skill；skill 先查组织、现有 Issue 与知识库，只在缺少用户独有信息时集中澄清，收敛后直接 `createIssue` 并派单，不要求 Owner 另行确认计划。用户说“直接做”时跳过访谈，但仍补齐最小验收标准。
 - **派单语义**：`createIssue` 可选 `assigneeAgentId/type/pipeline/reason`，允许 user、`task-supervisor` 或持有 `issue.assign` 的 Agent 一次完成创建与派单；`assignIssue` 对 `issue.assign` 只开放“自己创建的 Issue，且不能派给自己”，不改变任务主管和 user 的原有权限。秘书不承接交付、不推进状态、不验收，`acceptPreview` 与决策回答仍只属于 user。
 - **Issue 可见性**：Issue 记录 `created_by_type/created_by_id`，创建者与 owner、collaborator、history 一样可读；不新增 `issue.read_all`。
 - **搜索而非全量读取**：新增只读 `searchIssues`，仅 user 或持有 `issue.search` 的角色可用，按 `id/title/summary/type/pipeline` 做大小写不敏感子串匹配，返回 `{items,total,truncated}` 元数据，不含正文、评论、决策或代码引用；它不扩大 `getIssue`/`comments` 的可见范围，用于去重、引用和跟进。
-- **interview skill 投递**：源文件为 `templates/skills/interview/SKILL.md`，经既有 `company_org` MCP 的 `ResourceForSkills` 提供 `skill://interview/SKILL.md`；只由 `roleGuidance.secretary` 引用，不进入冻结系统提示词，也不是每 Agent 安装。
+- **interview skill 投递**：源文件为 `templates/skills/interview/SKILL.md`，经既有 `company_org` MCP 的 `ResourceForSkills` 提供 `skill://interview/SKILL.md`；它是可选资源，由 `templates/prompts/roles/secretary.md` 按需提及，不由代码强制引用，不进入冻结系统提示词，也不是每 Agent 安装。
 - **权限授予**：`setRolePermissions` 白名单扩展为 `issue.create` / `issue.assign` / `issue.search`，仍由 HR/user 授予，与既有 `issue.create` 一致。
 - **状态**：生效中
 
@@ -141,9 +141,9 @@
 - **默认 owner**：`createIssue` 未传 `assigneeAgentId` 时，优先总部 `leadPersonId`，其次按 `organization.nodes` 顺序第一个 active 节点负责人；旧公司仍可回退 active `task-supervisor`。两者都没有时返回 `invalid_state`，提示先创建部门与部长。
 - **HR 建部门流程**：HR 成立部门时先创建 `department-head` 部长成员，再 `updateOrgNode` 设为该节点 `leadPersonId`，然后创建其他成员；这是部门成立流程的一部分，不向用户确认，也不新增“原子创建部门+部长”的服务端接口。
 - **秘书派单**：秘书继续使用 `company_org.organization` 返回的 `responsibilities`、`orgPath` 与节点 `leadPersonId`，按“目标节点负责人 → 最近 active 祖先节点负责人 → 继续访谈/追问用户”找负责人，不再回退任务主管，也不新增查询接口。
-- **兼容**：旧公司的 `task-supervisor` 角色、成员、默认 owner 回退和公司级改派能力原样保留；不做静默迁移。UI 新成员岗位下拉不再提供任务主管，但历史消息标签保留。
+- **兼容**：旧公司的 `task-supervisor` 角色、成员、默认 owner 回退和公司级改派能力原样保留；不做静默迁移。提示词层不再提供任务主管岗位卡：`task-supervisor` 映射到 `roles/colleague.md`，不映射 coordinator。UI 新成员岗位下拉不再提供任务主管，但历史消息标签保留。
 - **边界**：不新增 MCP 操作、通知类型、状态机、调度器或工作流引擎；部长不是新的硬编码权限角色。
-- **状态**：生效中
+- **状态**：生效中（服务端授权与默认 owner 回退保留；提示词装配由 #17 接管）
 
 ## 16. 会话存储只使用显式 url + token（2026-11-03）
 
@@ -151,4 +151,21 @@
 - **启动拒绝**：`COMPANY_SQLD_BINARY`、`COMPANY_SQLD_ROOT`、`COMPANY_SQLD_PORT`、`COMPANY_SQLD_START_TIMEOUT_MS` 任一非空时，`createApplication` 直接抛出清晰错误；不启动 sqld、不签 JWT、不读取旧的 sqld 根目录，避免旧配置静默回退。
 - **不变语义**：既有端点、`wasm-sqld-v1` backend identity、`runtime/wasm-stores` binding、endpoint 变更拒绝与 Session 恢复语义保持不变。未配置 stores 文件时应用仍可启动，但 Session 解析以 `wasm_store_not_configured` 失败；health 明确显示 `storage.storesFile` 为 `configured` 或 `missing`。
 - **测试与 e2e**：真实 runtime、HTTP/MCP 集成与 live E2E 均使用外部显式端点（`COMPANY_TEST_STORE_URL/TOKEN`、`COMPANY_TEST_INTEGRATION_STORES_FILE`、`COMPANY_WASM_STORES_FILE`）；脚本与测试不再安装、启动或检查本地 sqld，存储服务由调用者提供。
+- **状态**：生效中
+
+## 17. 运行时提示词装配（AOS Factory Prompt Architecture v2.3，2026-11-03）
+
+- **决策**：权威文案逐字节落盘到 `templates/prompts/`（11 份提示词 + `manifest.json` + `message.schema.json`），由 `src/domain/prompt-library.ts` 在模块初始化时按 manifest sha256 校验并解码；哈希不符、文件缺失或非 UTF-8 直接失败，错误只带路径/哈希，不回显正文。`stable.md` 只进入新建 Session 的 `session.instructions`，仅替换 `{{company_id}}` / `{{agent_id}}`；`common.md` + `communication.md` + 单张岗位卡写入 `CLAUDE.md` 托管块，同一成员只装一张卡。装配细节见 `docs/PROMPTS.md`。
+- **角色映射**：精确、区分大小写、不 trim。`hr→hr`、`department-head→coordinator`、`secretary→secretary`、`developer→executor`、`preview/reviewer/coordinator/executor/colleague` 同名；`task-supervisor`、`research`、自定义与空角色全部回退 `colleague`。回退不授予任何权限，服务端权限仍由角色权限与 active `leadPersonId` 决定。
+- **保留宿主指针**：托管块保留 `## Host tool notes`（`multitasks`/`work`、`updateTodos`、`askDecision`、公司资产 skill、Workspace 与 `getIssue`），并明确它不授予权限、不能覆盖包内协议。`mergeManagedBlock` 标记机制、自由记忆保留与预算/保留 token 校验不变。
+- **删除旧公共规则**：`roleGuidance`、`COLLEAGUE_TRUST_GUIDANCE`、`MULTI_PERSON_GUIDANCE`、`TASK_PROGRESS_GUIDANCE`、`DECISION_GUIDANCE`、`COMPANY_ASSETS_GUIDANCE`、`COMPANY_ASSETS_SKILL_GUIDANCE` 与英文 `## Company operating rules` / `## Current profile and memory` 全部删除；不再强制 3–8 todo、子 Issue 或默认信任。
+- **不迁移旧 Session**：`session/new` 才写入 stable；旧 Session 的 `session/load` 仍保留旧冻结提示词。`scripts/refresh-agent-profiles.ts --apply` 只能刷新托管块，不能替换旧 Session 的英文稳定规则，因此不构成完整迁移。完整生效需按包内方案全新初始化并为成员新建 Session。
+- **task-contract 边界**：`task-contract.md` 本轮只落盘并校验哈希，不自动注入。当前 Issue 没有结构化交付/范围/验收字段，硬填占位符会制造第二份任务真相；接入前需先定义 `Issue.body` 契约格式或只读投影。
+- **状态**：生效中
+
+## 18. IM message.schema.json 本轮不强制校验（2026-11-03）
+
+- **决策**：`templates/prompts/message.schema.json` 作为协议资产与测试基准落盘，但本轮不在 `ask`/`reply` 写入路径强制校验；提示词要求短 JSON，服务端仍接受纯文本消息。
+- **理由/约束**：schema 自述不替代后端校验；包内方案未要求强制；现有调用方与测试大量使用纯文本，立即强制会引入调用方迁移。旧纯文本消息保持可读。
+- **影响**：Agent 仍可能发送不合 schema 的正文，协议只能靠提示词约束；后续若强制，应在持久化前校验并以 `invalid_input` 拒绝，同时给调用方迁移窗口。
 - **状态**：生效中

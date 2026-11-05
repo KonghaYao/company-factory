@@ -688,7 +688,7 @@ Agent 交付 UI 改动时附一张简短结果表，包含以下内容；检查�
 - **投递方式**：已有的 `company_org` MCP 通过 `@peri-code/mcpp/skills` 的 `ResourceForSkills` 暴露只读资源 `skill://company-assets/SKILL.md`；`resources/list` 可发现该资源，`resources/read` 返回 `text/markdown` 正文，复用该 MCP 的 Agent bearer 鉴权；不新增 MCP 路由。
 - **不做每 Agent 安装**：不创建每 Agent 的 skill 文件，不在 Agent Git 中版本化 skill，不迁移 `.mcp.json`。修改模板后无需逐成员安装。
 - **读取路径**：`SkillTool` catalog 发现是 best-effort；保证路径是 `mcp_read_resource(server_name="company_org", uri="skill://company-assets/SKILL.md")`。提示词同时覆盖 catalog 精确名称（`company-assets` 或 `company_org:company-assets`）与资源读取，不引用本地 `.claude/skills` 路径。
-- **提示词分层**：新 Session 的冻结系统提示词只放短指针，完整分类和规则在 `SKILL.md`；每个角色的 `CLAUDE.md` 托管块包含 `## Company assets skill`，给出同一 URI 与读取方式。旧 Session 不重建，通过 `bun scripts/refresh-agent-profiles.ts --apply` 只更新托管块；界面不提供每 Agent skill 安装状态或副本管理。
+- **提示词分层**：新 Session 的冻结系统提示词来自 `stable.md`；公司资产 skill 指针随 `common.md`、岗位卡与 `## Host tool notes` 进入 `CLAUDE.md` 托管块，给出同一 URI 与读取方式。旧 Session 不重建，通过 `bun scripts/refresh-agent-profiles.ts --apply` 只更新托管块；界面不提供每 Agent skill 安装状态或副本管理。
 
 ### 12.5 边界声明与既有决策
 
@@ -778,7 +778,7 @@ Owner 或公司层面的想法、会议记录、文档片段和临时需求，�
 | --- | --- |
 | Owner | 需求来源、拆分确认和验收的唯一主体；可取消任何 Issue；秘书不代替 Owner 做验收或回答决策 |
 | 部门部长 | active 组织节点的 `leadPersonId`；默认 owner 和公司级改派者，负责本部门协作与任务分流。不是硬编码权限角色，归档清空 lead 后自动失效 |
-| task-supervisor（旧公司） | 旧模型兼容角色：保留默认 owner 回退和公司级改派权；新公司不再创建，秘书不再回退到它 |
+| task-supervisor（旧公司） | 旧模型兼容角色：服务端保留默认 owner 回退和公司级改派权；新公司不再创建，秘书不再回退到它；提示词层映射到 `roles/colleague.md`，不提供协调者卡 |
 | HR | 负责组织建设、成员创建和角色权限；成立部门时先创建部长并设置 `leadPersonId`，不向用户确认；不是交付回退人选 |
 | 节点负责人 | 被派单后的 Issue owner；作为部长时自动拥有 `issue.create` / `issue.assign` / `issue.search`，普通成员不会因职位自动获得 |
 | developer / preview / reviewer | 权限和流水线不变；reviewer 仍按真实证据记录验证，验收仍只属于 Owner |
@@ -787,7 +787,7 @@ Owner 或公司层面的想法、会议记录、文档片段和临时需求，�
 
 **新公司（已确认）**：`company.yaml` 预置 `secretary` 角色（权限为 `["issue.create","issue.assign","issue.search"]`）和空的 `department-head` 标签角色，并在 `headquarters` 默认创建 `<companyId>-hr` 与 `<companyId>-secretary` 两个固定成员；不再创建 `task-supervisor` 角色或成员。秘书不设置 `leadPersonId`，避免被当作交付负责人或自派对象。初始化、重试和幂等沿用现有成员创建逻辑；代价是两个固定 Session 和相应测试计数。
 
-**现有公司**：不做静默迁移，也不写迁移脚本。旧公司的 `task-supervisor` 角色、成员、默认 owner 回退和公司级改派能力原样保留；新公司不再创建该角色。需接入新模型的现有公司由 Owner 通过 HR 对话创建部门与部长：先 `createOrgNode`，再创建 `role: "department-head"` 成员，最后 `updateOrgNode` 设置该节点 `leadPersonId`。新成员自动获得固定 Session 和对应 `roleGuidance`，不需要重启或 profile 刷新；已有成员不需要重建 Session。
+**现有公司**：不做静默迁移，也不写迁移脚本。旧公司的 `task-supervisor` 角色、成员、默认 owner 回退和公司级改派能力原样保留；新公司不再创建该角色。需接入新模型的现有公司由 Owner 通过 HR 对话创建部门与部长：先 `createOrgNode`，再创建 `role: "department-head"` 成员，最后 `updateOrgNode` 设置该节点 `leadPersonId`。新成员自动获得固定 Session 和对应岗位卡，不需要重启或 profile 刷新；已有成员不需要重建 Session（旧 Session 的冻结提示词仍保持不变）。
 
 ### 13.8 UI 影响
 
@@ -804,8 +804,8 @@ Owner 或公司层面的想法、会议记录、文档片段和临时需求，�
 
 **MVP 必须**：
 
-- `secretary` 角色、`issue.create` + `issue.assign` + `issue.search` 权限、`roleGuidance.secretary`。
-- `department-head` 标签角色与 active 节点 `leadPersonId` 运行时的 `issue.create` / `issue.assign` / `issue.search` 授权；`roleGuidance["department-head"]`。
+- `secretary` 角色、`issue.create` + `issue.assign` + `issue.search` 权限、`templates/prompts/roles/secretary.md`。
+- `department-head` 标签角色与 active 节点 `leadPersonId` 运行时的 `issue.create` / `issue.assign` / `issue.search` 授权；`templates/prompts/roles/coordinator.md`。
 - `interview` skill（`templates/skills/interview/SKILL.md`，经 `company_org` MCP 投递）。
 - 新公司默认 HR + 秘书成员，不预置任务主管（已确认，不设开关）。
 - `createIssue` 默认 owner 优先部门部长、旧公司回退任务主管；可选 `assigneeAgentId` / `type` / `pipeline` / `reason`。
@@ -841,11 +841,21 @@ Owner 或公司层面的想法、会议记录、文档片段和临时需求，�
 - `src/domain/types.ts`：Issue 增加 `created_by_type` / `created_by_id`。
 - `src/domain/index.ts`：默认角色改为 `hr` / `department-head` / `secretary` / `developer` / `preview` / `reviewer`，移除 `task-supervisor`；新公司只创建 HR 与秘书；新增 active 节点 `leadPersonId` 推导、默认 owner 解析、部长在 `createIssue` / `assignIssue` / `searchIssues` 的授权；保留旧公司 `task-supervisor` 兼容分支；`createIssue` 支持可选派单字段；`assignIssue` 增加 creator-only / 禁止自派分支。
 - `src/domain/agent-context.ts`：`selectedIssues` 纳入创建者可见性。
-- `src/domain/templates.ts`：`roleGuidance.hr` 部门成立流程、`roleGuidance["department-head"]`、`roleGuidance.secretary` 负责人回退链；保留 `roleGuidance["task-supervisor"]` 供旧公司成员使用；写入托管块，不改冻结系统提示词。
-- `templates/skills/interview/SKILL.md`：新增 `interview` skill，经 `company_org` MCP 的 `ResourceForSkills` 投递为 `skill://interview/SKILL.md`。
+- `src/domain/prompt-library.ts`：加载 `templates/prompts/**`、按 `manifest.json` 校验 sha256、导出 `STABLE_PROMPT` / `COMMON_PROMPT` / `COMMUNICATION_PROMPT` / `TASK_CONTRACT_PROMPT` / `ROLE_PROMPTS` 与 `roleCardFor`；角色别名精确匹配，未知与旧角色回退 `colleague`。
+- `src/runtime/system-prompt.ts`：`session.instructions` 由 `stable.md` 原文替换 `{{company_id}}` / `{{agent_id}}`，保留 63 KiB 预算、保留 token 与错误不回显正文；不再包含英文 `Company operating rules`。
+- `src/domain/templates.ts`：托管块由 `common.md` + `communication.md` + 单张岗位卡 + `## Host tool notes` + Agent 补充文本组成；删除 `roleGuidance` 与旧公共指引常量；`memoryTemplate` 不再重复公共协议。
+- `templates/skills/interview/SKILL.md`：可选 `interview` skill，经 `company_org` MCP 的 `ResourceForSkills` 投递为 `skill://interview/SKILL.md`；只在真实缺口时澄清，不默认逐题访谈。
 - `src/server/operations.ts`：`createIssue` schema 的可选字段、新增 `searchIssues` schema 与工具描述、`READ_OPERATIONS`。
 - UI：`OrganizationSheet` 岗位下拉（`department-head`、保留 `secretary`）、`CompanyImMessageRow` 角色标签（新增部长、保留旧任务主管）、`CreateCompany` / `CreateIssue` / 运行与任务视图文案；前端类型补 `created_by_*`。
 - 测试与契约：初始化数量断言、部长 fixture、可见性、通知、改派、搜索、interview skill、`CONTRACTS.md`、`DECISIONS.md`。
+
+### 13.12 提示词装配（AOS Factory Prompt Architecture v2.3）
+
+- **权威资产**：`templates/prompts/` 逐字节保存 11 份提示词、`manifest.json` 与 `message.schema.json`；`src/domain/prompt-library.ts` 在初始化时校验 sha256，失败只报路径/哈希。更新流程见 `docs/PROMPTS.md`。
+- **稳定层**：`stable.md` 只进入新建 Session 的 `session.instructions`，仅替换 `{{company_id}}` / `{{agent_id}}`；不 trim、不追加英文规则，保留 63 KiB 预算与保留 token 校验。旧 Session 的冻结快照不变。
+- **可变层**：`CLAUDE.md` 托管块包含 `common.md`、`communication.md`、单张 `roles/*.md`、`## Host tool notes` 与 Agent 专属补充；`mergeManagedBlock` 只替换标记内内容，自由记忆保留。
+- **宿主指针**：`## Host tool notes` 保留 `multitasks`/`work`、`updateTodos`、`askDecision`、公司资产 skill、Workspace 与 `getIssue`，并声明不授予权限、不能覆盖包内协议。
+- **未接入**：`task-contract.md` 本轮不自动注入；`message.schema.json` 本轮不强制校验 IM 写入。
 
 ## 14. 将规范接入 Agent
 

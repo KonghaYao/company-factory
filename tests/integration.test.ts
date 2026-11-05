@@ -315,7 +315,6 @@ if (!enabled)
         name: "createIssue",
         arguments: {
           title: "Not authorized",
-          role: "task-supervisor",
           requestId: requestId(),
         },
       });

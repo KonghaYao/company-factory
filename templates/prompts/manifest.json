@@ -1,0 +1,13 @@
+{
+  "common.md": "368da166c072ef00c790c1c9bae15ef2d298fda7da0e3806684293cc09bda74a",
+  "communication.md": "dd34d4fcf2efbf41769b02c73a416609866123e4d9632f991ee02670fe72f019",
+  "roles/colleague.md": "cfdbbb2d2a74013f49b920cd39a934bc4c7fe6c22dd3bfc8c8190c3f6883a0df",
+  "roles/coordinator.md": "a0364f4ed9d2057ec792e8eea9341a70f9922e85f7b989fc9c792c2b17ab395b",
+  "roles/executor.md": "2ac8d0e961052bc2a1e81ee956e6a49ec5c4de47c60c6872a6dd69b95efae63a",
+  "roles/hr.md": "55e0ac55a53e5f76d0b1ed8fad15f572365c3d86884daa2e8656859732f5e8f4",
+  "roles/preview.md": "10d1bd1a193fc328f8e98ecbba0ef4770054a54df294f80ffed43922c5628053",
+  "roles/reviewer.md": "de15129a322c2cd69fea79703ec8d28399eda702d29ff2b439d9f692d6a697bf",
+  "roles/secretary.md": "6e8720c7d8d662e7e30f93dc064d76feae62c8bce9dbf345d7b276a929636f82",
+  "stable.md": "349f9c841228d7da9600c636dbcf4c8859176189121868fdee05b8edaff26b5f",
+  "task-contract.md": "bc673d3f96eff029c0cacaf79426a4b91859824f2a1eabe024ae87a7982b1f6b"
+}

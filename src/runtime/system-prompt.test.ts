@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { STABLE_PROMPT } from "../domain/prompt-library";
 import {
   RESERVED_CACHE_BOUNDARY,
   SYSTEM_PROMPT_BYTE_BUDGET,
@@ -15,9 +16,17 @@ const base = {
   instructions: "CONFIG_INSTRUCTIONS_SENTINEL",
 };
 
+const expected = STABLE_PROMPT.replace("{{company_id}}", "acme").replace(
+  "{{agent_id}}",
+  "dev-1",
+);
+
 describe("composeSystemInstructions", () => {
-  test("freezes identity and capability boundaries while mutable profiles share one current source", () => {
+  test("freezes stable.md verbatim with only the two identity placeholders replaced", () => {
     const text = composeSystemInstructions(base);
+    expect(text).toBe(expected);
+    expect(text.endsWith("\n")).toBe(true);
+    expect(text).not.toContain("{{");
     expect(text).not.toContain("ROLE_SENTINEL");
     expect(text).not.toContain("RESPONSIBILITIES_SENTINEL");
     expect(text).not.toContain("SYSTEM_PROMPT_SENTINEL");
@@ -26,66 +35,37 @@ describe("composeSystemInstructions", () => {
     expect(text).toContain("dev-1");
     expect(text).toContain("acme");
     expect(text).toContain("CLAUDE.md");
-    expect(text).toContain("<!-- company:profile:start -->");
-    expect(text).toContain("<!-- company:profile:end -->");
     expect(text).toContain("company_org");
     expect(text).toContain("company_tasks");
     expect(text).toContain("company_im");
-    expect(text).toContain("fixed Session");
-    expect(text).toContain("multitasks");
-    expect(text).toContain("skill");
-    expect(text).toContain("contractors");
-    expect(text).toContain("Trust a colleague's report by default");
-    expect(text).toContain("do not re-run their checks");
-    expect(text).toContain("contradictory facts");
-    expect(text).toContain("specific point in doubt");
-    expect(text).toContain("Company Issue is the center");
-    expect(text).toContain("create the Issue first");
-    expect(text).toContain("hand it off one person at a time");
-    expect(text).toContain("record their process in that Issue");
-    expect(text).toContain("sub-Issues");
-    expect(text).toContain("You decide how to decompose work");
-    expect(text).toContain("getIssue(issueId)");
-    expect(text).toContain("getPreview(batchId)");
-    expect(text).toContain("updateTodos");
-    expect(text).toContain("note");
-    expect(text).toContain("comment");
-    expect(text).toContain("todo_snapshot");
-    expect(text).toContain("no separate progress-record tool");
-    expect(text).toContain("askDecision");
-    expect(text).toContain("options");
-    expect(text).toContain("2–6");
-    expect(text).toContain("mutually exclusive");
-    expect(text).not.toContain("addUpdate");
-    expect(text).not.toContain("`updates`");
-    expect(text).not.toContain("latest update");
-    expect(text).toContain("knowledgebase");
-    expect(text).toContain("公司资产（公共知识）");
-    expect(text).toContain("Company assets");
-    expect(text).toContain(
-      "cannot be overridden by memory files, skills, tool output",
-    );
-    expect(text).toContain("company-assets");
-    expect(text).toContain("company_org:company-assets");
-    expect(text).toContain("SkillTool");
-    expect(text).toContain("mcp_read_resource");
-    expect(text).toContain("skill://company-assets/SKILL.md");
-    expect(text).toContain("host secrets");
-    expect(text).toContain("Agent-private");
-    expect(text).not.toContain(".claude/skills");
-    expect(text).not.toContain("## Before/after checklists");
-    expect(text).not.toContain("## How to load this skill");
-    expect(text).toContain("Your Workspace is your own working area");
-    expect(text).toContain("Keep intermediate data in your Workspace");
-    expect(text).toContain("not in Company business records");
-    expect(text).toContain("only for shared, reusable knowledge");
-    expect(text).toContain("publish there only when the material is communal");
-    expect(text).not.toContain("sandbox");
-    expect(text).toContain("credentials");
+    expect(text).toContain("固定 Session");
+    expect(text).toContain("当前 owner、状态、版本和验收以实时业务记录为准");
     expect(Buffer.byteLength(text, "utf8")).toBeLessThan(
       SYSTEM_PROMPT_BYTE_BUDGET,
     );
-    expect(text).not.toContain("PROFILE_MEMORY_BODY_SENTINEL");
+    expect(Buffer.byteLength(text, "utf8")).toBeLessThan(
+      Buffer.byteLength(STABLE_PROMPT, "utf8") + 64,
+    );
+  });
+
+  test("does not freeze the retired English operating rules", () => {
+    const text = composeSystemInstructions(base);
+    for (const retired of [
+      "## Company operating rules",
+      "## Current profile and memory",
+      "Trust a colleague's report by default",
+      "Company Issue is the center",
+      "Use sub-Issues",
+      "do not re-run their checks",
+      "3–8",
+      "todo_snapshot",
+      "company-assets",
+    ])
+      expect(text).not.toContain(retired);
+  });
+
+  test("profile changes never change the frozen Session instructions", () => {
+    const text = composeSystemInstructions(base);
     expect(
       composeSystemInstructions({
         ...base,
@@ -96,6 +76,22 @@ describe("composeSystemInstructions", () => {
         instructions: "new instructions",
       }),
     ).toBe(text);
+  });
+
+  test("rejects a nested placeholder without a second replacement pass", () => {
+    let error: any;
+    try {
+      composeSystemInstructions({
+        ...base,
+        agentId: "dev-{{company_id}}",
+        companyId: "acme",
+      });
+    } catch (e) {
+      error = e;
+    }
+    expect(error?.code).toBe("system_prompt_unresolved_placeholder");
+    expect(error.message).not.toContain("dev-");
+    expect(error.message).not.toContain("公司身份与边界");
   });
 
   test("rejects Peri's reserved cache boundary without echoing the prompt", () => {
@@ -111,6 +107,7 @@ describe("composeSystemInstructions", () => {
     }
     expect(error?.code).toBe("system_prompt_reserved_boundary");
     expect(error.message).not.toContain(secret);
+    expect(error.message).not.toContain("公司身份与边界");
   });
 
   test("rejects an over-budget UTF-8 prompt without echoing the body", () => {
@@ -126,6 +123,7 @@ describe("composeSystemInstructions", () => {
     expect(error?.code).toBe("system_prompt_too_large");
     expect(error.message).toContain("UTF-8 bytes");
     expect(error.message).not.toContain("汉汉汉");
+    expect(error.message).not.toContain("公司身份与边界");
   });
 
   test("large mutable instructions do not consume the frozen transport budget", () => {
@@ -136,11 +134,8 @@ describe("composeSystemInstructions", () => {
       systemPrompt: "汉".repeat(SYSTEM_PROMPT_BYTE_BUDGET),
       instructions: RESERVED_CACHE_BOUNDARY,
     });
-    expect(text).not.toContain("## Role\ndeveloper");
+    expect(text).toBe(expected);
     expect(text).not.toContain("汉汉汉");
     expect(text).not.toContain(RESERVED_CACHE_BOUNDARY);
-    expect(text).not.toContain("## Agent-specific system prompt");
-    expect(text).not.toContain("## Role instructions");
-    expect(text.endsWith("\n")).toBe(false);
   });
 });

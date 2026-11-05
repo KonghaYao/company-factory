@@ -122,7 +122,7 @@ test("an existing Session with another cwd fails before SDK activation and prese
 test("confirmed missing Session replacement is authoritative in warm and cold service projections", async () => {
   const f = await fixture("missing");
   await f.runtime.wake(f.input);
-  expect(f.chatOptions[0].session.instructions).toContain("You decide how to decompose work");
+  expect(f.chatOptions[0].session.instructions).toContain("公司身份与边界");
   expect(f.chatOptions[0].session.instructions).toContain("CLAUDE.md");
   expect(f.actions).toEqual([{ type: "create_new_session", sessionId: undefined }]);
   const expected = { sessionId: "replacement-session", replacesSessionId: "original-session" };

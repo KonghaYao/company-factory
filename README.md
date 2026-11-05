@@ -119,10 +119,10 @@ profiles:
 
 ## 2. 使用流程
 
-1. 创建 Company，自动生成总部、HR、任务主管和两个真实 Session。
+1. 创建 Company，自动生成总部、HR、秘书和两个真实 Session。
 2. “组织设置”可创建/编辑组织节点（父子、排序、归档、删除空节点或显式迁移后删除）；成员定义送入 HR 的固定 Chat 草稿，由 HR 的可信 MCP 身份创建成员。不会借用户界面伪装 HR。组织树支持把成员移动到任意 active 节点、归档与恢复；移动只改 `organization.yaml`，不改身份、目录、固定 Session、token、权限或 Issue/IM 归属。
 3. 侧栏员工行右侧的编辑按钮可修改姓名、职责和该员工专属的系统提示词；变更会更新 `CLAUDE.md` 的 Company 托管块，作为长期职责权威。系统提示词只在 Session 创建时组装一次，已有固定 Session 不会被字面重建；Agent 开工前读取 `CLAUDE.md`，因此职责/记忆更新不需要新开 Session。
-4. 用户创建 Issue 后进入 `triage`，负责人是任务主管。主管分类、选择 `software-delivery`、指派；Dev 独立维护计划/代码/worktree。
+4. 用户创建 Issue 后进入 `triage`；未指定负责人时交给总部或首个 active 部门节点的 `leadPersonId`（部长），没有部长时先由 HR 建部门与部长。部长分类、选择 `software-delivery`、指派；Dev 独立维护计划/代码/worktree。
 5. 为需要代码仓库的成员，在配置中设置 `workspaceRoots` 为**公司数据目录之外、由用户授权的真实 Git 仓库**绝对路径，保存后手动重启。同一配置面可设置 `modelProfile`（模型库 profile）与 `modelAlias`（活动档位覆盖）。HR 可定义成员的 profile 档位与职责/指导，但不能自行授予 provider、baseUrl、apiKeyEnv、MCP 或文件系统挂载。
 6. Preview Agent 经默认 Workspace 创建本地集成分支/启动 Dev 环境，通过 `company_tasks` 记录批次、代码、环境入口和逐 Issue 清单。用户针对明确 Issue/代码验收；之后记录 CI 与 Code Review，二者均通过才可 `ready_merge`。本期不自动合入/发布。
 7. 黄色行对应未处理的具体裁定问题。答复先落盘，再向当前 Agent 投递处理提示；问题由该 Agent 标记 answered，其他 pending 继续保留。
@@ -132,7 +132,7 @@ profiles:
 
 - `agentId`、活动目录、`sessionId` 固定。并发唤醒复用同一实例；初始化 Session 后可无存活实例。
 - 保存只改 `config`，普通唤醒仍使用 `effectiveConfig`。手动重启应用新配置且保留 Session。
-- 当前 Peri 的 **frozen system context 不支持在同一 Session 上重建**，且 `session/load` 不会替换创建时的 instructions。本适配不篡改 Peri SQLite。新 Session 仅冻结身份、能力入口与稳定事实边界；可变职责、Agent 专属 systemPrompt、已应用 `config.instructions` 和长期记忆统一从 `CLAUDE.md` 读取。已有 Session 的普通 wake/显式 restart 保留原冻结提示词和历史。保存配置不提前发布 instructions，显式重启成功后更新 CLAUDE 托管块及 applied version。模型/MCP 连接按官方 Session load 路径重绑。请阅读 [SDK 接入依据](docs/SDK-INTEGRATION.md)，不要把“固定 Session 重启”理解为删除/重写历史系统消息。
+- 当前 Peri 的 **frozen system context 不支持在同一 Session 上重建**，且 `session/load` 不会替换创建时的 instructions。本适配不篡改 Peri SQLite。新 Session 仅冻结身份、能力入口与稳定事实边界（`templates/prompts/stable.md`，仅替换公司与成员 ID）；可变职责、Agent 专属 systemPrompt、已应用 `config.instructions`、公司协作协议与单张岗位卡统一从 `CLAUDE.md` 托管块读取。已有 Session 的普通 wake/显式 restart 保留原冻结提示词和历史；刷新托管块不会替换旧 Session 的稳定规则。保存配置不提前发布 instructions，显式重启成功后更新 CLAUDE 托管块及 applied version。模型/MCP 连接按官方 Session load 路径重绑。请阅读 [SDK 接入依据](docs/SDK-INTEGRATION.md) 与 [提示词装配](docs/PROMPTS.md)，不要把“固定 Session 重启”理解为删除/重写历史系统消息。
 - 新建工单、指派信息更新和明确答复会发出携带 Issue 引用的简短通知，Agent 自主决定如何响应；通知不推进状态。运行面板显示最近通知与确定失败后的重试入口。Agent MCP 的工作区返回有界索引与详情读取入口，完整历史按需读取。
 - 运行时授权/问答与 Company 决策分开；停止和输入队列使用 SDK 原生控制。未接通的附件上传能力不开放。
 

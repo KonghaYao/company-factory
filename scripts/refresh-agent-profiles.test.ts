@@ -4,10 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { refreshAgentProfiles } from "./refresh-agent-profiles";
 import {
-  COMPANY_ASSETS_GUIDANCE,
-  COMPANY_ASSETS_SKILL_GUIDANCE,
-  TASK_PROGRESS_GUIDANCE,
-} from "../src/domain/templates";
+  COMMON_PROMPT,
+  COMMUNICATION_PROMPT,
+  ROLE_PROMPTS,
+} from "../src/domain/prompt-library";
 import { CompanyStore } from "../src/storage/company-store";
 
 const OLD_BLOCK = [
@@ -79,11 +79,13 @@ describe("refresh agent profiles", () => {
     ]);
     expect(results[0]!.blocks).toEqual(
       expect.arrayContaining([
-        "Task progress",
-        "Company assets",
-        "Company assets skill",
+        "Company protocol",
+        "Communication",
+        "Role card",
+        "Host tool notes",
       ]),
     );
+    expect(results[0]!.blocks).not.toContain("Role guidance");
     expect(await readFile(join(root, "agents", "dev-a", "CLAUDE.md"), "utf8")).toBe(
       before,
     );
@@ -142,15 +144,20 @@ describe("refresh agent profiles", () => {
     const memory = await readFile(join(directory, "CLAUDE.md"), "utf8");
     expect(memory).toContain("FREE_BEFORE_DEV_A");
     expect(memory).toContain("FREE_AFTER_DEV_A");
-    expect(memory).toContain("## Task progress");
-    expect(memory).toContain(TASK_PROGRESS_GUIDANCE);
-    expect(memory).toContain("## Company assets");
-    expect(memory).toContain(COMPANY_ASSETS_GUIDANCE);
-    expect(memory).toContain("## Company assets skill");
-    expect(memory).toContain(COMPANY_ASSETS_SKILL_GUIDANCE);
+    expect(memory).toContain("## Company protocol");
+    expect(memory).toContain(COMMON_PROMPT);
+    expect(memory).toContain("## Communication");
+    expect(memory).toContain(COMMUNICATION_PROMPT);
+    expect(memory).toContain("## Role card");
+    expect(memory).toContain(ROLE_PROMPTS.executor);
+    expect(memory).not.toContain(ROLE_PROMPTS.coordinator);
+    expect(memory).toContain("## Host tool notes");
     expect(memory).toContain("skill://company-assets/SKILL.md");
     expect(memory).toContain("mcp_read_resource");
     expect(memory).not.toContain(".claude/skills");
+    expect(memory).toContain("updateTodos");
+    expect(memory).not.toContain("## Colleague trust");
+    expect(memory).not.toContain("## Task progress");
     expect(memory).not.toContain("OLD_GUIDANCE");
     expect((memory.match(/<!-- company:profile:start -->/g) ?? []).length).toBe(1);
     expect(
